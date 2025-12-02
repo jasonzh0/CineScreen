@@ -8,7 +8,9 @@
     "dev:main": "tsc -w --project tsconfig.main.json",
     "dev:preload": "tsc -w --project tsconfig.preload.json",
     "dev:renderer": "vite",
-    "build": "npm run build:main && npm run build:preload && npm run build:renderer",
+    "build": "npm run build:main && npm run build:preload && npm run build:renderer && npm run build:native",
+    "build:native": "cd native && chmod +x build.sh && ./build.sh",
+    "prebuild": "npm run build:native",
     "build:main": "tsc --project tsconfig.main.json",
     "build:preload": "tsc --project tsconfig.preload.json",
     "build:renderer": "vite build",
@@ -70,6 +72,13 @@
         "to": "assets",
         "filter": [
           "**/*"
+        ]
+      },
+      {
+        "from": "native/mouse-button-state",
+        "to": ".",
+        "filter": [
+          "mouse-button-state"
         ]
       }
     ],
