@@ -47,9 +47,64 @@ function getAssetsDir(): string {
   }
   
   // In production, use app resources
-  const prodPath = join(app?.getPath('exe') || process.cwd(), '../resources/assets');
-  logger.debug('Using production path:', prodPath);
-  return prodPath;
+  // In Electron, assets should be in Contents/Resources/assets
+  // __dirname is in Contents/Resources/app.asar/dist/main/processing
+  // So we need to go up to Contents/Resources/ and then to assets
+  
+  // Try multiple production paths
+  const possibleProdPaths: string[] = [];
+  
+  if (app) {
+    try {
+      // Method 1: Use app.getPath('resources') - Electron's standard way
+      const resourcesPath = app.getPath('resources');
+      possibleProdPaths.push(join(resourcesPath, 'assets'));
+      logger.debug('Added path from app.getPath("resources"):', join(resourcesPath, 'assets'));
+    } catch (error) {
+      logger.debug('Could not get resources path:', error);
+    }
+    
+    try {
+      // Method 2: Calculate from executable path
+      // exePath is Contents/MacOS/AppName, so ../../Resources/assets
+      const exePath = app.getPath('exe');
+      possibleProdPaths.push(join(exePath, '../../Resources/assets'));
+      logger.debug('Added path from exe calculation:', join(exePath, '../../Resources/assets'));
+    } catch (error) {
+      logger.debug('Could not get exe path:', error);
+    }
+  }
+  
+  // Method 3: Calculate from __dirname (most reliable in packaged apps)
+  // __dirname is in Contents/Resources/app.asar/dist/main/processing
+  // To get to Contents/Resources/assets:
+  //   ../ = dist/main/
+  //   ../../ = dist/
+  //   ../../../ = app.asar/
+  //   ../../../../ = Resources/
+  //   ../../../../assets = Resources/assets
+  const fromDistPath = join(__dirname, '../../../../assets');
+  possibleProdPaths.push(fromDistPath);
+  logger.debug('Added path from __dirname (4 levels up):', fromDistPath);
+  
+  // Method 4: Also try 5 levels up (in case structure is different)
+  const fromDistPathAlt = join(__dirname, '../../../../../assets');
+  possibleProdPaths.push(fromDistPathAlt);
+  logger.debug('Added alternative __dirname path (5 levels up):', fromDistPathAlt);
+  
+  // Check each path and return the first one that exists
+  for (const path of possibleProdPaths) {
+    logger.debug('Checking production path:', path, 'exists:', existsSync(path));
+    if (existsSync(path)) {
+      logger.debug('Found production assets directory at:', path);
+      return path;
+    }
+  }
+  
+  // If none found, return the first calculated path (will be checked by caller)
+  const fallbackPath = possibleProdPaths[0] || join(process.cwd(), 'resources/assets');
+  logger.warn('No production assets directory found, using fallback:', fallbackPath);
+  return fallbackPath;
 }
 
 /**

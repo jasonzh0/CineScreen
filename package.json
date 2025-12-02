@@ -60,7 +60,15 @@
     },
     "files": [
       "dist/**/*",
-      "node_modules/**/*"
+      "node_modules/**/*",
+      "src/assets/**/*"
+    ],
+    "extraResources": [
+      {
+        "from": "src/assets",
+        "to": "assets",
+        "filter": ["**/*"]
+      }
     ],
     "asarUnpack": [
       "node_modules/ffmpeg-static/**/*"
