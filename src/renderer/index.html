@@ -1,0 +1,84 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Mac Screen Recorder</title>
+  <link rel="stylesheet" href="styles.css">
+</head>
+<body>
+  <div class="container">
+    <header>
+      <h1>Mac Screen Recorder</h1>
+      <p class="subtitle">Record your screen with customizable cursor overlay</p>
+    </header>
+
+    <div class="permissions-section" id="permissions-section">
+      <h2>Permissions</h2>
+      <div class="permission-item">
+        <span>Screen Recording:</span>
+        <span id="screen-recording-status" class="status">Checking...</span>
+      </div>
+      <div class="permission-item">
+        <span>Accessibility:</span>
+        <span id="accessibility-status" class="status">Checking...</span>
+      </div>
+      <button id="request-permissions-btn" class="btn btn-secondary" style="display: none;">
+        Request Permissions
+      </button>
+    </div>
+
+    <div class="recording-section">
+      <div class="recording-controls">
+        <button id="record-btn" class="btn btn-primary" disabled>
+          Start Recording
+        </button>
+        <button id="stop-btn" class="btn btn-danger" disabled>
+          Stop Recording
+        </button>
+      </div>
+
+      <div class="recording-status" id="recording-status">
+        <span id="status-text">Ready to record</span>
+      </div>
+    </div>
+
+    <div class="settings-section">
+      <h2>Cursor Settings</h2>
+      
+      <div class="setting-item">
+        <label for="cursor-size">Cursor Size:</label>
+        <input type="range" id="cursor-size" min="10" max="50" value="20">
+        <span id="cursor-size-value">20</span>px
+      </div>
+
+      <div class="setting-item">
+        <label for="cursor-shape">Cursor Shape:</label>
+        <select id="cursor-shape">
+          <option value="arrow">Arrow</option>
+          <option value="pointer">Pointer</option>
+          <option value="hand">Hand</option>
+          <option value="crosshair">Crosshair</option>
+        </select>
+      </div>
+
+      <div class="setting-item">
+        <label for="smoothing">Smoothing:</label>
+        <input type="range" id="smoothing" min="0" max="100" value="50">
+        <span id="smoothing-value">50</span>%
+      </div>
+
+      <div class="setting-item">
+        <label for="output-path">Output Path:</label>
+        <div class="path-selector">
+          <input type="text" id="output-path" readonly placeholder="Select output location...">
+          <button id="select-path-btn" class="btn btn-secondary">Browse</button>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <script src="renderer.js"></script>
+</body>
+</html>
+
