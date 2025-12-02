@@ -1,6 +1,9 @@
 import { existsSync, statSync } from 'fs';
 import { spawn } from 'child_process';
 import { getFfmpegPath } from './ffmpeg-path';
+import { createLogger } from './logger';
+
+const logger = createLogger('FileUtils');
 
 /**
  * Wait for a file to be finalized (file size stabilizes)
@@ -68,18 +71,15 @@ export async function waitForFileStable(
  * Validate that a video file is complete and can be read by FFmpeg
  * Works with any video format (MKV, MP4, MOV, etc.)
  * @param filePath Path to the video file
- * @param debugLog Optional debug logging function
  * @param maxRetries Maximum number of retry attempts
  * @param retryDelayMs Delay between retries in milliseconds
  * @returns Promise that resolves if file is valid, rejects if invalid
  */
 export async function validateVideoFile(
   filePath: string,
-  debugLog?: (message: string) => void,
   maxRetries: number = 5,
   retryDelayMs: number = 500
 ): Promise<void> {
-  const log = debugLog || (() => {});
 
   if (!existsSync(filePath)) {
     throw new Error(`File does not exist: ${filePath}`);
@@ -126,15 +126,15 @@ export async function validateVideoFile(
                                 errorOutput.includes('Invalid argument');
               
               if (isInvalid) {
-                log(`Video validation failed (attempt ${attempt}): ${errorOutput.substring(0, 300)}`);
+                logger.debug(`Video validation failed (attempt ${attempt}): ${errorOutput.substring(0, 300)}`);
                 resolve(false);
               } else if (hasOutput) {
                 // Has output but non-zero code - might be warnings, assume valid
-                log(`FFmpeg probe warning (code ${code}, attempt ${attempt}): ${errorOutput.substring(0, 200)}`);
+                logger.debug(`FFmpeg probe warning (code ${code}, attempt ${attempt}): ${errorOutput.substring(0, 200)}`);
                 resolve(true);
               } else {
                 // No output and non-zero code - might be invalid
-                log(`FFmpeg probe failed silently (code ${code}, attempt ${attempt})`);
+                logger.debug(`FFmpeg probe failed silently (code ${code}, attempt ${attempt})`);
                 resolve(false);
               }
             }
@@ -142,7 +142,7 @@ export async function validateVideoFile(
 
           probeProcess.on('error', (error) => {
             const errorMsg = error instanceof Error ? error.message : String(error);
-            log(`FFmpeg probe spawn error (attempt ${attempt}): ${errorMsg}`);
+            logger.debug(`FFmpeg probe spawn error (attempt ${attempt}): ${errorMsg}`);
             resolve(false);
           });
 
@@ -150,23 +150,23 @@ export async function validateVideoFile(
           setTimeout(() => {
             if (!probeProcess.killed) {
               probeProcess.kill();
-              log(`FFmpeg probe timeout (attempt ${attempt})`);
+              logger.debug(`FFmpeg probe timeout (attempt ${attempt})`);
               resolve(false);
             }
           }, 3000);
         } catch (error) {
           const errorMsg = error instanceof Error ? error.message : String(error);
-          log(`FFmpeg probe exception (attempt ${attempt}): ${errorMsg}`);
+          logger.debug(`FFmpeg probe exception (attempt ${attempt}): ${errorMsg}`);
           resolve(false);
         }
       });
 
       if (isValid) {
-        log(`Video file validated successfully on attempt ${attempt}: ${filePath}`);
+        logger.debug(`Video file validated successfully on attempt ${attempt}: ${filePath}`);
         return;
       } else {
         if (attempt < maxRetries) {
-          log(`Video file validation failed on attempt ${attempt}, retrying in ${retryDelayMs}ms...`);
+          logger.debug(`Video file validation failed on attempt ${attempt}, retrying in ${retryDelayMs}ms...`);
           await new Promise(resolve => setTimeout(resolve, retryDelayMs));
         } else {
           throw new Error(
@@ -190,10 +190,9 @@ export async function validateVideoFile(
  */
 export async function validateMp4File(
   filePath: string,
-  debugLog?: (message: string) => void,
   maxRetries: number = 5,
   retryDelayMs: number = 500
 ): Promise<void> {
-  return validateVideoFile(filePath, debugLog, maxRetries, retryDelayMs);
+  return validateVideoFile(filePath, maxRetries, retryDelayMs);
 }
 

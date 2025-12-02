@@ -4,6 +4,9 @@ import { exec } from 'child_process';
 import { promisify } from 'util';
 import type { MouseEvent } from '../types';
 import { getMouseButtonStates } from '../processing/click-detector';
+import { createLogger } from '../utils/logger';
+
+const logger = createLogger('MouseTracker');
 
 const execAsync = promisify(exec);
 
@@ -30,7 +33,7 @@ export class MouseTracker {
       const [x, y] = stdout.trim().split(',').map(Number);
       return { x, y };
     } catch (error) {
-      console.error('Error getting mouse position:', error);
+      logger.error('Error getting mouse position:', error);
       return this.lastPosition;
     }
   }

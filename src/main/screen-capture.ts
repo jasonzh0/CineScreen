@@ -4,29 +4,10 @@ import { mkdirSync, existsSync } from 'fs';
 import type { RecordingConfig } from '../types';
 import { getFfmpegPath } from '../utils/ffmpeg-path';
 import { waitForFileStable, validateVideoFile } from '../utils/file-utils';
+import { createLogger } from '../utils/logger';
 
-// Debug logging helper - will be set by main process
-let sendLogToRenderer: ((message: string) => void) | null = null;
-export const setLogSender = (sender: (message: string) => void) => {
-  sendLogToRenderer = sender;
-};
-
-const DEBUG = process.env.DEBUG === 'true' || process.env.NODE_ENV === 'development';
-const debugLog = (...args: unknown[]) => {
-  const message = args.map(arg => 
-    typeof arg === 'object' ? JSON.stringify(arg, null, 2) : String(arg)
-  ).join(' ');
-  const logEntry = `[ScreenCapture] ${message}`;
-  
-  if (DEBUG) {
-    console.log(logEntry);
-  }
-  
-  // Send log to renderer if available
-  if (sendLogToRenderer) {
-    sendLogToRenderer(logEntry);
-  }
-};
+// Create logger for screen capture
+const logger = createLogger('ScreenCapture');
 
 export class ScreenCapture {
   private recordingProcess?: ChildProcess;
@@ -41,9 +22,9 @@ export class ScreenCapture {
     return new Promise((resolve) => {
       let resolvedFfmpegPath: string;
       try {
-        resolvedFfmpegPath = getFfmpegPath(debugLog);
+        resolvedFfmpegPath = getFfmpegPath();
       } catch (error) {
-        debugLog('ERROR in path resolution for device listing:', error);
+        logger.error('Error in path resolution for device listing:', error);
         resolve(null);
         return;
       }
@@ -70,14 +51,14 @@ export class ScreenCapture {
       listProcess.on('close', () => {
         // Combine both outputs as FFmpeg may output to either
         const combinedOutput = output + errorOutput;
-        debugLog('Device list output:', combinedOutput);
+        logger.debug('Device list output:', combinedOutput);
 
         // Look for screen devices - they're typically listed as "Capture screen" or similar
         // Pattern: [AVFoundation input device @ 0x...] [index] Capture screen ...
         const screenMatch = combinedOutput.match(/\[(\d+)\]\s+Capture screen/i);
         if (screenMatch) {
           const deviceIndex = parseInt(screenMatch[1], 10);
-          debugLog('Found screen device at index:', deviceIndex);
+          logger.debug('Found screen device at index:', deviceIndex);
           resolve(deviceIndex);
           return;
         }
@@ -87,18 +68,18 @@ export class ScreenCapture {
         const fallbackMatch = combinedOutput.match(screenPattern);
         if (fallbackMatch) {
           const deviceIndex = parseInt(fallbackMatch[1], 10);
-          debugLog('Found screen device (fallback) at index:', deviceIndex);
+          logger.debug('Found screen device (fallback) at index:', deviceIndex);
           resolve(deviceIndex);
           return;
         }
 
         // If no screen found, default to index 1 (common default for main display)
-        debugLog('No screen device found in list, defaulting to index 1');
+        logger.debug('No screen device found in list, defaulting to index 1');
         resolve(1);
       });
 
       listProcess.on('error', (error) => {
-        debugLog('Error listing devices:', error);
+        logger.error('Error listing devices:', error);
         // Default to index 1 if listing fails
         resolve(1);
       });
@@ -107,7 +88,7 @@ export class ScreenCapture {
       setTimeout(() => {
         if (!listProcess.killed) {
           listProcess.kill();
-          debugLog('Device listing timeout, defaulting to index 1');
+          logger.debug('Device listing timeout, defaulting to index 1');
           resolve(1);
         }
       }, 5000);
@@ -119,22 +100,22 @@ export class ScreenCapture {
    * Note: This uses the system's screen capture, which on macOS can be done via avfoundation
    */
   async startRecording(config: RecordingConfig): Promise<void> {
-    debugLog('startRecording called with config:', config);
+    logger.info('startRecording called with config:', config);
     
     if (this.isRecording) {
-      debugLog('Recording already in progress, rejecting');
+      logger.error('Recording already in progress, rejecting');
       throw new Error('Recording is already in progress');
     }
 
     this.outputPath = config.outputPath;
     this.isRecording = true;
-    debugLog('Output path set to:', this.outputPath);
+    logger.debug('Output path set to:', this.outputPath);
 
     // Ensure output directory exists
     const outputDir = join(this.outputPath, '..');
-    debugLog('Output directory:', outputDir);
+    logger.debug('Output directory:', outputDir);
     if (!existsSync(outputDir)) {
-      debugLog('Creating output directory:', outputDir);
+      logger.debug('Creating output directory:', outputDir);
       mkdirSync(outputDir, { recursive: true });
     }
 
@@ -143,7 +124,7 @@ export class ScreenCapture {
     if (screenDeviceIndex === null) {
       throw new Error('Could not find screen capture device');
     }
-    debugLog('Using screen device index:', screenDeviceIndex);
+    logger.debug('Using screen device index:', screenDeviceIndex);
 
     // Use ffmpeg with avfoundation to capture screen (not camera)
     // Note: This requires screen recording permission
@@ -161,7 +142,7 @@ export class ScreenCapture {
       '-pix_fmt', 'yuv420p', // Output format (libx264 will convert from uyvy422)
       this.outputPath,
     ];
-    debugLog('FFmpeg args:', args);
+    logger.debug('FFmpeg args:', args);
 
     // If region is specified, add crop filter
     if (config.region) {
@@ -176,25 +157,25 @@ export class ScreenCapture {
       let resolvedFfmpegPath: string;
       try {
         // Get the resolved FFmpeg path using the utility function
-        resolvedFfmpegPath = getFfmpegPath(debugLog);
+        resolvedFfmpegPath = getFfmpegPath();
       } catch (error) {
-        debugLog('ERROR in path resolution:', error);
+        logger.error('Error in path resolution:', error);
         reject(new Error(`Error accessing FFmpeg binary: ${error instanceof Error ? error.message : String(error)}`));
         return;
       }
       
       // Spawn FFmpeg process
-      debugLog('Spawning FFmpeg process with path:', resolvedFfmpegPath);
-      debugLog('Command:', resolvedFfmpegPath, args.join(' '));
+      logger.debug('Spawning FFmpeg process with path:', resolvedFfmpegPath);
+      logger.debug('Command:', resolvedFfmpegPath, args.join(' '));
       
       this.recordingProcess = spawn(resolvedFfmpegPath, args, {
         stdio: ['ignore', 'pipe', 'pipe']
       });
 
-      debugLog('FFmpeg process spawned, PID:', this.recordingProcess.pid);
+      logger.debug('FFmpeg process spawned, PID:', this.recordingProcess.pid);
 
       this.recordingProcess.on('error', (error) => {
-        debugLog('FFmpeg process error:', error);
+        logger.error('FFmpeg process error:', error);
         this.isRecording = false;
         reject(new Error(`Failed to start recording: ${error.message}`));
       });
@@ -202,23 +183,23 @@ export class ScreenCapture {
       this.recordingProcess.stderr?.on('data', (data) => {
         // FFmpeg outputs to stderr
         const output = data.toString();
-        debugLog('FFmpeg stderr:', output.substring(0, 200)); // Log first 200 chars
+        logger.debug('FFmpeg stderr:', output.substring(0, 200)); // Log first 200 chars
         if (output.includes('frame=')) {
           // Recording started successfully
-          debugLog('Recording started successfully (frame detected)');
+          logger.info('Recording started successfully (frame detected)');
           resolve();
         }
       });
 
       this.recordingProcess.stdout?.on('data', (data) => {
         const output = data.toString();
-        debugLog('FFmpeg stdout:', output.substring(0, 200));
+        logger.debug('FFmpeg stdout:', output.substring(0, 200));
       });
 
       // Give it a moment to start
       setTimeout(() => {
         if (this.isRecording) {
-          debugLog('Recording started (timeout fallback)');
+          logger.debug('Recording started (timeout fallback)');
           resolve();
         }
       }, 1000);
@@ -229,23 +210,23 @@ export class ScreenCapture {
    * Stop screen recording
    */
   async stopRecording(): Promise<string> {
-    debugLog('stopRecording called');
+    logger.info('stopRecording called');
     
     if (!this.isRecording || !this.recordingProcess) {
-      debugLog('ERROR: No recording in progress');
+      logger.error('No recording in progress');
       throw new Error('No recording in progress');
     }
 
     return new Promise((resolve, reject) => {
-      debugLog('Stopping FFmpeg recording...');
+      logger.info('Stopping FFmpeg recording...');
       // Use SIGINT as the primary shutdown mechanism
       // SIGINT (Ctrl+C) is reliable for non-interactive processes
       if (this.recordingProcess) {
         try {
           this.recordingProcess.kill('SIGINT');
-          debugLog('Sent SIGINT to FFmpeg');
+          logger.debug('Sent SIGINT to FFmpeg');
         } catch (error) {
-          debugLog('Could not send SIGINT:', error);
+          logger.warn('Could not send SIGINT:', error);
         }
       }
 
@@ -254,7 +235,7 @@ export class ScreenCapture {
       this.recordingProcess?.on('close', async (code) => {
         if (isResolved) return; // Prevent double resolution
         
-        debugLog('FFmpeg process closed with code:', code);
+        logger.debug('FFmpeg process closed with code:', code);
         this.isRecording = false;
         this.recordingProcess = undefined;
         
@@ -264,7 +245,7 @@ export class ScreenCapture {
         const wasKilled = code === 255 || code === null;
         
         if (isGraceful || wasKilled) {
-          debugLog(`Recording stopped (graceful: ${isGraceful}, killed: ${wasKilled}), waiting for file to be finalized...`);
+          logger.info(`Recording stopped (graceful: ${isGraceful}, killed: ${wasKilled}), waiting for file to be finalized...`);
           
           try {
             // Give FFmpeg a moment to flush buffers to disk (longer if killed)
@@ -275,26 +256,26 @@ export class ScreenCapture {
             // Wait up to 10 seconds for file to stabilize
             // MKV format is more forgiving, but we still want to ensure it's finalized
             await waitForFileStable(this.outputPath, wasKilled ? 10000 : 5000, 100);
-            debugLog('File size stabilized, validating video file...');
+            logger.debug('File size stabilized, validating video file...');
             
             // Validate the video file is complete with retries
             // This will throw if the file is still invalid after all retries
             // Increased retry interval to 1000ms to give file system more time
-            await validateVideoFile(this.outputPath, debugLog, 5, 1000);
-            debugLog('Video file validated successfully, output:', this.outputPath);
+            await validateVideoFile(this.outputPath, 5, 1000);
+            logger.info('Video file validated successfully, output:', this.outputPath);
             isResolved = true;
             resolve(this.outputPath);
           } catch (error) {
             const errorMessage = error instanceof Error ? error.message : String(error);
             const errorDetails = error instanceof Error ? error.stack : JSON.stringify(error);
-            debugLog('ERROR validating file after retries:', errorMessage);
-            debugLog('Error details:', errorDetails);
+            logger.error('Error validating file after retries:', errorMessage);
+            logger.debug('Error details:', errorDetails);
             
             // If file was killed but we can't validate it, still try to proceed
             // (MKV format is more forgiving and might be partially readable)
             if (wasKilled) {
-              debugLog('Warning: File was force-killed and validation failed, but proceeding with output path');
-              debugLog('File path:', this.outputPath);
+              logger.warn('File was force-killed and validation failed, but proceeding with output path');
+              logger.debug('File path:', this.outputPath);
               isResolved = true;
               resolve(this.outputPath);
             } else {
@@ -306,7 +287,7 @@ export class ScreenCapture {
             }
           }
         } else {
-          debugLog('ERROR: Recording stopped with error code:', code);
+          logger.error('Recording stopped with error code:', code);
           reject(new Error(`Recording stopped with error code ${code}`));
         }
       });
@@ -314,13 +295,13 @@ export class ScreenCapture {
       // Force kill after timeout if it doesn't stop gracefully
       setTimeout(() => {
         if (this.recordingProcess && !isResolved) {
-          debugLog('Force killing FFmpeg process (timeout)');
+          logger.warn('Force killing FFmpeg process (timeout)');
           this.recordingProcess.kill('SIGTERM'); // Try SIGTERM first (more graceful)
           
           // If still running after 30 more seconds, use SIGKILL
           setTimeout(() => {
             if (this.recordingProcess && !isResolved) {
-              debugLog('Force killing FFmpeg process with SIGKILL');
+              logger.warn('Force killing FFmpeg process with SIGKILL');
               this.recordingProcess.kill('SIGKILL');
             }
           }, 30000);

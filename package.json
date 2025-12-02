@@ -14,7 +14,8 @@
     "build:renderer": "vite build",
     "start": "electron .",
     "package": "rm -rf release && electron-builder",
-    "package:mac": "rm -rf release && electron-builder --mac"
+    "package:mac": "rm -rf release && electron-builder --mac",
+    "clean": "rm -rf release && rm -rf dist"
   },
   "keywords": [
     "screen-recording",

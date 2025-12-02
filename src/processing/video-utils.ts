@@ -1,6 +1,9 @@
 import { spawn } from 'child_process';
 import { existsSync } from 'fs';
 import { getFfmpegPath } from '../utils/ffmpeg-path';
+import { createLogger } from '../utils/logger';
+
+const logger = createLogger('VideoUtils');
 
 /**
  * Ensure cursor is available as PNG
@@ -68,7 +71,7 @@ export async function ensureCursorPNG(
       return pngPath;
     } catch (error2) {
       // Last resort: return SVG and hope FFmpeg can handle it
-      console.warn('Could not convert SVG to PNG, using SVG directly');
+      logger.warn('Could not convert SVG to PNG, using SVG directly');
       return svgPath;
     }
   }

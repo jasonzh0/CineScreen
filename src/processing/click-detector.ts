@@ -1,6 +1,9 @@
 import { exec } from 'child_process';
 import { promisify } from 'util';
 import type { MouseEvent } from '../types';
+import { createLogger } from '../utils/logger';
+
+const logger = createLogger('ClickDetector');
 
 const execAsync = promisify(exec);
 
@@ -36,7 +39,7 @@ export async function getMouseButtonStates(): Promise<{
     // The actual click detection will be handled by tracking state changes
     return { left: false, right: false, middle: false };
   } catch (error) {
-    console.error('Error detecting mouse button states:', error);
+    logger.error('Error detecting mouse button states:', error);
     return { left: false, right: false, middle: false };
   }
 }

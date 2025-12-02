@@ -6,10 +6,13 @@ import { smoothMouseMovement, interpolateMousePositions } from './effects';
 import { getCursorAssetFilePath } from './cursor-renderer';
 import { getFfmpegPath } from '../utils/ffmpeg-path';
 import { createCursorOverlayFilter, createMouseEffectsFilter, combineFilters } from './ffmpeg-filters';
-import { getVideoDimensions } from './video-utils';
+import { getVideoDimensions, ensureCursorPNG } from './video-utils';
 import { generateAllMouseEffects } from './mouse-effects';
 import { generateZoomRegions } from './zoom-tracker';
 import { generateZoomFilter } from './zoom-processor';
+import { createLogger } from '../utils/logger';
+
+const logger = createLogger('VideoProcessor');
 
 export interface VideoProcessingOptions {
   inputVideo: string;
@@ -50,12 +53,12 @@ export class VideoProcessor {
       }
 
       if (!mouseEvents || mouseEvents.length === 0) {
-        console.warn('No mouse events provided, processing video without cursor overlay');
+        logger.warn('No mouse events provided, processing video without cursor overlay');
       }
 
       // Validate and provide default cursor config
       if (!cursorConfig) {
-        console.warn('No cursor config provided, using defaults');
+        logger.warn('No cursor config provided, using defaults');
         cursorConfig = {
           size: 24,
           shape: 'arrow',
@@ -82,7 +85,7 @@ export class VideoProcessor {
           cursorConfig.smoothing
         );
       } catch (error) {
-        console.warn('Error smoothing mouse events, using original events:', error);
+        logger.warn('Error smoothing mouse events, using original events:', error);
         smoothedEvents = mouseEvents;
       }
 
@@ -119,7 +122,7 @@ export class VideoProcessor {
           );
           zoomFilter = generateZoomFilter(zoomRegions, videoDimensions, frameRate);
         } catch (error) {
-          console.warn('Error generating zoom filter, continuing without zoom:', error);
+          logger.warn('Error generating zoom filter, continuing without zoom:', error);
           zoomFilter = '';
         }
       }
@@ -130,20 +133,21 @@ export class VideoProcessor {
         try {
           effectFrames = generateAllMouseEffects(interpolatedEvents, options.mouseEffectsConfig, frameRate);
         } catch (error) {
-          console.warn('Error generating mouse effects, continuing without effects:', error);
+          logger.warn('Error generating mouse effects, continuing without effects:', error);
           effectFrames = [];
         }
       }
 
-      // Get cursor asset path (SVG from assets directory)
+      // Get cursor asset path (SVG from assets directory) and convert to PNG
       let cursorImagePath: string;
       try {
         const assetPath = getCursorAssetFilePath(cursorConfig.shape);
-        if (assetPath && existsSync(assetPath)) {
-          cursorImagePath = assetPath;
-        } else {
+        if (!assetPath || !existsSync(assetPath)) {
           throw new Error(`Cursor asset not found for shape: ${cursorConfig.shape}`);
         }
+        
+        // Convert SVG to PNG for FFmpeg overlay (FFmpeg overlay works better with raster images)
+        cursorImagePath = await ensureCursorPNG(assetPath, cursorConfig.size);
       } catch (error) {
         throw new Error(`Failed to get cursor asset: ${error instanceof Error ? error.message : String(error)}`);
       }
@@ -190,14 +194,23 @@ export class VideoProcessor {
         
         // Combine all filters
         filterComplex = combineFilters(filters);
+        
+        // Debug: log the filter complex
+        logger.debug('FFmpeg filter complex:', filterComplex);
+        logger.debug('Cursor image path:', cursorImagePath);
+        logger.debug('Cursor size:', cursorConfig.size);
+        logger.debug('Interpolated events count:', interpolatedEvents.length);
       } catch (error) {
         throw new Error(`Failed to create FFmpeg filter: ${error instanceof Error ? error.message : String(error)}`);
       }
 
     // Build FFmpeg command
+    // Note: -loop 1 for the cursor image makes it loop for the entire video duration
     const args = [
       '-i',
       inputVideo,
+      '-loop',
+      '1',
       '-i',
       cursorImagePath,
       '-filter_complex',
@@ -216,6 +229,7 @@ export class VideoProcessor {
       'copy',
       '-movflags',
       'faststart',
+      '-shortest', // End encoding when the shortest input stream ends
       '-y', // Overwrite output file
       outputVideo,
     ];
