@@ -21,7 +21,7 @@ function applyEasing(t: number, easing: EasingType): number {
 /**
  * Interpolate cursor position between keyframes
  */
-function interpolateCursorPosition(
+export function interpolateCursorPosition(
   keyframes: CursorKeyframe[],
   timestamp: number
 ): { x: number; y: number; size?: number; shape?: string; color?: string } | null {

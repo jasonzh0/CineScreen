@@ -4,13 +4,18 @@ import { existsSync } from 'fs';
 import { app } from 'electron';
 import type { MouseEvent } from '../types';
 import { createLogger } from '../utils/logger';
+import {
+  CLICK_DETECTION_CACHE_DURATION_MS,
+  CLICK_DETECTION_TIMEOUT_MS,
+  CLICK_DETECTION_THRESHOLD_MS,
+} from '../utils/constants';
 
 const logger = createLogger('ClickDetector');
 
 // Cache for button states to avoid excessive binary calls
 let cachedStates: { left: boolean; right: boolean; middle: boolean } | null = null;
 let lastCheckTime = 0;
-const CACHE_DURATION = 5; // Cache for 5ms to reduce binary calls
+const CACHE_DURATION = CLICK_DETECTION_CACHE_DURATION_MS;
 let binaryPath: string | null = null; // Cache binary path
 
 /**
@@ -158,16 +163,16 @@ export async function getMouseButtonStates(): Promise<{
         reject(error);
       });
 
-      // Timeout after 50ms (Swift binary should be very fast)
+      // Timeout after configured duration (Swift binary should be very fast)
       const timeoutId = setTimeout(() => {
         if (resolved) return;
         resolved = true;
         binary.kill();
-        logger.error('[ERROR] Binary timeout after 50ms');
+        logger.error(`[ERROR] Binary timeout after ${CLICK_DETECTION_TIMEOUT_MS}ms`);
         logger.error(`[ERROR] stdout so far: "${stdout}"`);
         logger.error(`[ERROR] stderr so far: "${stderr}"`);
         reject(new Error('Binary timeout'));
-      }, 50);
+      }, CLICK_DETECTION_TIMEOUT_MS);
     });
 
     const queryDuration = Date.now() - queryStartTime;
@@ -262,7 +267,7 @@ export function detectClicksFromEvents(events: MouseEvent[]): MouseEvent[] {
  */
 export function enhanceEventsWithClickDetection(
   events: MouseEvent[],
-  clickThreshold: number = 200 // ms
+  clickThreshold: number = CLICK_DETECTION_THRESHOLD_MS // ms
 ): MouseEvent[] {
   // This would analyze the event stream for patterns that indicate clicks
   // For example, rapid position changes followed by stillness might indicate a click

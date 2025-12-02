@@ -1,4 +1,10 @@
 import type { MouseEvent } from '../types';
+import {
+  DEFAULT_TIME_DIFF_MS,
+  ADAPTIVE_SMOOTHING_SPEED_THRESHOLD,
+  ADAPTIVE_SMOOTHING_FACTOR,
+  DUPLICATE_POSITION_THRESHOLD,
+} from '../utils/constants';
 
 /**
  * Apply smoothing to mouse movement events using exponential moving average
@@ -21,7 +27,7 @@ export function smoothMouseMovement(
     const event = events[i];
     
     // Calculate velocity
-    const timeDiff = i > 0 ? event.timestamp - events[i - 1].timestamp : 16; // Default 16ms
+    const timeDiff = i > 0 ? event.timestamp - events[i - 1].timestamp : DEFAULT_TIME_DIFF_MS;
     const velocity = {
       x: timeDiff > 0 ? (event.x - lastX) / timeDiff : 0,
       y: timeDiff > 0 ? (event.y - lastY) / timeDiff : 0,
@@ -29,8 +35,8 @@ export function smoothMouseMovement(
 
     // Adaptive smoothing: less smoothing for fast movements
     const speed = Math.sqrt(velocity.x * velocity.x + velocity.y * velocity.y);
-    const adaptiveFactor = Math.min(1, speed / 10); // Adjust threshold as needed
-    const effectiveSmoothing = smoothingFactor * (1 - adaptiveFactor * 0.5);
+    const adaptiveFactor = Math.min(1, speed / ADAPTIVE_SMOOTHING_SPEED_THRESHOLD);
+    const effectiveSmoothing = smoothingFactor * (1 - adaptiveFactor * ADAPTIVE_SMOOTHING_FACTOR);
 
     // Exponential moving average with velocity consideration
     const smoothedX = lastX + (event.x - lastX) * (1 - effectiveSmoothing);
@@ -146,7 +152,7 @@ export function interpolateMousePositions(
  */
 export function removeDuplicatePositions(
   events: MouseEvent[],
-  threshold: number = 1
+  threshold: number = DUPLICATE_POSITION_THRESHOLD
 ): MouseEvent[] {
   if (events.length === 0) {
     return events;

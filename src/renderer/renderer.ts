@@ -1,4 +1,5 @@
 import type { RecordingConfig, CursorConfig, ZoomConfig, MouseEffectsConfig } from '../types';
+import { DEFAULT_FRAME_RATE } from '../utils/constants';
 
 declare global {
   interface Window {
@@ -271,7 +272,7 @@ recordBtn.addEventListener('click', async () => {
 
   const config: RecordingConfig = {
     outputPath: outputPath!,
-    frameRate: 30,
+    frameRate: DEFAULT_FRAME_RATE,
     quality: 'medium',
   };
 

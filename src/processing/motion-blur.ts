@@ -1,5 +1,12 @@
 import sharp from 'sharp';
 import { createLogger } from '../utils/logger';
+import {
+  MOTION_BLUR_VELOCITY_THRESHOLD,
+  MOTION_BLUR_BASE_MULTIPLIER,
+  MOTION_BLUR_MAX_LENGTH,
+  MOTION_BLUR_MIN_LENGTH,
+  MOTION_BLUR_SIGMA_FACTOR,
+} from '../utils/constants';
 
 const logger = createLogger('MotionBlur');
 
@@ -14,7 +21,7 @@ export async function applyMotionBlur(
   strength: number, // 0-1
   frameRate: number
 ): Promise<Buffer> {
-  if (strength <= 0 || (Math.abs(velocityX) < 0.1 && Math.abs(velocityY) < 0.1)) {
+  if (strength <= 0 || (Math.abs(velocityX) < MOTION_BLUR_VELOCITY_THRESHOLD && Math.abs(velocityY) < MOTION_BLUR_VELOCITY_THRESHOLD)) {
     // No blur needed
     return imageBuffer;
   }
@@ -25,10 +32,10 @@ export async function applyMotionBlur(
   
   // Blur length is proportional to speed and strength
   // Scale by frame rate to normalize across different frame rates
-  const baseBlurLength = (speed / frameRate) * strength * 20; // Adjust multiplier for desired effect
-  const blurLength = Math.min(baseBlurLength, 50); // Cap at 50 pixels
+  const baseBlurLength = (speed / frameRate) * strength * MOTION_BLUR_BASE_MULTIPLIER;
+  const blurLength = Math.min(baseBlurLength, MOTION_BLUR_MAX_LENGTH);
 
-  if (blurLength < 0.5) {
+  if (blurLength < MOTION_BLUR_MIN_LENGTH) {
     // Too small to be noticeable
     return imageBuffer;
   }
@@ -40,7 +47,7 @@ export async function applyMotionBlur(
     
     // For now, we'll use a simple gaussian blur as approximation
     // In production, you'd want to use a proper motion blur filter
-    const sigma = blurLength * 0.3; // Convert blur length to sigma
+    const sigma = blurLength * MOTION_BLUR_SIGMA_FACTOR; // Convert blur length to sigma
     
     const blurred = await sharp(imageBuffer)
       .blur(sigma)

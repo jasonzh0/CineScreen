@@ -4,7 +4,7 @@ import { VideoPreview } from './components/video-preview';
 import { CursorEditor } from './components/cursor-editor';
 import { ZoomEditor } from './components/zoom-editor';
 import { KeyframePanel } from './components/keyframe-panel';
-import { renderCursor } from './utils/cursor-renderer';
+import { renderCursor, interpolateCursorPosition } from './utils/cursor-renderer';
 import { renderZoom } from './utils/zoom-renderer';
 import { createLogger } from '../utils/logger';
 
@@ -80,18 +80,18 @@ async function init() {
     // Set up metadata update callbacks
     cursorEditor.setOnMetadataUpdate((updatedMetadata) => {
       metadata = updatedMetadata;
-      if (timeline) {
-        const duration = videoPreview?.getDuration() || 0;
-        timeline.setMetadata(updatedMetadata, duration * 1000);
+      if (timeline && updatedMetadata) {
+        // Use metadata duration as source of truth (in milliseconds)
+        timeline.setMetadata(updatedMetadata, updatedMetadata.video.duration);
       }
       keyframePanel?.setMetadata(updatedMetadata);
     });
 
     zoomEditor.setOnMetadataUpdate((updatedMetadata) => {
       metadata = updatedMetadata;
-      if (timeline) {
-        const duration = videoPreview?.getDuration() || 0;
-        timeline.setMetadata(updatedMetadata, duration * 1000);
+      if (timeline && updatedMetadata) {
+        // Use metadata duration as source of truth (in milliseconds)
+        timeline.setMetadata(updatedMetadata, updatedMetadata.video.duration);
       }
       keyframePanel?.setMetadata(updatedMetadata);
     });
@@ -225,11 +225,17 @@ async function loadStudioData() {
     });
 
     logger.info('Video loaded, duration:', videoEl.duration, 'seconds');
+    logger.info('Metadata duration:', metadata?.video.duration, 'ms');
+
+    // Auto-create cursor keyframes from clicks if there are clicks but few keyframes
+    if (metadata) {
+      autoCreateKeyframesFromClicks(metadata);
+    }
 
     // Update timeline with metadata
+    // Use metadata duration as source of truth (already in milliseconds)
     if (timeline && metadata) {
-      const duration = videoEl.duration * 1000; // Convert to ms
-      timeline.setMetadata(metadata, duration);
+      timeline.setMetadata(metadata, metadata.video.duration);
     }
 
     // Update editors and panel
@@ -290,10 +296,11 @@ function setupEventListeners() {
 
 function updateTimeDisplay() {
   const timeDisplay = document.getElementById('time-display');
-  if (!timeDisplay || !videoPreview) return;
+  if (!timeDisplay || !videoPreview || !metadata) return;
 
   const current = formatTime(currentTime / 1000);
-  const total = formatTime(videoPreview.getDuration() || 0);
+  // Use metadata duration as source of truth (convert from ms to seconds)
+  const total = formatTime(metadata.video.duration / 1000);
   timeDisplay.textContent = `${current} / ${total}`;
 }
 
@@ -301,6 +308,20 @@ function formatTime(seconds: number): string {
   const mins = Math.floor(seconds / 60);
   const secs = Math.floor(seconds % 60);
   return `${mins.toString().padStart(2, '0')}:${secs.toString().padStart(2, '0')}`;
+}
+
+function updateCursorPositionDisplay(timestamp: number, videoWidth: number, videoHeight: number): void {
+  if (!metadata) return;
+  
+  const cursorPos = interpolateCursorPosition(metadata.cursor.keyframes, timestamp);
+  const cursorPositionEl = document.getElementById('cursor-position');
+  
+  if (cursorPositionEl && cursorPos) {
+    // Display cursor position in video coordinates
+    cursorPositionEl.textContent = `Cursor: (${Math.round(cursorPos.x)}, ${Math.round(cursorPos.y)})`;
+  } else if (cursorPositionEl) {
+    cursorPositionEl.textContent = 'Cursor: (—, —)';
+  }
 }
 
 function renderPreview() {
@@ -322,7 +343,30 @@ function renderPreview() {
   const videoX = videoRect.left - wrapperRect.left;
   const videoY = videoRect.top - wrapperRect.top;
 
+  const videoWidth = metadata.video.width;
+  const videoHeight = metadata.video.height;
+
+  // Calculate the actual video content area within the video element
+  // The video element preserves aspect ratio, so we need to account for letterboxing
+  const videoAspectRatio = videoWidth / videoHeight;
+  const containerAspectRatio = videoRect.width / videoRect.height;
+  
+  // Determine actual video content dimensions within the video element
+  let actualVideoDisplayWidth: number;
+  let actualVideoDisplayHeight: number;
+  
+  if (videoAspectRatio > containerAspectRatio) {
+    // Video is wider - fits to width, letterboxed top/bottom
+    actualVideoDisplayWidth = videoRect.width;
+    actualVideoDisplayHeight = videoRect.width / videoAspectRatio;
+  } else {
+    // Video is taller - fits to height, pillarboxed left/right
+    actualVideoDisplayWidth = videoRect.height * videoAspectRatio;
+    actualVideoDisplayHeight = videoRect.height;
+  }
+
   // Update canvas positions and sizes to match video element
+  // Canvas should match the video element's bounding rect for proper overlay
   cursorCanvas.width = videoRect.width;
   cursorCanvas.height = videoRect.height;
   cursorCanvas.style.width = `${videoRect.width}px`;
@@ -339,38 +383,67 @@ function renderPreview() {
   zoomCanvas.style.top = `${videoY}px`;
   zoomCanvas.style.position = 'absolute';
 
-  const videoWidth = metadata.video.width;
-  const videoHeight = metadata.video.height;
-
-  // Use actual video display dimensions
-  const displayWidth = videoRect.width;
-  const displayHeight = videoRect.height;
-
   // Clamp currentTime to video duration to match render behavior and avoid edge cases
   const videoDuration = metadata.video.duration;
   const clampedTime = Math.min(currentTime, videoDuration);
 
-  // Render cursor
+  // Calculate offset of video content within the video element (for letterboxing)
+  const videoContentOffsetX = (videoRect.width - actualVideoDisplayWidth) / 2;
+  const videoContentOffsetY = (videoRect.height - actualVideoDisplayHeight) / 2;
+
+  // Render cursor - account for video content offset within the canvas
+  // The canvas is sized to the video element (which includes letterboxing),
+  // but the video content is centered within it
+  const ctx = cursorCanvas.getContext('2d');
+  if (ctx) {
+    // Clear canvas first (before translation)
+    ctx.clearRect(0, 0, cursorCanvas.width, cursorCanvas.height);
+    
+    // Translate to video content area
+    ctx.save();
+    ctx.translate(videoContentOffsetX, videoContentOffsetY);
+
+    // Render cursor relative to video content area (no offsets needed since we translated)
+    // Pass content dimensions so scale is calculated correctly
   renderCursor(
     cursorCanvas,
     metadata,
-    clampedTime,
+      clampedTime,
     videoWidth,
     videoHeight,
-    displayWidth,
-    displayHeight
+      actualVideoDisplayWidth,
+      actualVideoDisplayHeight
   );
 
-  // Render zoom
+    ctx.restore();
+    
+    // Update cursor position display
+    updateCursorPositionDisplay(clampedTime, videoWidth, videoHeight);
+  }
+
+  // Render zoom - account for video content offset (same approach as cursor)
+  const zoomCtx = zoomCanvas.getContext('2d');
+  if (zoomCtx) {
+    // Clear canvas first (before translation)
+    zoomCtx.clearRect(0, 0, zoomCanvas.width, zoomCanvas.height);
+    
+    // Translate to video content area
+    zoomCtx.save();
+    zoomCtx.translate(videoContentOffsetX, videoContentOffsetY);
+    
+    // Render zoom relative to video content area
   renderZoom(
     zoomCanvas,
     metadata,
-    clampedTime,
+      clampedTime,
     videoWidth,
     videoHeight,
-    displayWidth,
-    displayHeight
+      actualVideoDisplayWidth,
+      actualVideoDisplayHeight
   );
+    
+    zoomCtx.restore();
+  }
 }
 
 function setupExportProgressListener() {
@@ -451,6 +524,141 @@ function updateStatus(message: string) {
   const statusText = document.getElementById('status-text');
   if (statusText) {
     statusText.textContent = message;
+  }
+}
+
+/**
+ * Automatically create cursor keyframes from click events if there are clicks
+ * but few or no cursor keyframes. This helps populate the editor with the
+ * actual click positions from the recording.
+ */
+function autoCreateKeyframesFromClicks(metadata: RecordingMetadata) {
+  if (!metadata.clicks || metadata.clicks.length === 0) {
+    return; // No clicks to convert
+  }
+
+  // Get click "down" events (actual clicks, not releases)
+  const clickDownEvents = metadata.clicks.filter(c => c.action === 'down');
+  
+  if (clickDownEvents.length === 0) {
+    return; // No actual clicks
+  }
+
+  // Check if we should auto-create keyframes
+  // Only create if there are significantly more clicks than keyframes
+  const existingKeyframes = metadata.cursor.keyframes.length;
+  const clickCount = clickDownEvents.length;
+  
+  // If there are clicks but very few keyframes (less than half the clicks),
+  // auto-create keyframes from clicks
+  if (existingKeyframes < clickCount / 2) {
+    logger.info(`Auto-creating cursor keyframes from ${clickCount} clicks (existing: ${existingKeyframes})`);
+    
+    // Get initial cursor position (first keyframe or first click position)
+    let initialX = 0;
+    let initialY = 0;
+    if (metadata.cursor.keyframes.length > 0) {
+      initialX = metadata.cursor.keyframes[0].x;
+      initialY = metadata.cursor.keyframes[0].y;
+    } else if (clickDownEvents.length > 0) {
+      initialX = clickDownEvents[0].x;
+      initialY = clickDownEvents[0].y;
+    }
+
+    // Clear existing keyframes if we're auto-creating
+    if (existingKeyframes === 0) {
+      metadata.cursor.keyframes = [];
+      
+      // Add initial keyframe at timestamp 0
+      metadata.cursor.keyframes.push({
+        timestamp: 0,
+        x: initialX,
+        y: initialY,
+      });
+    }
+
+    // Calculate 7 frames duration in milliseconds
+    const frameDurationMs = (7 / metadata.video.frameRate) * 1000;
+    const tolerance = 100;
+
+    // Track previous click position for the "7 frames before" keyframe
+    let previousClickX = initialX;
+    let previousClickY = initialY;
+
+    // Add keyframes for each click - create two keyframes per click
+    for (let i = 0; i < clickDownEvents.length; i++) {
+      const click = clickDownEvents[i];
+      
+      // Keyframe 1: 7 frames before the click, at previous click's position
+      const beforeTimestamp = Math.max(0, click.timestamp - frameDurationMs);
+      
+      // Check if keyframe already exists near this timestamp
+      const beforeExistingIndex = metadata.cursor.keyframes.findIndex(
+        kf => Math.abs(kf.timestamp - beforeTimestamp) < tolerance
+      );
+
+      if (beforeExistingIndex < 0) {
+        // Add new keyframe 7 frames before the click
+        metadata.cursor.keyframes.push({
+          timestamp: beforeTimestamp,
+          x: previousClickX,
+          y: previousClickY,
+        });
+      } else {
+        // Update existing keyframe to match previous click position
+        metadata.cursor.keyframes[beforeExistingIndex] = {
+          ...metadata.cursor.keyframes[beforeExistingIndex],
+          x: previousClickX,
+          y: previousClickY,
+        };
+      }
+
+      // Keyframe 2: At the click timestamp, at current click's position
+      const clickExistingIndex = metadata.cursor.keyframes.findIndex(
+        kf => Math.abs(kf.timestamp - click.timestamp) < tolerance
+      );
+
+      if (clickExistingIndex < 0) {
+        // Add new keyframe for this click
+        metadata.cursor.keyframes.push({
+          timestamp: click.timestamp,
+          x: click.x,
+          y: click.y,
+        });
+      } else {
+        // Update existing keyframe to match click position
+        metadata.cursor.keyframes[clickExistingIndex] = {
+          ...metadata.cursor.keyframes[clickExistingIndex],
+          x: click.x,
+          y: click.y,
+        };
+      }
+
+      // Update previous click position for next iteration
+      previousClickX = click.x;
+      previousClickY = click.y;
+    }
+
+    // Sort keyframes by timestamp
+    metadata.cursor.keyframes.sort((a, b) => a.timestamp - b.timestamp);
+
+    // Ensure there's a final keyframe at the end of the video
+    const videoDuration = metadata.video.duration;
+    const lastKeyframe = metadata.cursor.keyframes[metadata.cursor.keyframes.length - 1];
+    
+    if (!lastKeyframe || lastKeyframe.timestamp < videoDuration - 100) {
+      // Add final keyframe at the last click position or last keyframe position
+      const finalX = lastKeyframe?.x || clickDownEvents[clickDownEvents.length - 1]?.x || initialX;
+      const finalY = lastKeyframe?.y || clickDownEvents[clickDownEvents.length - 1]?.y || initialY;
+      
+      metadata.cursor.keyframes.push({
+        timestamp: videoDuration,
+        x: finalX,
+        y: finalY,
+      });
+    }
+
+    logger.info(`Created ${metadata.cursor.keyframes.length} cursor keyframes from clicks`);
   }
 }
 

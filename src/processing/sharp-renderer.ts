@@ -4,6 +4,27 @@ import type { MouseEvent, ZoomConfig, CursorConfig } from '../types';
 import { createLogger } from '../utils/logger';
 import { SmoothPosition2D, SmoothValue, applyDeadZone, getAdaptiveSmoothTime, ANIMATION_STYLES } from './smooth-motion';
 import { applyCursorMotionBlur, calculateVelocity } from './motion-blur';
+import {
+  BLACK_BACKGROUND,
+  TRANSPARENT_BACKGROUND,
+  PNG_QUALITY,
+  PNG_COMPRESSION_LEVEL,
+  SVG_DENSITY,
+  CURSOR_GLIDE_START_FRAMES,
+  CURSOR_STATIC_THRESHOLD,
+  CURSOR_HIDE_AFTER_MS,
+  CURSOR_LOOP_DURATION_SECONDS,
+  DEFAULT_ZOOM_DEAD_ZONE,
+  ZOOM_FOCUS_REQUIRED_MS,
+  ZOOM_FOCUS_THRESHOLD,
+  ZOOM_FOCUS_AREA_RADIUS,
+  ZOOM_TRANSITION_SPEED,
+  ZOOM_OUT_SPEED_MULTIPLIER,
+  ZOOM_VELOCITY_THRESHOLD,
+  MOTION_BLUR_MIN_VELOCITY,
+  MOTION_BLUR_MAX_SIGMA,
+  MOTION_BLUR_STRENGTH_MULTIPLIER,
+} from '../utils/constants';
 
 const logger = createLogger('SharpRenderer');
 
@@ -119,7 +140,7 @@ export async function renderFrame(
   pipeline = pipeline.resize(outputWidth, outputHeight, {
     fit: 'contain',
     kernel: 'lanczos3',
-    background: { r: 0, g: 0, b: 0, alpha: 1 }, // Black background for letterboxing
+    background: BLACK_BACKGROUND, // Black background for letterboxing
   });
 
   // Scale cursor position using the same scale factor and offsets as the preview
@@ -135,7 +156,7 @@ export async function renderFrame(
     try {
       // Resize cursor to the scaled target size
       let cursorImage = sharp(cursorImagePath)
-        .resize(scaledCursorSize, scaledCursorSize, { fit: 'contain', background: { r: 0, g: 0, b: 0, alpha: 0 } });
+        .resize(scaledCursorSize, scaledCursorSize, { fit: 'contain', background: TRANSPARENT_BACKGROUND });
 
       // Apply motion blur if enabled
       if (options.cursorConfig?.motionBlur?.enabled) {
@@ -149,9 +170,9 @@ export async function renderFrame(
         
         // Note: Sharp doesn't have native motion blur, so we'll apply it as a post-process
         // For now, we'll use a simple blur approximation
-        if (velocity.speed > 10) { // Only blur if moving fast enough
-          const blurSigma = velocity.speed * motionBlurStrength * 0.1;
-          cursorImage = cursorImage.blur(Math.min(blurSigma, 5));
+        if (velocity.speed > MOTION_BLUR_MIN_VELOCITY) { // Only blur if moving fast enough
+          const blurSigma = velocity.speed * motionBlurStrength * MOTION_BLUR_STRENGTH_MULTIPLIER;
+          cursorImage = cursorImage.blur(Math.min(blurSigma, MOTION_BLUR_MAX_SIGMA));
         }
       }
 
@@ -184,7 +205,7 @@ export async function renderFrame(
   }
 
   // Write output
-  await pipeline.png({ quality: 90, compressionLevel: 6 }).toFile(outputPath);
+  await pipeline.png({ quality: PNG_QUALITY, compressionLevel: PNG_COMPRESSION_LEVEL }).toFile(outputPath);
 }
 
 /**
@@ -221,8 +242,8 @@ export function createFrameDataFromEvents(
   const cursorAnimationStyle = cursorConfig?.animationStyle ?? 'mellow';
   const glideStyle = ANIMATION_STYLES[cursorAnimationStyle];
   
-  // Start gliding 7 frames before the click
-  const glideStartFrames = 7;
+  // Start gliding frames before the click
+  const glideStartFrames = CURSOR_GLIDE_START_FRAMES;
   const glideStartMs = (glideStartFrames / frameRate) * 1000; // Convert frames to milliseconds
 
   // Determine zoom animation style (prefer animationStyle over legacy smoothness)
@@ -240,7 +261,7 @@ export function createFrameDataFromEvents(
   );
 
   // Dead zone radius - prevents jitter when cursor is nearly stationary
-  const deadZoneRadius = (zoomConfig?.deadZone ?? 15) * scaleX; // Scale with video
+  const deadZoneRadius = (zoomConfig?.deadZone ?? DEFAULT_ZOOM_DEAD_ZONE) * scaleX; // Scale with video
 
   // Previous cursor position for velocity calculation
   let prevCursorX = initialX;
@@ -251,13 +272,13 @@ export function createFrameDataFromEvents(
   let prevZoomCenterY = videoDimensions.height / 2;
 
   // Track cursor movement for "hide when static" feature
-  const staticThreshold = 2; // pixels - cursor is considered static if movement < this
+  const staticThreshold = CURSOR_STATIC_THRESHOLD; // pixels - cursor is considered static if movement < this
   let lastMovementTime = 0;
-  const hideAfterMs = 1000; // Hide cursor after 1 second of no movement
+  const hideAfterMs = CURSOR_HIDE_AFTER_MS; // Hide cursor after configured milliseconds of no movement
 
   // Loop position: return cursor to initial position at end
   const loopPosition = cursorConfig?.loopPosition ?? false;
-  const loopStartFrame = loopPosition ? Math.max(0, totalFrames - Math.floor(frameRate * 0.5)) : totalFrames; // Last 0.5 seconds
+  const loopStartFrame = loopPosition ? Math.max(0, totalFrames - Math.floor(frameRate * CURSOR_LOOP_DURATION_SECONDS)) : totalFrames;
 
   // ========================================
   // CLICK-TO-CLICK CURSOR GLIDE
@@ -301,17 +322,17 @@ export function createFrameDataFromEvents(
   // ========================================
   // SMART AUTO-ZOOM: Focus Detection
   // ========================================
-  // Only zoom if user focuses on an area for 2 full seconds
+  // Only zoom if user focuses on an area for configured duration
   // Otherwise, don't zoom at all
-  const focusRequiredMs = 2000; // Must focus for 2 seconds before zoom activates
-  const focusThreshold = 80 * scaleX; // Max movement to be considered "focused" (80 logical pixels)
-  const focusAreaRadius = 150 * scaleX; // Must stay within this radius to maintain focus
+  const focusRequiredMs = ZOOM_FOCUS_REQUIRED_MS; // Must focus for configured duration before zoom activates
+  const focusThreshold = ZOOM_FOCUS_THRESHOLD * scaleX; // Max movement to be considered "focused"
+  const focusAreaRadius = ZOOM_FOCUS_AREA_RADIUS * scaleX; // Must stay within this radius to maintain focus
   
   let focusStartTime: number | null = null; // When focus started
   let focusAnchorX = initialX; // The position where focus started
   let focusAnchorY = initialY;
   let currentZoomLevel = 1.0; // Smoothly interpolate zoom level
-  const zoomTransitionSpeed = 0.03; // How fast to transition zoom (slower for smoother effect)
+  const zoomTransitionSpeed = ZOOM_TRANSITION_SPEED; // How fast to transition zoom (slower for smoother effect)
 
   for (let frameIndex = 0; frameIndex < totalFrames; frameIndex++) {
     // Calculate timestamp, clamping to videoDuration to avoid floating-point precision issues
@@ -465,7 +486,7 @@ export function createFrameDataFromEvents(
         if (targetZoomLevel > currentZoomLevel) {
           currentZoomLevel = Math.min(targetZoomLevel, currentZoomLevel + zoomTransitionSpeed);
         } else if (targetZoomLevel < currentZoomLevel) {
-          currentZoomLevel = Math.max(targetZoomLevel, currentZoomLevel - zoomTransitionSpeed * 3); // Zoom out faster
+          currentZoomLevel = Math.max(targetZoomLevel, currentZoomLevel - zoomTransitionSpeed * ZOOM_OUT_SPEED_MULTIPLIER); // Zoom out faster
         }
       } else {
         // Auto-zoom disabled, always use configured level
@@ -490,7 +511,7 @@ export function createFrameDataFromEvents(
         velocityY,
         baseSmoothTime,
         minSmoothTime,
-        800   // Velocity threshold (pixels per second)
+        ZOOM_VELOCITY_THRESHOLD   // Velocity threshold (pixels per second)
       );
 
       // Create a temporary smoother with adaptive timing
@@ -564,15 +585,15 @@ export async function prepareCursorImage(
   if (isSvg) {
     // Convert SVG to PNG using Sharp
     const svgBuffer = readFileSync(cursorPath);
-    await sharp(svgBuffer, { density: 300 })
-      .resize(size, size, { fit: 'contain', background: { r: 0, g: 0, b: 0, alpha: 0 } })
+    await sharp(svgBuffer, { density: SVG_DENSITY })
+      .resize(size, size, { fit: 'contain', background: TRANSPARENT_BACKGROUND })
       .png()
       .toFile(outputPath);
     return outputPath;
   } else {
     // Already a raster image, just resize
     await sharp(cursorPath)
-      .resize(size, size, { fit: 'contain', background: { r: 0, g: 0, b: 0, alpha: 0 } })
+      .resize(size, size, { fit: 'contain', background: TRANSPARENT_BACKGROUND })
       .png()
       .toFile(outputPath);
     return outputPath;

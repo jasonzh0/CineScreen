@@ -3,6 +3,14 @@
  * Inspired by Screen Studio's butter-smooth animations
  */
 
+import {
+  DEFAULT_VELOCITY_THRESHOLD,
+  DEFAULT_MIN_SMOOTH_TIME,
+  SMOOTHDAMP_COEFFICIENT_1,
+  SMOOTHDAMP_COEFFICIENT_2,
+  SMOOTHDAMP_CONVERGENCE_THRESHOLD,
+} from '../utils/constants';
+
 /**
  * Spring physics state for smooth following
  */
@@ -201,7 +209,7 @@ export class SmoothValue {
    * This is the same algorithm Unity uses for smooth following
    */
   update(deltaTime: number): number {
-    if (Math.abs(this.current - this.target) < 0.0001 && Math.abs(this.velocity) < 0.0001) {
+    if (Math.abs(this.current - this.target) < SMOOTHDAMP_CONVERGENCE_THRESHOLD && Math.abs(this.velocity) < SMOOTHDAMP_CONVERGENCE_THRESHOLD) {
       this.current = this.target;
       this.velocity = 0;
       return this.current;
@@ -210,7 +218,7 @@ export class SmoothValue {
     // Critically damped spring coefficients
     const omega = 2 / this.smoothTime;
     const x = omega * deltaTime;
-    const exp = 1 / (1 + x + 0.48 * x * x + 0.235 * x * x * x);
+    const exp = 1 / (1 + x + SMOOTHDAMP_COEFFICIENT_1 * x * x + SMOOTHDAMP_COEFFICIENT_2 * x * x * x);
     
     const change = this.current - this.target;
     const temp = (this.velocity + omega * change) * deltaTime;
@@ -257,7 +265,7 @@ export class SmoothPosition2D {
   update(deltaTime: number): { x: number; y: number } {
     const omega = 2 / this.smoothTime;
     const x = omega * deltaTime;
-    const exp = 1 / (1 + x + 0.48 * x * x + 0.235 * x * x * x);
+    const exp = 1 / (1 + x + SMOOTHDAMP_COEFFICIENT_1 * x * x + SMOOTHDAMP_COEFFICIENT_2 * x * x * x);
     
     // X axis
     const changeX = this.currentX - this.targetX;
@@ -316,8 +324,8 @@ export function getAdaptiveSmoothTime(
   velocityX: number,
   velocityY: number,
   baseSmoothTime: number,
-  minSmoothTime: number = 0.05,
-  velocityThreshold: number = 500
+  minSmoothTime: number = DEFAULT_MIN_SMOOTH_TIME,
+  velocityThreshold: number = DEFAULT_VELOCITY_THRESHOLD
 ): number {
   const speed = Math.sqrt(velocityX * velocityX + velocityY * velocityY);
   const speedFactor = Math.min(1, speed / velocityThreshold);

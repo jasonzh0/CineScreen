@@ -5,6 +5,7 @@ import type { RecordingConfig } from '../types';
 import { getFfmpegPath } from '../utils/ffmpeg-path';
 import { waitForFileStable, validateVideoFile } from '../utils/file-utils';
 import { createLogger } from '../utils/logger';
+import { DEFAULT_FRAME_RATE } from '../utils/constants';
 
 // Create logger for screen capture
 const logger = createLogger('ScreenCapture');
@@ -134,7 +135,7 @@ export class ScreenCapture {
     // -capture_cursor 0: Hide cursor during recording (we'll overlay it later)
     const args = [
       '-f', 'avfoundation',
-      '-framerate', String(config.frameRate || 30),
+      '-framerate', String(config.frameRate || DEFAULT_FRAME_RATE),
       '-capture_cursor', '0', // Hide cursor - we'll overlay a smooth cursor SVG later
       '-i', `${screenDeviceIndex}:0`, // Screen input (detected index) with no audio (0)
       '-an', // Explicitly disable audio encoding to prevent audio stream issues

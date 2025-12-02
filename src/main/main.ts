@@ -14,6 +14,7 @@ import { hideSystemCursor, showSystemCursor, ensureCursorVisible } from './curso
 import type { RecordingConfig, CursorConfig, RecordingState, ZoomConfig, MouseEffectsConfig } from '../types';
 import type { RecordingMetadata } from '../types/metadata';
 import { createLogger, setLogSender } from '../utils/logger';
+import { DEFAULT_FRAME_RATE } from '../utils/constants';
 
 // Create logger for main process
 const logger = createLogger('Main');
@@ -275,7 +276,7 @@ ipcMain.handle('stop-recording', async (_, config: {
       cursorConfig,
       zoomConfig,
       mouseEffectsConfig,
-      frameRate: 30,
+      frameRate: DEFAULT_FRAME_RATE,
       videoDuration: recordingDuration,
       recordingRegion: currentRecordingConfig?.region,
     });
@@ -397,7 +398,7 @@ ipcMain.handle('get-video-info', async (_, videoPath: string) => {
   return {
     width: dimensions.width,
     height: dimensions.height,
-    frameRate: 30, // Default, could be extracted from video
+    frameRate: DEFAULT_FRAME_RATE, // Default, could be extracted from video
     duration: 0, // Would need to extract from video metadata
   };
 });

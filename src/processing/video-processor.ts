@@ -11,6 +11,22 @@ import { createLogger } from '../utils/logger';
 import { easeInOut, easeIn, easeOut } from './effects';
 import type { EasingType } from '../types/metadata';
 import {
+  VIDEO_ENCODING_CRF,
+  FRAME_BATCH_SIZE,
+  FRAME_NUMBER_PADDING,
+  DEFAULT_CURSOR_SIZE,
+  DEFAULT_CURSOR_COLOR,
+  DEFAULT_CURSOR_SHAPE,
+  PROGRESS_ANALYZING_VIDEO,
+  PROGRESS_EXTRACTING_FRAMES,
+  PROGRESS_PREPARING_CURSOR,
+  PROGRESS_PROCESSING_MOUSE_DATA,
+  PROGRESS_RENDERING_START,
+  PROGRESS_RENDERING_RANGE,
+  PROGRESS_ENCODING_VIDEO,
+  PROGRESS_COMPLETE,
+} from '../utils/constants';
+import {
   extractFrames,
   encodeFrames,
   cleanupFrames,
@@ -26,23 +42,18 @@ import {
 
 const logger = createLogger('VideoProcessor');
 
-// Target output width (height calculated from aspect ratio)
-const TARGET_WIDTH = 1080;
-
 /**
- * Calculate output dimensions preserving aspect ratio
+ * Calculate output dimensions using captured video size
+ * Ensures even dimensions for video encoding
  */
 function calculateOutputDimensions(
   inputWidth: number,
-  inputHeight: number,
-  targetWidth: number = TARGET_WIDTH
+  inputHeight: number
 ): { width: number; height: number } {
-  const aspectRatio = inputHeight / inputWidth;
-  const outputHeight = Math.round(targetWidth * aspectRatio);
-  // Ensure even dimensions for video encoding
+  // Use captured dimensions, ensuring even numbers for video encoding
   return {
-    width: targetWidth,
-    height: outputHeight % 2 === 0 ? outputHeight : outputHeight + 1,
+    width: inputWidth % 2 === 0 ? inputWidth : inputWidth + 1,
+    height: inputHeight % 2 === 0 ? inputHeight : inputHeight + 1,
   };
 }
 
@@ -101,9 +112,9 @@ export class VideoProcessor {
     if (!cursorConfig) {
       logger.warn('No cursor config provided, using defaults');
       cursorConfig = {
-        size: 60,
-        shape: 'arrow',
-        color: '#000000',
+        size: DEFAULT_CURSOR_SIZE,
+        shape: DEFAULT_CURSOR_SHAPE,
+        color: DEFAULT_CURSOR_COLOR,
       };
     }
 
@@ -120,7 +131,7 @@ export class VideoProcessor {
 
     try {
       // Step 1: Get video and screen dimensions
-      onProgress?.(5, 'Analyzing video...');
+      onProgress?.(PROGRESS_ANALYZING_VIDEO, 'Analyzing video...');
     const videoDimensions = await getVideoDimensions(inputVideo);
       logger.info('Video dimensions:', videoDimensions);
 
@@ -134,7 +145,7 @@ export class VideoProcessor {
     }
 
       // Step 2: Extract frames from video
-      onProgress?.(10, 'Extracting frames...');
+      onProgress?.(PROGRESS_EXTRACTING_FRAMES, 'Extracting frames...');
       logger.info('Extracting frames from video...');
       
       const extractionResult = await extractFrames({
@@ -146,7 +157,7 @@ export class VideoProcessor {
       logger.info(`Extracted ${extractionResult.frameCount} frames`);
 
       // Step 3: Prepare cursor image
-      onProgress?.(15, 'Preparing cursor...');
+      onProgress?.(PROGRESS_PREPARING_CURSOR, 'Preparing cursor...');
       const cursorAssetPath = getCursorAssetFilePath(cursorConfig.shape);
       if (!cursorAssetPath || !existsSync(cursorAssetPath)) {
       throw new Error(`Cursor asset not found for shape: ${cursorConfig.shape}`);
@@ -161,7 +172,7 @@ export class VideoProcessor {
       mkdirSync(renderedFrameDir, { recursive: true });
         
       // Step 5: Interpolate mouse events for frame timing
-      onProgress?.(20, 'Processing mouse data...');
+      onProgress?.(PROGRESS_PROCESSING_MOUSE_DATA, 'Processing mouse data...');
       let interpolatedEvents: MouseEvent[] = [];
       try {
         interpolatedEvents = interpolateMousePositions(mouseEvents, frameRate, videoDuration);
@@ -181,16 +192,15 @@ export class VideoProcessor {
       );
       logger.info(`Created frame data for ${frameDataList.length} frames`);
 
-      // Step 7: Calculate output dimensions (preserve aspect ratio)
+      // Step 7: Calculate output dimensions (use captured video size)
       const outputDimensions = calculateOutputDimensions(
         videoDimensions.width,
-        videoDimensions.height,
-        TARGET_WIDTH
+        videoDimensions.height
       );
       logger.info('Output dimensions:', outputDimensions);
 
       // Step 8: Render frames with Sharp
-      onProgress?.(25, 'Rendering frames...');
+      onProgress?.(PROGRESS_RENDERING_START, 'Rendering frames...');
       logger.info('Rendering frames with cursor overlay and zoom...');
 
       const renderOptions: FrameRenderOptions = {
@@ -207,14 +217,14 @@ export class VideoProcessor {
 
       // Process frames in batches with progress updates
       const totalFrames = frameDataList.length;
-      const batchSize = 10;
+      const batchSize = FRAME_BATCH_SIZE;
       
       for (let i = 0; i < totalFrames; i += batchSize) {
         const batch = frameDataList.slice(i, i + batchSize);
         
         await Promise.all(
           batch.map(async (frameData) => {
-            const frameNum = String(frameData.frameIndex + 1).padStart(6, '0');
+            const frameNum = String(frameData.frameIndex + 1).padStart(FRAME_NUMBER_PADDING, '0');
             const inputPath = join(extractedFrameDir!, `frame_${frameNum}.png`);
             const outputPath = join(renderedFrameDir!, `frame_${frameNum}.png`);
 
@@ -227,15 +237,15 @@ export class VideoProcessor {
           })
         );
 
-        // Update progress (25% to 85% for rendering)
-        const progress = 25 + Math.round((i / totalFrames) * 60);
+        // Update progress (PROGRESS_RENDERING_START to PROGRESS_RENDERING_START + PROGRESS_RENDERING_RANGE for rendering)
+        const progress = PROGRESS_RENDERING_START + Math.round((i / totalFrames) * PROGRESS_RENDERING_RANGE);
         onProgress?.(progress, `Rendering frames ${i + 1}-${Math.min(i + batchSize, totalFrames)}/${totalFrames}`);
       }
 
       logger.info('Frame rendering complete');
 
       // Step 9: Encode rendered frames to video
-      onProgress?.(90, 'Encoding video...');
+      onProgress?.(PROGRESS_ENCODING_VIDEO, 'Encoding video...');
       logger.info('Encoding rendered frames to video...');
 
       await encodeFrames({
@@ -247,7 +257,7 @@ export class VideoProcessor {
         height: outputDimensions.height,
       });
       
-      onProgress?.(100, 'Complete');
+      onProgress?.(PROGRESS_COMPLETE, 'Complete');
       logger.info('Video processing completed successfully');
 
       return outputVideo;
@@ -407,18 +417,17 @@ export class VideoProcessor {
 
   /**
    * Simple video copy without effects (for fallback)
-   * Scales to target width while preserving aspect ratio
+   * Uses captured video dimensions without scaling
    */
   async copyVideoWithScale(inputVideo: string, outputVideo: string): Promise<void> {
     const ffmpegPath = getFfmpegPath();
     
-    // scale=1080:-2 means width=1080, height=auto (divisible by 2 for encoding)
+    // Copy video without scaling - use captured dimensions
     const args = [
       '-i', inputVideo,
-      '-vf', `scale=${TARGET_WIDTH}:-2`,
       '-c:v', 'libx264',
       '-preset', 'fast',
-      '-crf', '18',
+      '-crf', String(VIDEO_ENCODING_CRF),
       '-pix_fmt', 'yuv420p',
       '-movflags', 'faststart',
       '-y',
