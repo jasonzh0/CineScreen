@@ -2,7 +2,7 @@
   "name": "mac-screen-recorder",
   "version": "1.0.0",
   "description": "Screen recording software for Mac with cursor overlay",
-  "main": "dist/main/main.js",
+  "main": "dist/main/main/main.js",
   "scripts": {
     "dev": "concurrently \"npm run dev:main\" \"npm run dev:preload\" \"npm run dev:renderer\"",
     "dev:main": "tsc -w --project tsconfig.main.json",
@@ -51,11 +51,18 @@
       "gatekeeperAssess": false,
       "entitlements": "build/entitlements.mac.plist",
       "entitlementsInherit": "build/entitlements.mac.plist",
-      "info": "build/Info.plist"
+      "extendInfo": {
+        "NSCameraUsageDescription": "This app needs camera access for screen recording features.",
+        "NSMicrophoneUsageDescription": "This app needs microphone access for screen recording with audio.",
+        "NSHighResolutionCapable": true
+      }
     },
     "files": [
       "dist/**/*",
       "node_modules/**/*"
+    ],
+    "asarUnpack": [
+      "node_modules/ffmpeg-static/**/*"
     ],
     "directories": {
       "output": "release"

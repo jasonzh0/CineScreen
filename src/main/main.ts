@@ -21,8 +21,8 @@ const isDev = process.env.NODE_ENV === 'development' || !app.isPackaged;
 
 function createWindow(): void {
   const preloadPath = isDev
-    ? join(__dirname, 'preload.js') // In dev, preload is compiled to dist/main
-    : join(__dirname, 'preload.js');
+    ? join(__dirname, '../renderer/preload.js') // In dev, preload is compiled to dist/main/renderer
+    : join(__dirname, '../renderer/preload.js');
 
   mainWindow = new BrowserWindow({
     width: 400,
@@ -40,7 +40,7 @@ function createWindow(): void {
     mainWindow.loadURL('http://localhost:3000');
     mainWindow.webContents.openDevTools();
   } else {
-    mainWindow.loadFile(join(__dirname, '../renderer/index.html'));
+    mainWindow.loadFile(join(__dirname, '../../renderer/index.html'));
   }
 
   mainWindow.on('closed', () => {

@@ -1,6 +1,7 @@
 import { spawn, ChildProcess } from 'child_process';
 import { join } from 'path';
 import { mkdirSync, existsSync } from 'fs';
+import ffmpegStatic from 'ffmpeg-static';
 import type { RecordingConfig } from '../types';
 
 export class ScreenCapture {
@@ -50,9 +51,16 @@ export class ScreenCapture {
     }
 
     return new Promise((resolve, reject) => {
-      // Note: In a real implementation, you'd use ffmpeg-static or find system ffmpeg
-      // For now, we'll assume ffmpeg is available in PATH
-      this.recordingProcess = spawn('ffmpeg', args);
+      // Use ffmpeg-static to get the bundled ffmpeg binary path
+      // The binary will be unpacked from asar in production builds
+      const ffmpegPath = ffmpegStatic;
+      
+      if (!ffmpegPath) {
+        reject(new Error('FFmpeg binary not found. Please ensure ffmpeg-static is installed.'));
+        return;
+      }
+      
+      this.recordingProcess = spawn(ffmpegPath, args);
 
       this.recordingProcess.on('error', (error) => {
         this.isRecording = false;

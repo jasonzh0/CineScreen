@@ -3,6 +3,7 @@ import { join, dirname } from 'path';
 import { existsSync, mkdirSync, writeFileSync } from 'fs';
 import { promisify } from 'util';
 import { exec } from 'child_process';
+import ffmpegStatic from 'ffmpeg-static';
 import type { MouseEvent, CursorConfig } from '../types';
 import { smoothMouseMovement, interpolateMousePositions } from './effects';
 import { generateCursorSVG, saveCursorToFile } from './cursor-renderer';
@@ -98,7 +99,13 @@ export class VideoProcessor {
     ];
 
     return new Promise((resolve, reject) => {
-      const ffmpegProcess = spawn('ffmpeg', args);
+      // Use ffmpeg-static to get the bundled ffmpeg binary path
+      const ffmpegPath = ffmpegStatic || 'ffmpeg';
+      if (!ffmpegPath) {
+        reject(new Error('FFmpeg binary not found. Please ensure ffmpeg-static is installed.'));
+        return;
+      }
+      const ffmpegProcess = spawn(ffmpegPath, args);
 
       let errorOutput = '';
 
@@ -213,7 +220,13 @@ export class VideoProcessor {
       ];
 
       await new Promise<void>((resolve, reject) => {
-        const ffmpegProcess = spawn('ffmpeg', args);
+        // Use ffmpeg-static to get the bundled ffmpeg binary path
+        const ffmpegPath = ffmpegStatic || 'ffmpeg';
+        if (!ffmpegPath) {
+          reject(new Error('FFmpeg binary not found. Please ensure ffmpeg-static is installed.'));
+          return;
+        }
+        const ffmpegProcess = spawn(ffmpegPath, args);
         let errorOutput = '';
 
         ffmpegProcess.stderr?.on('data', (data) => {

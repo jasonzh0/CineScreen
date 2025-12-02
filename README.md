@@ -16,16 +16,16 @@ A macOS screen recording application built with Electron that records your scree
 pnpm install
 
 # Run in development mode
-pnpm run dev
+pnpm dev
 
 # Build
-pnpm run build
+pnpm build
 
 # Start built app
 pnpm start
 
 # Package for macOS
-pnpm run package:mac
+pnpm package:mac
 ```
 
 ## Permissions
