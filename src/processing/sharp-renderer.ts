@@ -1,9 +1,12 @@
 import sharp from 'sharp';
 import { existsSync, readFileSync } from 'fs';
 import type { MouseEvent, ZoomConfig, CursorConfig } from '../types';
+import type { CursorKeyframe, ZoomKeyframe } from '../types/metadata';
 import { createLogger } from '../utils/logger';
 import { SmoothPosition2D, SmoothValue, applyDeadZone, getAdaptiveSmoothTime, ANIMATION_STYLES } from './smooth-motion';
 import { applyCursorMotionBlur, calculateVelocity } from './motion-blur';
+import { easeInOut, easeIn, easeOut } from './effects';
+import type { EasingType } from '../types/metadata';
 import {
   BLACK_BACKGROUND,
   TRANSPARENT_BACKGROUND,
@@ -206,6 +209,235 @@ export async function renderFrame(
 
   // Write output
   await pipeline.png({ quality: PNG_QUALITY, compressionLevel: PNG_COMPRESSION_LEVEL }).toFile(outputPath);
+}
+
+/**
+ * Create frame data directly from cursor keyframes (for metadata-based export)
+ * Uses the same interpolation logic as the preview to ensure timing matches
+ */
+export function createFrameDataFromKeyframes(
+  cursorKeyframes: CursorKeyframe[],
+  zoomKeyframes: ZoomKeyframe[],
+  frameRate: number,
+  videoDuration: number,
+  videoDimensions: { width: number; height: number },
+  cursorConfig?: CursorConfig,
+  zoomConfig?: ZoomConfig
+): FrameData[] {
+  const frameInterval = 1000 / frameRate;
+  const totalFrames = Math.ceil(videoDuration / frameInterval);
+  const frameDataList: FrameData[] = [];
+
+  // Convert frame interval to seconds for velocity calculation
+  const deltaTime = frameInterval / 1000;
+
+  // Interpolate cursor position function (matching preview logic)
+  const interpolateCursor = (timestamp: number): { x: number; y: number } | null => {
+    if (cursorKeyframes.length === 0) return null;
+    if (cursorKeyframes.length === 1) {
+      return { x: cursorKeyframes[0].x, y: cursorKeyframes[0].y };
+    }
+
+    // Find bracketing keyframes
+    let prev: typeof cursorKeyframes[0] | null = null;
+    let next: typeof cursorKeyframes[0] | null = null;
+
+    for (let i = 0; i < cursorKeyframes.length; i++) {
+      if (cursorKeyframes[i].timestamp <= timestamp) {
+        prev = cursorKeyframes[i];
+        next = cursorKeyframes[i + 1] || cursorKeyframes[i];
+      } else {
+        if (!prev) {
+          prev = cursorKeyframes[0];
+          next = cursorKeyframes[0];
+        } else {
+          next = cursorKeyframes[i];
+        }
+        break;
+      }
+    }
+
+    if (!prev || !next) return null;
+    if (prev.timestamp === next.timestamp) {
+      return { x: prev.x, y: prev.y };
+    }
+
+    // Interpolate with easing
+    const timeDiff = next.timestamp - prev.timestamp;
+    const t = timeDiff > 0 ? (timestamp - prev.timestamp) / timeDiff : 0;
+    
+    // Apply easing (matching preview logic exactly)
+    const easingType: EasingType = (prev.easing || 'easeInOut') as EasingType;
+    let easedT: number;
+    switch (easingType) {
+      case 'linear':
+        easedT = t;
+        break;
+      case 'easeIn':
+        easedT = easeIn(t);
+        break;
+      case 'easeOut':
+        easedT = easeOut(t);
+        break;
+      case 'easeInOut':
+      default:
+        easedT = easeInOut(t);
+        break;
+    }
+
+    return {
+      x: prev.x + (next.x - prev.x) * easedT,
+      y: prev.y + (next.y - prev.y) * easedT,
+    };
+  };
+
+  // Interpolate zoom function
+  const interpolateZoom = (timestamp: number): { centerX: number; centerY: number; level: number } | null => {
+    if (!zoomConfig?.enabled || zoomKeyframes.length === 0) {
+      return { centerX: videoDimensions.width / 2, centerY: videoDimensions.height / 2, level: 1.0 };
+    }
+    if (zoomKeyframes.length === 1) {
+      const kf = zoomKeyframes[0];
+      return { centerX: kf.centerX, centerY: kf.centerY, level: kf.level };
+    }
+
+    // Find bracketing keyframes
+    let prev: typeof zoomKeyframes[0] | null = null;
+    let next: typeof zoomKeyframes[0] | null = null;
+
+    for (let i = 0; i < zoomKeyframes.length; i++) {
+      if (zoomKeyframes[i].timestamp <= timestamp) {
+        prev = zoomKeyframes[i];
+        next = zoomKeyframes[i + 1] || zoomKeyframes[i];
+      } else {
+        if (!prev) {
+          prev = zoomKeyframes[0];
+          next = zoomKeyframes[0];
+        } else {
+          next = zoomKeyframes[i];
+        }
+        break;
+      }
+    }
+
+    if (!prev || !next) return null;
+    if (prev.timestamp === next.timestamp) {
+      return { centerX: prev.centerX, centerY: prev.centerY, level: prev.level };
+    }
+
+    // Interpolate with easing
+    const timeDiff = next.timestamp - prev.timestamp;
+    const t = timeDiff > 0 ? (timestamp - prev.timestamp) / timeDiff : 0;
+    
+    const easingType: EasingType = (prev.easing || 'easeInOut') as EasingType;
+    let easedT: number;
+    switch (easingType) {
+      case 'linear':
+        easedT = t;
+        break;
+      case 'easeIn':
+        easedT = easeIn(t);
+        break;
+      case 'easeOut':
+        easedT = easeOut(t);
+        break;
+      case 'easeInOut':
+      default:
+        easedT = easeInOut(t);
+        break;
+    }
+
+    return {
+      centerX: prev.centerX + (next.centerX - prev.centerX) * easedT,
+      centerY: prev.centerY + (next.centerY - prev.centerY) * easedT,
+      level: prev.level + (next.level - prev.level) * easedT,
+    };
+  };
+
+  // Previous positions for velocity calculation
+  let prevCursorX = videoDimensions.width / 2;
+  let prevCursorY = videoDimensions.height / 2;
+  let prevZoomCenterX = videoDimensions.width / 2;
+  let prevZoomCenterY = videoDimensions.height / 2;
+  let prevSmoothedCursorX = videoDimensions.width / 2;
+  let prevSmoothedCursorY = videoDimensions.height / 2;
+
+  // Track cursor movement for "hide when static"
+  const staticThreshold = CURSOR_STATIC_THRESHOLD;
+  let lastMovementTime = 0;
+  const hideAfterMs = CURSOR_HIDE_AFTER_MS;
+
+  for (let frameIndex = 0; frameIndex < totalFrames; frameIndex++) {
+    // Calculate timestamp, clamping to videoDuration
+    const timestamp = Math.min(frameIndex * frameInterval, videoDuration);
+
+    // Get cursor position from keyframes
+    const cursorPos = interpolateCursor(timestamp);
+    if (!cursorPos) continue;
+
+    // Calculate velocity for motion blur
+    const velocityX = (cursorPos.x - prevCursorX) / deltaTime;
+    const velocityY = (cursorPos.y - prevCursorY) / deltaTime;
+    prevCursorX = cursorPos.x;
+    prevCursorY = cursorPos.y;
+
+    // Check if cursor is moving (for hide when static)
+    const movementDistance = Math.sqrt(
+      Math.pow(cursorPos.x - prevSmoothedCursorX, 2) +
+      Math.pow(cursorPos.y - prevSmoothedCursorY, 2)
+    );
+    
+    if (movementDistance > staticThreshold) {
+      lastMovementTime = timestamp;
+    }
+    
+    prevSmoothedCursorX = cursorPos.x;
+    prevSmoothedCursorY = cursorPos.y;
+
+    // Determine cursor visibility
+    let cursorVisible = true;
+    if (cursorConfig?.hideWhenStatic) {
+      cursorVisible = (timestamp - lastMovementTime) < hideAfterMs;
+    }
+
+    // Get zoom data
+    const zoomData = interpolateZoom(timestamp);
+    
+    if (zoomConfig?.enabled && zoomData) {
+      // Calculate zoom velocity
+      const zoomVelocityX = (zoomData.centerX - prevZoomCenterX) / deltaTime;
+      const zoomVelocityY = (zoomData.centerY - prevZoomCenterY) / deltaTime;
+      prevZoomCenterX = zoomData.centerX;
+      prevZoomCenterY = zoomData.centerY;
+
+      frameDataList.push({
+        frameIndex,
+        timestamp,
+        cursorX: cursorPos.x,
+        cursorY: cursorPos.y,
+        cursorVisible,
+        cursorVelocityX: velocityX,
+        cursorVelocityY: velocityY,
+        zoomCenterX: zoomData.centerX,
+        zoomCenterY: zoomData.centerY,
+        zoomLevel: zoomData.level,
+        zoomVelocityX,
+        zoomVelocityY,
+      });
+    } else {
+      frameDataList.push({
+        frameIndex,
+        timestamp,
+        cursorX: cursorPos.x,
+        cursorY: cursorPos.y,
+        cursorVisible,
+        cursorVelocityX: velocityX,
+        cursorVelocityY: velocityY,
+      });
+    }
+  }
+
+  return frameDataList;
 }
 
 /**

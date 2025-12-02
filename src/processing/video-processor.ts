@@ -35,6 +35,7 @@ import {
 import {
   renderFrame,
   createFrameDataFromEvents,
+  createFrameDataFromKeyframes,
   prepareCursorImage,
   type FrameRenderOptions,
   type FrameData,
@@ -292,63 +293,186 @@ export class VideoProcessor {
 
   /**
    * Process video from metadata (used by studio export)
+   * Uses keyframes directly to match preview timing exactly
    */
   async processVideoFromMetadata(options: VideoProcessingFromMetadataOptions): Promise<string> {
     const { inputVideo, outputVideo, metadata, onProgress } = options;
 
-    // Convert metadata keyframes back to per-frame mouse events
-    const frameRate = metadata.video.frameRate;
-    const videoDuration = metadata.video.duration;
-    const frameInterval = 1000 / frameRate;
-    const totalFrames = Math.ceil(videoDuration / frameInterval);
-    
-    // Generate mouse events from cursor keyframes
-    const mouseEvents: MouseEvent[] = [];
-    for (let frame = 0; frame < totalFrames; frame++) {
-      // Calculate timestamp, clamping to videoDuration to avoid floating-point precision issues
-      const timestamp = Math.min(frame * frameInterval, videoDuration);
-      const cursorPos = this.interpolateCursorKeyframe(metadata.cursor.keyframes, timestamp);
-      if (cursorPos) {
-        mouseEvents.push({
-          timestamp,
-          x: cursorPos.x,
-          y: cursorPos.y,
-          action: 'move',
-        });
-      }
+    // Validate inputs
+    if (!inputVideo || !existsSync(inputVideo)) {
+      throw new Error(`Input video file not found: ${inputVideo}`);
     }
 
-    // Add click events
-    metadata.clicks.forEach(click => {
-      mouseEvents.push({
-        timestamp: click.timestamp,
-        x: click.x,
-        y: click.y,
-        button: click.button,
-        action: click.action,
+    if (!outputVideo) {
+      throw new Error('Output video path is required');
+    }
+
+    // Ensure output directory exists
+    const outputDir = dirname(outputVideo);
+    if (!existsSync(outputDir)) {
+      mkdirSync(outputDir, { recursive: true });
+    }
+
+    const tempDir = outputDir;
+    let extractedFrameDir: string | null = null;
+    let renderedFrameDir: string | null = null;
+    let preparedCursorPath: string | null = null;
+
+    try {
+      // Step 1: Get video dimensions
+      onProgress?.(PROGRESS_ANALYZING_VIDEO, 'Analyzing video...');
+      const videoDimensions = await getVideoDimensions(inputVideo);
+      logger.info('Video dimensions:', videoDimensions);
+
+      let screenDimensions;
+      try {
+        screenDimensions = await getScreenDimensions();
+        logger.debug('Screen dimensions:', screenDimensions);
+      } catch (error) {
+        logger.warn('Could not get screen dimensions, using video dimensions:', error);
+        screenDimensions = videoDimensions;
+      }
+
+      // Step 2: Extract frames from video
+      onProgress?.(PROGRESS_EXTRACTING_FRAMES, 'Extracting frames...');
+      logger.info('Extracting frames from video...');
+      
+      const frameRate = metadata.video.frameRate;
+      const videoDuration = metadata.video.duration;
+      
+      const extractionResult = await extractFrames({
+        inputVideo,
+        outputDir: tempDir,
+        frameRate,
       });
-    });
+      extractedFrameDir = extractionResult.frameDir;
+      logger.info(`Extracted ${extractionResult.frameCount} frames`);
 
-    // Sort by timestamp
-    mouseEvents.sort((a, b) => a.timestamp - b.timestamp);
+      // Step 3: Prepare cursor image
+      onProgress?.(PROGRESS_PREPARING_CURSOR, 'Preparing cursor...');
+      const cursorConfig = metadata.cursor.config;
+      const cursorAssetPath = getCursorAssetFilePath(cursorConfig.shape);
+      if (!cursorAssetPath || !existsSync(cursorAssetPath)) {
+        throw new Error(`Cursor asset not found for shape: ${cursorConfig.shape}`);
+      }
 
-    // Convert zoom keyframes to zoom config
-    const zoomConfig: ZoomConfig | undefined = metadata.zoom.config.enabled ? {
-      ...metadata.zoom.config,
-    } : undefined;
+      preparedCursorPath = join(tempDir, `cursor_${Date.now()}.png`);
+      await prepareCursorImage(cursorAssetPath, cursorConfig.size, preparedCursorPath);
+      logger.debug('Cursor image prepared:', preparedCursorPath);
 
-    // Process video with converted data
-    return this.processVideo({
-      inputVideo,
-      outputVideo,
-      mouseEvents,
-      cursorConfig: metadata.cursor.config,
-      zoomConfig,
-      mouseEffectsConfig: metadata.effects,
-      frameRate,
-      videoDuration,
-      onProgress,
-    });
+      // Step 4: Create rendered frames directory
+      renderedFrameDir = join(tempDir, `rendered_${Date.now()}`);
+      mkdirSync(renderedFrameDir, { recursive: true });
+        
+      // Step 5: Create frame data directly from keyframes (matching preview timing)
+      onProgress?.(PROGRESS_PROCESSING_MOUSE_DATA, 'Processing keyframes...');
+      const frameDataList = createFrameDataFromKeyframes(
+        metadata.cursor.keyframes,
+        metadata.zoom.keyframes,
+        frameRate,
+        videoDuration,
+        videoDimensions,
+        cursorConfig,
+        metadata.zoom.config.enabled ? metadata.zoom.config : undefined
+      );
+      logger.info(`Created frame data for ${frameDataList.length} frames from keyframes`);
+
+      // Step 6: Calculate output dimensions
+      const outputDimensions = calculateOutputDimensions(
+        videoDimensions.width,
+        videoDimensions.height
+      );
+      logger.info('Output dimensions:', outputDimensions);
+
+      // Step 7: Render frames with Sharp
+      onProgress?.(PROGRESS_RENDERING_START, 'Rendering frames...');
+      logger.info('Rendering frames with cursor overlay and zoom...');
+
+      const renderOptions: FrameRenderOptions = {
+        frameWidth: videoDimensions.width,
+        frameHeight: videoDimensions.height,
+        outputWidth: outputDimensions.width,
+        outputHeight: outputDimensions.height,
+        cursorImagePath: preparedCursorPath,
+        cursorSize: cursorConfig.size,
+        cursorConfig,
+        zoomConfig: metadata.zoom.config.enabled ? metadata.zoom.config : undefined,
+        frameRate,
+      };
+
+      // Process frames in batches with progress updates
+      const totalFrames = frameDataList.length;
+      const batchSize = FRAME_BATCH_SIZE;
+      
+      for (let i = 0; i < totalFrames; i += batchSize) {
+        const batch = frameDataList.slice(i, i + batchSize);
+        
+        await Promise.all(
+          batch.map(async (frameData) => {
+            const frameNum = String(frameData.frameIndex + 1).padStart(FRAME_NUMBER_PADDING, '0');
+            const inputPath = join(extractedFrameDir!, `frame_${frameNum}.png`);
+            const outputPath = join(renderedFrameDir!, `frame_${frameNum}.png`);
+
+            if (!existsSync(inputPath)) {
+              logger.warn(`Frame not found: ${inputPath}`);
+              return;
+            }
+
+            await renderFrame(inputPath, outputPath, { ...frameData }, renderOptions);
+          })
+        );
+
+        // Update progress
+        const progress = PROGRESS_RENDERING_START + Math.round((i / totalFrames) * PROGRESS_RENDERING_RANGE);
+        onProgress?.(progress, `Rendering frames ${i + 1}-${Math.min(i + batchSize, totalFrames)}/${totalFrames}`);
+      }
+
+      logger.info('Frame rendering complete');
+
+      // Step 8: Encode rendered frames to video
+      onProgress?.(PROGRESS_ENCODING_VIDEO, 'Encoding video...');
+      logger.info('Encoding rendered frames to video...');
+
+      await encodeFrames({
+        frameDir: renderedFrameDir,
+        framePattern: 'frame_%06d.png',
+        outputVideo,
+        frameRate,
+        width: outputDimensions.width,
+        height: outputDimensions.height,
+      });
+      
+      onProgress?.(PROGRESS_COMPLETE, 'Complete');
+      logger.info('Video processing completed successfully');
+
+      return outputVideo;
+
+    } finally {
+      // Cleanup temp files
+      if (extractedFrameDir) {
+        try {
+          cleanupFrames(extractedFrameDir);
+        } catch (error) {
+          logger.warn('Failed to cleanup extracted frames:', error);
+        }
+      }
+
+      if (renderedFrameDir) {
+        try {
+          cleanupFrames(renderedFrameDir);
+        } catch (error) {
+          logger.warn('Failed to cleanup rendered frames:', error);
+        }
+      }
+
+      if (preparedCursorPath && existsSync(preparedCursorPath)) {
+        try {
+          unlinkSync(preparedCursorPath);
+        } catch (error) {
+          logger.warn('Failed to cleanup cursor file:', error);
+        }
+      }
+    }
   }
 
   /**
