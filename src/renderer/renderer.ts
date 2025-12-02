@@ -13,7 +13,7 @@ declare global {
         cursorConfig: CursorConfig;
         zoomConfig?: ZoomConfig;
         mouseEffectsConfig?: MouseEffectsConfig;
-      }) => Promise<{ success: boolean; outputPath: string }>;
+      }) => Promise<{ success: boolean; outputPath: string; metadataPath?: string }>;
       getRecordingState: () => Promise<{
         isRecording: boolean;
         startTime?: number;
@@ -24,6 +24,9 @@ declare global {
       removeDebugLogListener: () => void;
       onProcessingProgress: (callback: (data: { percent: number; message: string }) => void) => void;
       removeProcessingProgressListener: () => void;
+      openStudio: (videoPath: string, metadataPath: string) => Promise<{ success: boolean }>;
+      selectVideoFile: () => Promise<string | null>;
+      selectMetadataFile: () => Promise<string | null>;
     };
   }
 }
@@ -31,6 +34,7 @@ declare global {
 // DOM Elements
 const recordBtn = document.getElementById('record-btn') as HTMLButtonElement;
 const stopBtn = document.getElementById('stop-btn') as HTMLButtonElement;
+const openStudioBtn = document.getElementById('open-studio-btn') as HTMLButtonElement;
 const statusText = document.getElementById('status-text') as HTMLSpanElement;
 const recordingStatus = document.getElementById('recording-status') as HTMLDivElement;
 const screenRecordingStatus = document.getElementById('screen-recording-status') as HTMLSpanElement;
@@ -98,6 +102,7 @@ async function init() {
   await checkPermissions();
   updateUI();
   setupEventListeners();
+  setupOpenStudioButton();
 
   // Set default output path
   outputPath = await window.electronAPI.selectOutputPath();
@@ -356,6 +361,11 @@ stopBtn.addEventListener('click', async () => {
     statusText.textContent = `Recording saved to: ${result.outputPath}`;
     recordingStatus.classList.remove('recording');
 
+    // Show "Open in Studio" button if metadata was exported
+    if (result.metadataPath) {
+      showOpenStudioButton(result.outputPath, result.metadataPath);
+    }
+
     // Reset output path for next recording
     outputPath = null;
     outputPathInput.value = '';
@@ -467,6 +477,60 @@ window.electronAPI.onProcessingProgress((data: { percent: number; message: strin
     progressText.textContent = `${data.message} (${data.percent}%)`;
   }
 });
+
+function showOpenStudioButton(videoPath: string, metadataPath: string) {
+  // Show a temporary "Open in Studio" button after recording
+  const tempBtn = document.createElement('button');
+  tempBtn.className = 'btn btn-primary';
+  tempBtn.textContent = 'Open in Studio';
+  tempBtn.style.marginTop = '10px';
+  tempBtn.style.width = '100%';
+
+  tempBtn.addEventListener('click', async () => {
+    try {
+      await window.electronAPI.openStudio(videoPath, metadataPath);
+      tempBtn.remove();
+    } catch (error) {
+      console.error('Failed to open studio:', error);
+      alert(`Failed to open studio: ${error instanceof Error ? error.message : 'Unknown error'}`);
+    }
+  });
+
+  // Insert after status text
+  const recordingSection = document.querySelector('.recording-section');
+  if (recordingSection) {
+    recordingSection.appendChild(tempBtn);
+  }
+}
+
+// Set up permanent Open Studio button
+function setupOpenStudioButton() {
+  if (!openStudioBtn) {
+    console.error('Open Studio button not found');
+    return;
+  }
+
+  openStudioBtn.addEventListener('click', async () => {
+    try {
+      // Show file dialogs to select video and metadata
+      const videoPath = await window.electronAPI.selectVideoFile();
+      if (!videoPath) {
+        return; // User cancelled
+      }
+
+      const metadataPath = await window.electronAPI.selectMetadataFile();
+      if (!metadataPath) {
+        return; // User cancelled
+      }
+
+      // Open studio with selected files
+      await window.electronAPI.openStudio(videoPath, metadataPath);
+    } catch (error) {
+      console.error('Failed to open studio:', error);
+      alert(`Failed to open studio: ${error instanceof Error ? error.message : 'Unknown error'}`);
+    }
+  });
+}
 
 // Initialize on load
 init();

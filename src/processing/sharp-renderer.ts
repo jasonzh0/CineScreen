@@ -58,8 +58,13 @@ export async function renderFrame(
   // Load the frame
   let pipeline = sharp(inputPath);
 
-  // Track if cursor position needs scaling (for when zoom is disabled)
-  let cursorNeedsScaling = true;
+  // Track current frame dimensions (may change with zoom)
+  let currentFrameWidth = frameWidth;
+  let currentFrameHeight = frameHeight;
+  
+  // Track offsets for cursor positioning (for letterboxing/pillarboxing)
+  let offsetX = 0;
+  let offsetY = 0;
 
   // Apply zoom if enabled
   if (zoomConfig?.enabled && frameData.zoomLevel && frameData.zoomLevel > 1) {
@@ -87,35 +92,50 @@ export async function renderFrame(
       height: cropHeight,
     });
 
+    // Update current frame dimensions to crop size
+    currentFrameWidth = cropWidth;
+    currentFrameHeight = cropHeight;
+
     // Adjust cursor position relative to the crop
     frameData.cursorX = frameData.cursorX - cropX;
     frameData.cursorY = frameData.cursorY - cropY;
-
-    // Scale cursor position to output dimensions
-    frameData.cursorX = Math.round(frameData.cursorX * (outputWidth / cropWidth));
-    frameData.cursorY = Math.round(frameData.cursorY * (outputHeight / cropHeight));
-    cursorNeedsScaling = false; // Already scaled
   }
 
-  // Resize to output dimensions
+  // Calculate aspect-ratio preserving scale (matching preview logic)
+  const scaleX = outputWidth / currentFrameWidth;
+  const scaleY = outputHeight / currentFrameHeight;
+  const scale = Math.min(scaleX, scaleY);
+
+  // Calculate actual display dimensions after aspect-ratio preserving scaling
+  const actualDisplayWidth = currentFrameWidth * scale;
+  const actualDisplayHeight = currentFrameHeight * scale;
+
+  // Calculate offsets for letterboxing/pillarboxing (Sharp's 'contain' centers automatically)
+  offsetX = (outputWidth - actualDisplayWidth) / 2;
+  offsetY = (outputHeight - actualDisplayHeight) / 2;
+
+  // Resize with aspect ratio preservation (using 'contain' fit)
+  // Sharp will automatically preserve aspect ratio, add background, and center the image
   pipeline = pipeline.resize(outputWidth, outputHeight, {
-    fit: 'fill',
+    fit: 'contain',
     kernel: 'lanczos3',
+    background: { r: 0, g: 0, b: 0, alpha: 1 }, // Black background for letterboxing
   });
 
-  // Scale cursor position from video dimensions to output dimensions (if not already scaled)
-  if (cursorNeedsScaling) {
-    frameData.cursorX = Math.round(frameData.cursorX * (outputWidth / frameWidth));
-    frameData.cursorY = Math.round(frameData.cursorY * (outputHeight / frameHeight));
-  }
+  // Scale cursor position using the same scale factor and offsets as the preview
+  frameData.cursorX = Math.round(frameData.cursorX * scale + offsetX);
+  frameData.cursorY = Math.round(frameData.cursorY * scale + offsetY);
+
+  // Scale cursor size to match the video scale (matching preview logic)
+  const scaledCursorSize = Math.round(cursorSize * scale);
 
   // Prepare cursor overlay (only if visible)
   let cursorBuffer: Buffer | null = null;
   if (frameData.cursorVisible && existsSync(cursorImagePath)) {
     try {
-      // Resize cursor to the target size
+      // Resize cursor to the scaled target size
       let cursorImage = sharp(cursorImagePath)
-        .resize(cursorSize, cursorSize, { fit: 'contain', background: { r: 0, g: 0, b: 0, alpha: 0 } });
+        .resize(scaledCursorSize, scaledCursorSize, { fit: 'contain', background: { r: 0, g: 0, b: 0, alpha: 0 } });
 
       // Apply motion blur if enabled
       if (options.cursorConfig?.motionBlur?.enabled) {
@@ -144,14 +164,14 @@ export async function renderFrame(
   // Calculate cursor overlay position
   // Position is the top-left corner of the cursor image (centered on cursor point)
   // Subtract half cursor size to center the cursor on the position
-  const cursorLeft = Math.round(frameData.cursorX - cursorSize / 2);
-  const cursorTop = Math.round(frameData.cursorY - cursorSize / 2);
+  const cursorLeft = Math.round(frameData.cursorX - scaledCursorSize / 2);
+  const cursorTop = Math.round(frameData.cursorY - scaledCursorSize / 2);
 
   // Composite cursor overlay
   if (cursorBuffer) {
     // Ensure cursor is within bounds
-    const clampedLeft = Math.max(0, Math.min(outputWidth - cursorSize, cursorLeft));
-    const clampedTop = Math.max(0, Math.min(outputHeight - cursorSize, cursorTop));
+    const clampedLeft = Math.max(0, Math.min(outputWidth - scaledCursorSize, cursorLeft));
+    const clampedTop = Math.max(0, Math.min(outputHeight - scaledCursorSize, cursorTop));
 
     pipeline = pipeline.composite([
       {
@@ -294,7 +314,8 @@ export function createFrameDataFromEvents(
   const zoomTransitionSpeed = 0.03; // How fast to transition zoom (slower for smoother effect)
 
   for (let frameIndex = 0; frameIndex < totalFrames; frameIndex++) {
-    const timestamp = frameIndex * frameInterval;
+    // Calculate timestamp, clamping to videoDuration to avoid floating-point precision issues
+    const timestamp = Math.min(frameIndex * frameInterval, videoDuration);
 
     // ========================================
     // CLICK-TO-CLICK GLIDE: Only move between click positions

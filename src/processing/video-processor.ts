@@ -2,11 +2,14 @@ import { spawn } from 'child_process';
 import { join, dirname } from 'path';
 import { existsSync, mkdirSync, unlinkSync } from 'fs';
 import type { MouseEvent, CursorConfig, MouseEffectsConfig, ZoomConfig } from '../types';
+import type { RecordingMetadata, CursorKeyframe, ZoomKeyframe } from '../types/metadata';
 import { interpolateMousePositions } from './effects';
 import { getCursorAssetFilePath } from './cursor-renderer';
 import { getFfmpegPath } from '../utils/ffmpeg-path';
 import { getVideoDimensions, getScreenDimensions } from './video-utils';
 import { createLogger } from '../utils/logger';
+import { easeInOut, easeIn, easeOut } from './effects';
+import type { EasingType } from '../types/metadata';
 import {
   extractFrames,
   encodeFrames,
@@ -52,6 +55,13 @@ export interface VideoProcessingOptions {
   zoomConfig?: ZoomConfig;
   frameRate: number;
   videoDuration: number; // in milliseconds
+  onProgress?: (percent: number, message: string) => void;
+}
+
+export interface VideoProcessingFromMetadataOptions {
+  inputVideo: string;
+  outputVideo: string;
+  metadata: RecordingMetadata;
   onProgress?: (percent: number, message: string) => void;
 }
 
@@ -268,6 +278,131 @@ export class VideoProcessor {
         }
       }
     }
+  }
+
+  /**
+   * Process video from metadata (used by studio export)
+   */
+  async processVideoFromMetadata(options: VideoProcessingFromMetadataOptions): Promise<string> {
+    const { inputVideo, outputVideo, metadata, onProgress } = options;
+
+    // Convert metadata keyframes back to per-frame mouse events
+    const frameRate = metadata.video.frameRate;
+    const videoDuration = metadata.video.duration;
+    const frameInterval = 1000 / frameRate;
+    const totalFrames = Math.ceil(videoDuration / frameInterval);
+    
+    // Generate mouse events from cursor keyframes
+    const mouseEvents: MouseEvent[] = [];
+    for (let frame = 0; frame < totalFrames; frame++) {
+      // Calculate timestamp, clamping to videoDuration to avoid floating-point precision issues
+      const timestamp = Math.min(frame * frameInterval, videoDuration);
+      const cursorPos = this.interpolateCursorKeyframe(metadata.cursor.keyframes, timestamp);
+      if (cursorPos) {
+        mouseEvents.push({
+          timestamp,
+          x: cursorPos.x,
+          y: cursorPos.y,
+          action: 'move',
+        });
+      }
+    }
+
+    // Add click events
+    metadata.clicks.forEach(click => {
+      mouseEvents.push({
+        timestamp: click.timestamp,
+        x: click.x,
+        y: click.y,
+        button: click.button,
+        action: click.action,
+      });
+    });
+
+    // Sort by timestamp
+    mouseEvents.sort((a, b) => a.timestamp - b.timestamp);
+
+    // Convert zoom keyframes to zoom config
+    const zoomConfig: ZoomConfig | undefined = metadata.zoom.config.enabled ? {
+      ...metadata.zoom.config,
+    } : undefined;
+
+    // Process video with converted data
+    return this.processVideo({
+      inputVideo,
+      outputVideo,
+      mouseEvents,
+      cursorConfig: metadata.cursor.config,
+      zoomConfig,
+      mouseEffectsConfig: metadata.effects,
+      frameRate,
+      videoDuration,
+      onProgress,
+    });
+  }
+
+  /**
+   * Interpolate cursor position from keyframes
+   */
+  private interpolateCursorKeyframe(
+    keyframes: CursorKeyframe[],
+    timestamp: number
+  ): { x: number; y: number } | null {
+    if (keyframes.length === 0) return null;
+    if (keyframes.length === 1) {
+      return { x: keyframes[0].x, y: keyframes[0].y };
+    }
+
+    // Find bracketing keyframes
+    let prev: CursorKeyframe | null = null;
+    let next: CursorKeyframe | null = null;
+
+    for (let i = 0; i < keyframes.length; i++) {
+      if (keyframes[i].timestamp <= timestamp) {
+        prev = keyframes[i];
+        next = keyframes[i + 1] || keyframes[i];
+      } else {
+        if (!prev) {
+          prev = keyframes[0];
+          next = keyframes[0];
+        } else {
+          next = keyframes[i];
+        }
+        break;
+      }
+    }
+
+    if (!prev || !next) return null;
+    if (prev.timestamp === next.timestamp) {
+      return { x: prev.x, y: prev.y };
+    }
+
+    const timeDiff = next.timestamp - prev.timestamp;
+    const t = timeDiff > 0 ? (timestamp - prev.timestamp) / timeDiff : 0;
+    
+    // Apply easing based on keyframe easing type
+    const easingType: EasingType = prev.easing || 'easeInOut';
+    let easedT: number;
+    switch (easingType) {
+      case 'linear':
+        easedT = t;
+        break;
+      case 'easeIn':
+        easedT = easeIn(t);
+        break;
+      case 'easeOut':
+        easedT = easeOut(t);
+        break;
+      case 'easeInOut':
+      default:
+        easedT = easeInOut(t);
+        break;
+    }
+
+    return {
+      x: prev.x + (next.x - prev.x) * easedT,
+      y: prev.y + (next.y - prev.y) * easedT,
+    };
   }
 
   /**

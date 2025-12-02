@@ -39,6 +39,7 @@ export interface RecordingState {
   outputPath?: string;
   tempVideoPath?: string;
   tempMouseDataPath?: string;
+  metadataPath?: string; // Path to exported metadata JSON file
 }
 
 export interface PermissionStatus {

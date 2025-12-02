@@ -1,15 +1,18 @@
 import { app, BrowserWindow, ipcMain, dialog } from 'electron';
-import { join } from 'path';
-import { existsSync, mkdirSync } from 'fs';
+import { join, dirname, basename } from 'path';
+import { existsSync, mkdirSync, copyFileSync } from 'fs';
 import { ScreenCapture } from './screen-capture';
 import { MouseTracker } from './mouse-tracker';
 import { VideoProcessor } from '../processing/video-processor';
+import { MetadataExporter } from '../processing/metadata-exporter';
+import { createStudioWindow, getStudioWindow } from './studio-window';
 import {
   checkAllPermissions,
   requestMissingPermissions,
 } from './permissions';
 import { hideSystemCursor, showSystemCursor, ensureCursorVisible } from './cursor-visibility';
 import type { RecordingConfig, CursorConfig, RecordingState, ZoomConfig, MouseEffectsConfig } from '../types';
+import type { RecordingMetadata } from '../types/metadata';
 import { createLogger, setLogSender } from '../utils/logger';
 
 // Create logger for main process
@@ -21,6 +24,7 @@ let mouseTracker: MouseTracker | null = null;
 let recordingState: RecordingState = {
   isRecording: false,
 };
+let currentRecordingConfig: RecordingConfig | null = null;
 
 const isDev = process.env.NODE_ENV === 'development' || !app.isPackaged;
 
@@ -144,6 +148,7 @@ ipcMain.handle('start-recording', async (_, config: RecordingConfig) => {
     tempMouseDataPath,
     outputPath: config.outputPath,
   };
+  currentRecordingConfig = config;
 
   try {
     // Start mouse tracking
@@ -241,40 +246,53 @@ ipcMain.handle('stop-recording', async (_, config: {
     const recordingDuration = Date.now() - (recordingState.startTime || 0);
     logger.debug('Recording duration:', recordingDuration, 'ms');
 
-    // Process video with cursor overlay
-    logger.info('Processing video with cursor overlay...');
-    const processor = new VideoProcessor();
+    // Determine final output path
     const finalOutputPath =
       recordingState.outputPath ||
       join(app.getPath('downloads'), `recording_${Date.now()}.mp4`);
     logger.debug('Final output path:', finalOutputPath);
 
-    await processor.processVideo({
-      inputVideo: videoPath,
-      outputVideo: finalOutputPath,
+    // Ensure output directory exists
+    const outputDir = dirname(finalOutputPath);
+    if (!existsSync(outputDir)) {
+      mkdirSync(outputDir, { recursive: true });
+    }
+
+    // Copy video to final location (preserve original extension or use .mkv)
+    const videoExtension = videoPath.split('.').pop() || 'mkv';
+    const finalVideoPath = finalOutputPath.replace(/\.(mp4|mov|mkv|avi|webm)$/i, `.${videoExtension}`);
+    
+    logger.info('Copying video to final location:', finalVideoPath);
+    copyFileSync(videoPath, finalVideoPath);
+    logger.info('Video copied successfully');
+
+    // Export metadata alongside the final video
+    logger.info('Exporting metadata...');
+    const exporter = new MetadataExporter();
+    const metadataPath = await exporter.exportMetadata({
+      videoPath: finalVideoPath, // Use final video path so metadata is saved alongside it
       mouseEvents,
       cursorConfig,
       zoomConfig,
       mouseEffectsConfig,
       frameRate: 30,
       videoDuration: recordingDuration,
-      onProgress: (percent, message) => {
-        logger.debug(`Processing progress: ${percent}% - ${message}`);
-        mainWindow?.webContents.send('processing-progress', { percent, message });
-      },
+      recordingRegion: currentRecordingConfig?.region,
     });
 
-    // Clean up temp files
-    // (In production, you'd want to clean these up)
+    logger.info('Metadata exported successfully to:', metadataPath);
 
     recordingState = {
       isRecording: false,
+      tempVideoPath: videoPath,
+      metadataPath,
     };
 
-    logger.info('Recording processing completed successfully');
+    logger.info('Recording completed successfully');
     return {
       success: true,
-      outputPath: finalOutputPath,
+      outputPath: finalVideoPath, // Return final video path
+      metadataPath, // Return metadata path (saved alongside video)
     };
   } catch (error) {
     logger.error('Error processing recording:', error);
@@ -302,5 +320,139 @@ ipcMain.handle('select-output-path', async () => {
   }
 
   return result.filePath;
+});
+
+ipcMain.handle('select-video-file', async () => {
+  const result = await dialog.showOpenDialog(mainWindow!, {
+    title: 'Select Video File',
+    filters: [
+      { name: 'Video Files', extensions: ['mp4', 'mov', 'mkv', 'avi', 'webm'] },
+      { name: 'All Files', extensions: ['*'] },
+    ],
+    properties: ['openFile'],
+  });
+
+  if (result.canceled || !result.filePaths || result.filePaths.length === 0) {
+    return null;
+  }
+
+  return result.filePaths[0];
+});
+
+ipcMain.handle('select-metadata-file', async () => {
+  const result = await dialog.showOpenDialog(mainWindow!, {
+    title: 'Select Metadata File',
+    filters: [
+      { name: 'JSON Files', extensions: ['json'] },
+      { name: 'All Files', extensions: ['*'] },
+    ],
+    properties: ['openFile'],
+  });
+
+  if (result.canceled || !result.filePaths || result.filePaths.length === 0) {
+    return null;
+  }
+
+  return result.filePaths[0];
+});
+
+// Studio window IPC handlers
+ipcMain.handle('open-studio', async (_, videoPath: string, metadataPath: string) => {
+  logger.info('IPC: open-studio called', { videoPath, metadataPath });
+  
+  if (!existsSync(videoPath)) {
+    throw new Error(`Video file not found: ${videoPath}`);
+  }
+  
+  if (!existsSync(metadataPath)) {
+    throw new Error(`Metadata file not found: ${metadataPath}`);
+  }
+  
+  createStudioWindow(videoPath, metadataPath);
+  return { success: true };
+});
+
+ipcMain.handle('load-metadata', async (_, metadataPath: string): Promise<RecordingMetadata> => {
+  logger.info('IPC: load-metadata called', { metadataPath });
+  
+  if (!existsSync(metadataPath)) {
+    throw new Error(`Metadata file not found: ${metadataPath}`);
+  }
+  
+  return MetadataExporter.loadMetadata(metadataPath);
+});
+
+ipcMain.handle('get-video-info', async (_, videoPath: string) => {
+  logger.info('IPC: get-video-info called', { videoPath });
+  
+  if (!existsSync(videoPath)) {
+    throw new Error(`Video file not found: ${videoPath}`);
+  }
+  
+  const { getVideoDimensions } = await import('../processing/video-utils');
+  const dimensions = await getVideoDimensions(videoPath);
+  
+  // Get video duration and frame rate using FFprobe or similar
+  // For now, return dimensions and estimate frame rate
+  return {
+    width: dimensions.width,
+    height: dimensions.height,
+    frameRate: 30, // Default, could be extracted from video
+    duration: 0, // Would need to extract from video metadata
+  };
+});
+
+ipcMain.handle('export-video-from-studio', async (_, videoPath: string, metadataPath: string, metadata: RecordingMetadata) => {
+  logger.info('IPC: export-video-from-studio called', { videoPath, metadataPath });
+  
+  if (!existsSync(videoPath)) {
+    throw new Error(`Video file not found: ${videoPath}`);
+  }
+  
+  if (!existsSync(metadataPath)) {
+    throw new Error(`Metadata file not found: ${metadataPath}`);
+  }
+
+  // Show save dialog for output
+  const result = await dialog.showSaveDialog(mainWindow!, {
+    title: 'Export Video',
+    defaultPath: `recording_${Date.now()}.mp4`,
+    filters: [
+      { name: 'Video Files', extensions: ['mp4', 'mov'] },
+      { name: 'All Files', extensions: ['*'] },
+    ],
+  });
+
+  if (result.canceled || !result.filePath) {
+    throw new Error('Export cancelled');
+  }
+
+  const outputPath = result.filePath;
+
+  try {
+    // Process video from metadata
+    const processor = new VideoProcessor();
+    await processor.processVideoFromMetadata({
+      inputVideo: videoPath,
+      outputVideo: outputPath,
+      metadata,
+      onProgress: (percent, message) => {
+        logger.debug(`Export progress: ${percent}% - ${message}`);
+        const studioWindow = getStudioWindow();
+        if (studioWindow && !studioWindow.isDestroyed()) {
+          studioWindow.webContents.send('processing-progress', { percent, message });
+        }
+      },
+    });
+
+    logger.info('Video exported successfully');
+    return {
+      success: true,
+      outputPath,
+    };
+  } catch (error) {
+    logger.error('Export failed:', error);
+    throw error;
+  }
 });
 

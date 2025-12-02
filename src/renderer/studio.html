@@ -1,0 +1,345 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Studio - Mac Screen Recorder</title>
+  <link rel="stylesheet" href="./styles.css">
+  <style>
+    body {
+      margin: 0;
+      padding: 0;
+      font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Oxygen, Ubuntu, Cantarell, sans-serif;
+      background: #1a1a1a;
+      color: #e0e0e0;
+      overflow: hidden;
+    }
+    
+    /* Ensure content is visible even if JS fails */
+    #studio-container {
+      display: flex !important;
+      visibility: visible !important;
+      opacity: 1 !important;
+    }
+
+    #studio-container {
+      display: flex;
+      flex-direction: column;
+      height: 100vh;
+    }
+
+    #toolbar {
+      background: #2a2a2a;
+      padding: 10px 20px;
+      border-bottom: 1px solid #3a3a3a;
+      display: flex;
+      align-items: center;
+      gap: 10px;
+    }
+
+    .toolbar-button {
+      background: #3a3a3a;
+      border: 1px solid #4a4a4a;
+      color: #e0e0e0;
+      padding: 8px 16px;
+      border-radius: 4px;
+      cursor: pointer;
+      font-size: 14px;
+    }
+
+    .toolbar-button:hover {
+      background: #4a4a4a;
+    }
+
+    .toolbar-button:disabled {
+      opacity: 0.5;
+      cursor: not-allowed;
+    }
+
+    #main-content {
+      display: flex;
+      flex: 1;
+      overflow: hidden;
+    }
+
+    #video-preview-container {
+      flex: 1;
+      display: flex;
+      flex-direction: column;
+      background: #000;
+      position: relative;
+    }
+
+    #video-preview-wrapper {
+      flex: 1;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      position: relative;
+      overflow: hidden;
+    }
+
+    #video-element {
+      max-width: 100%;
+      max-height: 100%;
+      display: block;
+    }
+
+    #cursor-canvas {
+      position: absolute;
+      top: 0;
+      left: 0;
+      pointer-events: none;
+    }
+
+    #zoom-canvas {
+      position: absolute;
+      top: 0;
+      left: 0;
+      pointer-events: none;
+    }
+
+    #sidebar {
+      width: 300px;
+      background: #2a2a2a;
+      border-left: 1px solid #3a3a3a;
+      display: flex;
+      flex-direction: column;
+      overflow-y: auto;
+    }
+
+    .sidebar-section {
+      padding: 15px;
+      border-bottom: 1px solid #3a3a3a;
+    }
+
+    .sidebar-section h3 {
+      margin: 0 0 10px 0;
+      font-size: 14px;
+      font-weight: 600;
+      color: #fff;
+    }
+
+    #timeline-container {
+      background: #2a2a2a;
+      border-top: 1px solid #3a3a3a;
+      height: 200px;
+      display: flex;
+      flex-direction: column;
+    }
+
+    #timeline-header {
+      padding: 10px 20px;
+      border-bottom: 1px solid #3a3a3a;
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+    }
+
+    #timeline {
+      flex: 1;
+      position: relative;
+      overflow-x: auto;
+      overflow-y: hidden;
+      background: #1a1a1a;
+      cursor: pointer;
+    }
+
+    .timeline-ruler {
+      position: absolute;
+      top: 0;
+      left: 0;
+      right: 0;
+      height: 30px;
+      border-bottom: 1px solid #3a3a3a;
+    }
+
+    .timeline-track {
+      position: absolute;
+      top: 30px;
+      left: 0;
+      right: 0;
+      bottom: 0;
+    }
+
+    .keyframe-marker {
+      position: absolute;
+      width: 8px;
+      height: 8px;
+      border-radius: 50%;
+      transform: translate(-50%, -50%);
+      cursor: pointer;
+      border: 2px solid #fff;
+    }
+
+    .keyframe-marker.cursor {
+      background: #4a9eff;
+      top: 50%;
+    }
+
+    .keyframe-marker.zoom {
+      background: #ff6b6b;
+      top: 70%;
+    }
+
+    .keyframe-marker.click {
+      background: #51cf66;
+      top: 30%;
+    }
+
+    .playhead {
+      position: absolute;
+      top: 0;
+      bottom: 0;
+      width: 2px;
+      background: #fff;
+      pointer-events: none;
+      z-index: 10;
+    }
+
+    .playhead::before {
+      content: '';
+      position: absolute;
+      top: -5px;
+      left: -5px;
+      width: 12px;
+      height: 12px;
+      background: #fff;
+      border-radius: 50%;
+    }
+
+    #status-bar {
+      background: #2a2a2a;
+      padding: 8px 20px;
+      border-top: 1px solid #3a3a3a;
+      font-size: 12px;
+      color: #999;
+    }
+
+    #export-progress-container {
+      margin-top: 8px;
+    }
+
+    #export-progress-bar {
+      height: 4px;
+      background: #3a3a3a;
+      border-radius: 2px;
+      overflow: hidden;
+      margin-bottom: 4px;
+    }
+
+    #export-progress-fill {
+      height: 100%;
+      background: #4a9eff;
+      width: 0%;
+      transition: width 0.3s ease-out;
+    }
+
+    #export-progress-text {
+      font-size: 11px;
+      color: #999;
+    }
+  </style>
+</head>
+<body>
+  <noscript>
+    <div style="padding: 20px; color: white; background: red;">
+      JavaScript is required for the Studio interface. Please enable JavaScript.
+    </div>
+  </noscript>
+  <div id="studio-container">
+    <div id="toolbar">
+      <button id="play-pause-btn" class="toolbar-button">Play</button>
+      <button id="export-btn" class="toolbar-button">Export Video</button>
+      <div style="flex: 1;"></div>
+      <span id="time-display">00:00 / 00:00</span>
+    </div>
+
+    <div id="main-content">
+      <div id="video-preview-container">
+        <div id="video-preview-wrapper">
+          <video id="video-element" controls></video>
+          <canvas id="cursor-canvas"></canvas>
+          <canvas id="zoom-canvas"></canvas>
+        </div>
+      </div>
+
+      <div id="sidebar">
+        <div class="sidebar-section">
+          <h3>Cursor Keyframes</h3>
+          <div id="cursor-keyframes-list"></div>
+        </div>
+        <div class="sidebar-section">
+          <h3>Zoom Keyframes</h3>
+          <div id="zoom-keyframes-list"></div>
+        </div>
+        <div class="sidebar-section">
+          <h3>Properties</h3>
+          <div id="properties-panel"></div>
+        </div>
+      </div>
+    </div>
+
+    <div id="timeline-container">
+      <div id="timeline-header">
+        <span>Timeline</span>
+        <span id="zoom-controls">
+          <button id="zoom-in" class="toolbar-button" style="padding: 4px 8px;">+</button>
+          <button id="zoom-out" class="toolbar-button" style="padding: 4px 8px;">-</button>
+        </span>
+      </div>
+      <div id="timeline">
+        <div class="timeline-ruler"></div>
+        <div class="timeline-track"></div>
+        <div class="playhead"></div>
+      </div>
+    </div>
+
+    <div id="status-bar">
+      <span id="status-text">Ready</span>
+      <div id="export-progress-container">
+        <div id="export-progress-bar">
+          <div id="export-progress-fill"></div>
+        </div>
+        <div id="export-progress-text"></div>
+      </div>
+    </div>
+  </div>
+
+  <script>
+    // Immediate inline check - runs before module script
+    (function() {
+      console.log('Studio HTML script tag executing');
+      console.log('Document ready state:', document.readyState);
+      console.log('Body exists:', !!document.body);
+      
+      // Check if container exists immediately
+      setTimeout(() => {
+        const container = document.getElementById('studio-container');
+        console.log('Container check (100ms delay):', container);
+        if (!container) {
+          console.error('CRITICAL: studio-container not found!');
+          document.body.innerHTML = '<div style="padding: 20px; color: white; background: red;">ERROR: Studio container element not found. Check console.</div>';
+        }
+      }, 100);
+      
+      // Log errors
+      window.addEventListener('error', (e) => {
+        console.error('Window error:', e.error, e.message, e.filename, e.lineno);
+      });
+      
+      // Log when page fully loads
+      window.addEventListener('load', () => {
+        console.log('Page fully loaded');
+        const container = document.getElementById('studio-container');
+        console.log('Container on load:', container);
+        if (container) {
+          console.log('Container is visible:', container.offsetWidth, container.offsetHeight);
+        }
+      });
+    })();
+  </script>
+  <script type="module" src="/studio.ts"></script>
+</body>
+</html>
+

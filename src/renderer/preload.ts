@@ -1,7 +1,8 @@
 import { contextBridge, ipcRenderer } from 'electron';
 import type { RecordingConfig, CursorConfig, ZoomConfig, MouseEffectsConfig, PermissionStatus, RecordingState } from '../types';
+import type { RecordingMetadata } from '../types/metadata';
 
-contextBridge.exposeInMainWorld('electronAPI', {
+const electronAPI = {
   checkPermissions: (): Promise<PermissionStatus> =>
     ipcRenderer.invoke('check-permissions'),
 
@@ -15,7 +16,7 @@ contextBridge.exposeInMainWorld('electronAPI', {
     cursorConfig: CursorConfig;
     zoomConfig?: ZoomConfig;
     mouseEffectsConfig?: MouseEffectsConfig;
-  }): Promise<{ success: boolean; outputPath: string }> =>
+  }): Promise<{ success: boolean; outputPath: string; metadataPath?: string }> =>
     ipcRenderer.invoke('stop-recording', config),
 
   getRecordingState: (): Promise<RecordingState> =>
@@ -39,5 +40,31 @@ contextBridge.exposeInMainWorld('electronAPI', {
   removeProcessingProgressListener: () => {
     ipcRenderer.removeAllListeners('processing-progress');
   },
-});
+
+  // Studio-specific IPC methods
+  openStudio: (videoPath: string, metadataPath: string): Promise<{ success: boolean }> =>
+    ipcRenderer.invoke('open-studio', videoPath, metadataPath),
+
+  selectVideoFile: (): Promise<string | null> =>
+    ipcRenderer.invoke('select-video-file'),
+
+  selectMetadataFile: (): Promise<string | null> =>
+    ipcRenderer.invoke('select-metadata-file'),
+
+  loadMetadata: (metadataPath: string): Promise<RecordingMetadata> =>
+    ipcRenderer.invoke('load-metadata', metadataPath),
+
+  getVideoInfo: (videoPath: string): Promise<{
+    width: number;
+    height: number;
+    frameRate: number;
+    duration: number;
+  }> =>
+    ipcRenderer.invoke('get-video-info', videoPath),
+
+  exportVideo: (videoPath: string, metadataPath: string, metadata: RecordingMetadata): Promise<{ success: boolean; outputPath: string }> =>
+    ipcRenderer.invoke('export-video-from-studio', videoPath, metadataPath, metadata),
+};
+
+contextBridge.exposeInMainWorld('electronAPI', electronAPI);
 
