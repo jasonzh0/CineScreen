@@ -579,11 +579,14 @@ function autoCreateKeyframesFromClicks(metadata: RecordingMetadata) {
 
     // Calculate 7 frames duration in milliseconds
     const frameDurationMs = (7 / metadata.video.frameRate) * 1000;
-    const tolerance = 100;
+    const minKeyframeSpacing = 10; // Minimum spacing between keyframes in milliseconds
 
     // Track previous click position for the "7 frames before" keyframe
     let previousClickX = initialX;
     let previousClickY = initialY;
+
+    // Collect all new keyframes first, then deduplicate
+    const newKeyframes: CursorKeyframe[] = [];
 
     // Add keyframes for each click - create two keyframes per click
     for (let i = 0; i < clickDownEvents.length; i++) {
@@ -592,55 +595,61 @@ function autoCreateKeyframesFromClicks(metadata: RecordingMetadata) {
       // Keyframe 1: 7 frames before the click, at previous click's position
       const beforeTimestamp = Math.max(0, click.timestamp - frameDurationMs);
       
-      // Check if keyframe already exists near this timestamp
-      const beforeExistingIndex = metadata.cursor.keyframes.findIndex(
-        kf => Math.abs(kf.timestamp - beforeTimestamp) < tolerance
-      );
-
-      if (beforeExistingIndex < 0) {
-        // Add new keyframe 7 frames before the click
-        metadata.cursor.keyframes.push({
+      // Only create "before" keyframe if it's actually before the click timestamp
+      if (beforeTimestamp < click.timestamp) {
+        newKeyframes.push({
           timestamp: beforeTimestamp,
           x: previousClickX,
           y: previousClickY,
         });
-      } else {
-        // Update existing keyframe to match previous click position
-        metadata.cursor.keyframes[beforeExistingIndex] = {
-          ...metadata.cursor.keyframes[beforeExistingIndex],
-          x: previousClickX,
-          y: previousClickY,
-        };
       }
 
       // Keyframe 2: At the click timestamp, at current click's position
-      const clickExistingIndex = metadata.cursor.keyframes.findIndex(
-        kf => Math.abs(kf.timestamp - click.timestamp) < tolerance
-      );
-
-      if (clickExistingIndex < 0) {
-        // Add new keyframe for this click
-        metadata.cursor.keyframes.push({
-          timestamp: click.timestamp,
-          x: click.x,
-          y: click.y,
-        });
-      } else {
-        // Update existing keyframe to match click position
-        metadata.cursor.keyframes[clickExistingIndex] = {
-          ...metadata.cursor.keyframes[clickExistingIndex],
-          x: click.x,
-          y: click.y,
-        };
-      }
+      newKeyframes.push({
+        timestamp: click.timestamp,
+        x: click.x,
+        y: click.y,
+      });
 
       // Update previous click position for next iteration
       previousClickX = click.x;
       previousClickY = click.y;
     }
 
+    // Add new keyframes to existing ones
+    metadata.cursor.keyframes.push(...newKeyframes);
+
     // Sort keyframes by timestamp
     metadata.cursor.keyframes.sort((a, b) => a.timestamp - b.timestamp);
+
+    // Deduplicate keyframes - ensure each timestamp is unique
+    // Group keyframes by timestamp (within minKeyframeSpacing) and keep only one per group
+    const deduplicated: CursorKeyframe[] = [];
+    
+    for (let i = 0; i < metadata.cursor.keyframes.length; i++) {
+      const current = metadata.cursor.keyframes[i];
+      
+      // Check if this keyframe is too close to the previous one
+      if (deduplicated.length > 0) {
+        const last = deduplicated[deduplicated.length - 1];
+        const timeDiff = current.timestamp - last.timestamp;
+        
+        if (timeDiff < minKeyframeSpacing) {
+          // Too close - merge by keeping the later one (prefer click position over "before" position)
+          if (current.timestamp >= last.timestamp) {
+            deduplicated[deduplicated.length - 1] = current;
+          }
+          // Otherwise keep the existing one
+          continue;
+        }
+      }
+      
+      // Far enough from previous keyframe - add it
+      deduplicated.push(current);
+    }
+    
+    // Replace with deduplicated array
+    metadata.cursor.keyframes = deduplicated;
 
     // Ensure there's a final keyframe at the end of the video
     const videoDuration = metadata.video.duration;
