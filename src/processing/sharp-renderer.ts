@@ -17,6 +17,8 @@ import {
   CURSOR_STATIC_THRESHOLD,
   CURSOR_HIDE_AFTER_MS,
   CURSOR_LOOP_DURATION_SECONDS,
+  CURSOR_CLICK_ANIMATION_DURATION_MS,
+  CURSOR_CLICK_ANIMATION_SCALE,
   DEFAULT_ZOOM_DEAD_ZONE,
   ZOOM_FOCUS_REQUIRED_MS,
   ZOOM_FOCUS_THRESHOLD,
@@ -51,6 +53,7 @@ export interface FrameData {
   cursorVisible: boolean; // Whether cursor should be visible
   cursorVelocityX: number; // For motion blur
   cursorVelocityY: number;
+  clickAnimationScale?: number; // Scale factor for click animation (0-1)
   zoomCenterX?: number;
   zoomCenterY?: number;
   zoomLevel?: number;
@@ -172,8 +175,11 @@ export async function renderFrame(
     logger.debug(`renderFrame: cursorX=${frameData.cursorX}, cursorY=${frameData.cursorY} (after scaling: scale=${scale}, offsetX=${offsetX}, offsetY=${offsetY})`);
   }
 
-  // Scale cursor size to match the video scale (matching preview logic)
-  const scaledCursorSize = Math.round(cursorSize * scale);
+  // Calculate click animation scale (default to 1.0 if not set)
+  const clickAnimationScale = frameData.clickAnimationScale ?? 1.0;
+
+  // Scale cursor size to match the video scale and click animation (matching preview logic)
+  const scaledCursorSize = Math.round(cursorSize * scale * clickAnimationScale);
 
   // Prepare cursor overlay (only if visible)
   let cursorBuffer: Buffer | null = null;
@@ -234,6 +240,49 @@ export async function renderFrame(
 }
 
 /**
+ * Calculate cursor click animation scale based on time since click
+ * Returns 1.0 (no scale) if no click is active, or scale value (0-1) during animation
+ */
+function calculateClickAnimationScale(
+  timestamp: number,
+  clicks: Array<{ timestamp: number; action: string }>
+): number {
+  // Find the most recent click "down" event within animation duration
+  const clickDownEvents = clicks.filter(c => c.action === 'down');
+  let mostRecentClick: { timestamp: number } | null = null;
+  
+  for (const click of clickDownEvents) {
+    const timeSinceClick = timestamp - click.timestamp;
+    if (timeSinceClick >= 0 && timeSinceClick <= CURSOR_CLICK_ANIMATION_DURATION_MS) {
+      if (!mostRecentClick || click.timestamp > mostRecentClick.timestamp) {
+        mostRecentClick = click;
+      }
+    }
+  }
+
+  if (!mostRecentClick) {
+    return 1.0; // No active click animation
+  }
+
+  const timeSinceClick = timestamp - mostRecentClick.timestamp;
+  const progress = timeSinceClick / CURSOR_CLICK_ANIMATION_DURATION_MS;
+  
+  // Scale down quickly, then scale back up
+  // Use easeOut for scale down (first half), easeIn for scale up (second half)
+  if (progress < 0.5) {
+    // Scale down phase (0 to 0.5)
+    const t = progress * 2; // 0 to 1
+    const easedT = easeOut(t);
+    return 1.0 - (1.0 - CURSOR_CLICK_ANIMATION_SCALE) * easedT;
+  } else {
+    // Scale up phase (0.5 to 1.0)
+    const t = (progress - 0.5) * 2; // 0 to 1
+    const easedT = easeIn(t);
+    return CURSOR_CLICK_ANIMATION_SCALE + (1.0 - CURSOR_CLICK_ANIMATION_SCALE) * easedT;
+  }
+}
+
+/**
  * Create frame data directly from cursor keyframes (for metadata-based export)
  * Uses the same interpolation logic as the preview to ensure timing matches
  */
@@ -244,7 +293,8 @@ export function createFrameDataFromKeyframes(
   videoDuration: number,
   videoDimensions: { width: number; height: number },
   cursorConfig?: CursorConfig,
-  zoomConfig?: ZoomConfig
+  zoomConfig?: ZoomConfig,
+  clicks?: Array<{ timestamp: number; action: string }>
 ): FrameData[] {
   const frameInterval = 1000 / frameRate;
   const totalFrames = Math.ceil(videoDuration / frameInterval);
@@ -442,6 +492,9 @@ export function createFrameDataFromKeyframes(
       cursorVisible = (timestamp - lastMovementTime) < hideAfterMs;
     }
 
+    // Calculate click animation scale
+    const clickAnimationScale = clicks ? calculateClickAnimationScale(timestamp, clicks) : 1.0;
+
     // Get zoom data
     const zoomData = interpolateZoom(timestamp);
 
@@ -460,6 +513,7 @@ export function createFrameDataFromKeyframes(
         cursorVisible,
         cursorVelocityX: velocityX,
         cursorVelocityY: velocityY,
+        clickAnimationScale,
         zoomCenterX: zoomData.centerX,
         zoomCenterY: zoomData.centerY,
         zoomLevel: zoomData.level,
@@ -475,6 +529,7 @@ export function createFrameDataFromKeyframes(
         cursorVisible,
         cursorVelocityX: velocityX,
         cursorVelocityY: velocityY,
+        clickAnimationScale,
       });
     }
   }
@@ -493,7 +548,8 @@ export function createFrameDataFromEvents(
   videoDimensions: { width: number; height: number },
   screenDimensions: { width: number; height: number },
   cursorConfig?: CursorConfig,
-  zoomConfig?: ZoomConfig
+  zoomConfig?: ZoomConfig,
+  clicks?: Array<{ timestamp: number; action: string }>
 ): FrameData[] {
   const frameInterval = 1000 / frameRate;
   const totalFrames = Math.ceil(videoDuration / frameInterval);
@@ -590,6 +646,9 @@ export function createFrameDataFromEvents(
     if (targetIndex >= events.length) {
       targetIndex = events.length - 1;
     }
+    if (targetIndex < 0) {
+      targetIndex = 0;
+    }
 
     let targetCursorX = initialX;
     let targetCursorY = initialY;
@@ -640,6 +699,9 @@ export function createFrameDataFromEvents(
       // Only hide if cursor hasn't moved in the last hideAfterMs milliseconds
       cursorVisible = (timestamp - lastMovementTime) < hideAfterMs;
     }
+
+    // Calculate click animation scale
+    const clickAnimationScale = clicks ? calculateClickAnimationScale(timestamp, clicks) : 1.0;
 
     // ========================================
     // SMART AUTO-ZOOM: 2-Second Focus Detection
@@ -747,6 +809,7 @@ export function createFrameDataFromEvents(
         cursorVisible,
         cursorVelocityX: velocityX,
         cursorVelocityY: velocityY,
+        clickAnimationScale,
         zoomCenterX,
         zoomCenterY,
         zoomLevel,
@@ -762,6 +825,7 @@ export function createFrameDataFromEvents(
         cursorVisible,
         cursorVelocityX: velocityX,
         cursorVelocityY: velocityY,
+        clickAnimationScale,
       });
     }
   }

@@ -200,7 +200,8 @@ export class VideoProcessor {
         videoDimensions,
         screenDimensions,
         cursorConfig,
-        zoomConfig
+        zoomConfig,
+        undefined // Clicks not available in this path (only in metadata-based export)
       );
       logger.info(`Created frame data for ${frameDataList.length} frames (matching ${extractionResult.frameCount} extracted frames)`);
 
@@ -420,7 +421,8 @@ export class VideoProcessor {
         effectiveVideoDuration,
         videoDimensions,
         cursorConfig,
-        metadata.zoom.config.enabled ? metadata.zoom.config : undefined
+        metadata.zoom.config.enabled ? metadata.zoom.config : undefined,
+        metadata.clicks
       );
       logger.info(`Created frame data for ${frameDataList.length} frames from keyframes (matching ${extractionResult.frameCount} extracted frames)`);
 

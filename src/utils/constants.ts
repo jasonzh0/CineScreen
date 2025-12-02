@@ -54,7 +54,7 @@ export const DEFAULT_CURSOR_SHAPE = 'arrow';
 /**
  * Number of frames before a click to start gliding cursor towards click position
  */
-export const CURSOR_GLIDE_START_FRAMES = 7;
+export const CURSOR_GLIDE_START_FRAMES = 16;
 
 /**
  * Pixels threshold - cursor is considered static if movement < this
@@ -70,6 +70,23 @@ export const CURSOR_HIDE_AFTER_MS = 1000;
  * Duration in seconds for cursor loop position animation (return to initial position)
  */
 export const CURSOR_LOOP_DURATION_SECONDS = 0.5;
+
+/**
+ * Default cursor frame offset (negative = earlier, positive = later)
+ * Default is -10 frames (cursor arrives 10 frames earlier)
+ */
+export const DEFAULT_CURSOR_FRAME_OFFSET = -10;
+
+/**
+ * Cursor click animation duration in milliseconds
+ */
+export const CURSOR_CLICK_ANIMATION_DURATION_MS = 200;
+
+/**
+ * Cursor click animation scale down amount (0-1)
+ * 0.8 means cursor scales to 80% of original size
+ */
+export const CURSOR_CLICK_ANIMATION_SCALE = 0.8;
 
 // ========================================
 // Zoom Configuration Constants

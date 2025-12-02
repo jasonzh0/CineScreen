@@ -1,5 +1,9 @@
 import type { RecordingMetadata, CursorKeyframe, EasingType } from '../../types/metadata';
 import { easeInOut, easeIn, easeOut } from '../../processing/effects';
+import { 
+  CURSOR_CLICK_ANIMATION_DURATION_MS,
+  CURSOR_CLICK_ANIMATION_SCALE
+} from '../../utils/constants';
 
 /**
  * Apply easing function based on type
@@ -88,6 +92,49 @@ export function interpolateCursorPosition(
 }
 
 /**
+ * Calculate cursor click animation scale based on time since click
+ * Returns 1.0 (no scale) if no click is active, or scale value (0-1) during animation
+ */
+function calculateClickAnimationScale(
+  timestamp: number,
+  clicks: Array<{ timestamp: number; action: string }>
+): number {
+  // Find the most recent click "down" event within animation duration
+  const clickDownEvents = clicks.filter(c => c.action === 'down');
+  let mostRecentClick: { timestamp: number } | null = null;
+  
+  for (const click of clickDownEvents) {
+    const timeSinceClick = timestamp - click.timestamp;
+    if (timeSinceClick >= 0 && timeSinceClick <= CURSOR_CLICK_ANIMATION_DURATION_MS) {
+      if (!mostRecentClick || click.timestamp > mostRecentClick.timestamp) {
+        mostRecentClick = click;
+      }
+    }
+  }
+
+  if (!mostRecentClick) {
+    return 1.0; // No active click animation
+  }
+
+  const timeSinceClick = timestamp - mostRecentClick.timestamp;
+  const progress = timeSinceClick / CURSOR_CLICK_ANIMATION_DURATION_MS;
+  
+  // Scale down quickly, then scale back up
+  // Use easeOut for scale down (first half), easeIn for scale up (second half)
+  if (progress < 0.5) {
+    // Scale down phase (0 to 0.5)
+    const t = progress * 2; // 0 to 1
+    const easedT = easeOut(t);
+    return 1.0 - (1.0 - CURSOR_CLICK_ANIMATION_SCALE) * easedT;
+  } else {
+    // Scale up phase (0.5 to 1.0)
+    const t = (progress - 0.5) * 2; // 0 to 1
+    const easedT = easeIn(t);
+    return CURSOR_CLICK_ANIMATION_SCALE + (1.0 - CURSOR_CLICK_ANIMATION_SCALE) * easedT;
+  }
+}
+
+/**
  * Render cursor on canvas
  */
 export function renderCursor(
@@ -105,7 +152,7 @@ export function renderCursor(
   // Clear canvas
   ctx.clearRect(0, 0, canvas.width, canvas.height);
 
-  // Get cursor position at this timestamp
+  // Get cursor position at timestamp
   const cursorPos = interpolateCursorPosition(metadata.cursor.keyframes, timestamp);
   if (!cursorPos) return;
 
@@ -131,8 +178,11 @@ export function renderCursor(
   const shape = cursorPos.shape || config.shape || 'arrow';
   const color = cursorPos.color || config.color || '#000000';
 
-  // Scale cursor size
-  const cursorSize = size * scale;
+  // Calculate click animation scale
+  const clickAnimationScale = calculateClickAnimationScale(timestamp, metadata.clicks || []);
+
+  // Scale cursor size (base scale * click animation scale)
+  const cursorSize = size * scale * clickAnimationScale;
 
   // Draw cursor (simplified - in production you'd load the actual cursor SVG/image)
   drawCursorShape(ctx, x, y, cursorSize, shape, color);

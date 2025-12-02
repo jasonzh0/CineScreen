@@ -322,13 +322,6 @@ function setupSettingsPanel() {
   const zoomEnabledCheckbox = document.getElementById('zoom-enabled-setting') as HTMLInputElement;
   const zoomLevelSlider = document.getElementById('zoom-level-setting') as HTMLInputElement;
   const zoomLevelValue = document.getElementById('zoom-level-value-setting') as HTMLSpanElement;
-  
-  const clickCirclesEnabled = document.getElementById('click-circles-enabled-setting') as HTMLInputElement;
-  const clickCirclesSizeSlider = document.getElementById('click-circles-size-setting') as HTMLInputElement;
-  const clickCirclesSizeValue = document.getElementById('click-circles-size-value-setting') as HTMLSpanElement;
-  const clickCirclesColorPicker = document.getElementById('click-circles-color-setting') as HTMLInputElement;
-  const clickCirclesDurationSlider = document.getElementById('click-circles-duration-setting') as HTMLInputElement;
-  const clickCirclesDurationValue = document.getElementById('click-circles-duration-value-setting') as HTMLSpanElement;
 
   // Load current settings from metadata
   if (metadata.cursor.config) {
@@ -343,18 +336,6 @@ function setupSettingsPanel() {
     zoomLevelSlider.value = String(metadata.zoom.config.level || 2.0);
     zoomLevelValue.textContent = String(metadata.zoom.config.level || 2.0);
     updateZoomSettingsVisibility();
-  }
-
-  if (metadata.effects) {
-    if (metadata.effects.clickCircles) {
-      clickCirclesEnabled.checked = metadata.effects.clickCircles.enabled || false;
-      clickCirclesSizeSlider.value = String(metadata.effects.clickCircles.size || 40);
-      clickCirclesSizeValue.textContent = String(metadata.effects.clickCircles.size || 40);
-      clickCirclesColorPicker.value = metadata.effects.clickCircles.color || '#3b82f6';
-      clickCirclesDurationSlider.value = String(metadata.effects.clickCircles.duration || 500);
-      clickCirclesDurationValue.textContent = String(metadata.effects.clickCircles.duration || 500);
-      updateClickCirclesSettingsVisibility();
-    }
   }
 
   // Cursor settings
@@ -399,43 +380,6 @@ function setupSettingsPanel() {
     }
   });
 
-  // Click circles settings
-  clickCirclesEnabled.addEventListener('change', () => {
-    if (metadata) {
-      if (!metadata.effects) {
-        metadata.effects = {
-          clickCircles: { enabled: false, size: 40, color: '#3b82f6', duration: 500 },
-          trail: { enabled: false, length: 10, fadeSpeed: 0.5, color: '#3b82f6' },
-          highlightRing: { enabled: false, size: 40, color: '#3b82f6', pulseSpeed: 0.5 },
-        };
-      }
-      metadata.effects.clickCircles.enabled = clickCirclesEnabled.checked;
-      updateClickCirclesSettingsVisibility();
-    }
-  });
-
-  clickCirclesSizeSlider.addEventListener('input', (e) => {
-    const value = (e.target as HTMLInputElement).value;
-    clickCirclesSizeValue.textContent = value;
-    if (metadata && metadata.effects) {
-      metadata.effects.clickCircles.size = parseInt(value);
-    }
-  });
-
-  clickCirclesColorPicker.addEventListener('input', (e) => {
-    if (metadata && metadata.effects) {
-      metadata.effects.clickCircles.color = (e.target as HTMLInputElement).value;
-    }
-  });
-
-  clickCirclesDurationSlider.addEventListener('input', (e) => {
-    const value = (e.target as HTMLInputElement).value;
-    clickCirclesDurationValue.textContent = value;
-    if (metadata && metadata.effects) {
-      metadata.effects.clickCircles.duration = parseInt(value);
-    }
-  });
-
   function updateZoomSettingsVisibility() {
     const zoomLevelItem = document.getElementById('zoom-level-setting-item');
     if (zoomLevelItem) {
@@ -443,22 +387,8 @@ function setupSettingsPanel() {
     }
   }
 
-  function updateClickCirclesSettingsVisibility() {
-    const items = [
-      document.getElementById('click-circles-settings-item'),
-      document.getElementById('click-circles-color-item'),
-      document.getElementById('click-circles-duration-item'),
-    ];
-    items.forEach(item => {
-      if (item) {
-        item.style.display = clickCirclesEnabled.checked ? 'block' : 'none';
-      }
-    });
-  }
-
   // Initialize visibility
   updateZoomSettingsVisibility();
-  updateClickCirclesSettingsVisibility();
 }
 
 function setupEventListeners() {

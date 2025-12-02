@@ -5,10 +5,51 @@ import type { MouseEvent, CursorConfig, ZoomConfig, MouseEffectsConfig } from '.
 import type { RecordingMetadata, CursorKeyframe, ZoomKeyframe, ClickEvent, VideoInfo } from '../types/metadata';
 import { getVideoDimensions } from './video-utils';
 import { createLogger } from '../utils/logger';
+import { DEFAULT_CURSOR_FRAME_OFFSET } from '../utils/constants';
 
 const logger = createLogger('MetadataExporter');
 
 const METADATA_VERSION = '1.0.0';
+
+/**
+ * Apply frame offset to metadata timestamps
+ * Shifts all timestamps (cursor keyframes, zoom keyframes, clicks) forward by the frame offset
+ * This makes the cursor appear earlier in the video timeline
+ */
+export function applyFrameOffsetToMetadata(
+  metadata: RecordingMetadata,
+  frameOffset: number = DEFAULT_CURSOR_FRAME_OFFSET
+): RecordingMetadata {
+  const frameRate = metadata.video.frameRate;
+  const frameInterval = 1000 / frameRate;
+  const offsetMs = frameOffset * frameInterval;
+
+  // Create a copy of metadata to avoid mutating the original
+  const adjustedMetadata: RecordingMetadata = {
+    ...metadata,
+    cursor: {
+      ...metadata.cursor,
+      keyframes: metadata.cursor.keyframes.map(kf => ({
+        ...kf,
+        timestamp: Math.max(0, kf.timestamp + offsetMs),
+      })),
+    },
+    zoom: {
+      ...metadata.zoom,
+      keyframes: metadata.zoom.keyframes.map(kf => ({
+        ...kf,
+        timestamp: Math.max(0, kf.timestamp + offsetMs),
+      })),
+    },
+    clicks: metadata.clicks.map(click => ({
+      ...click,
+      timestamp: Math.max(0, click.timestamp + offsetMs),
+    })),
+  };
+
+  logger.debug(`Applied frame offset of ${frameOffset} frames (${offsetMs.toFixed(2)}ms) to metadata timestamps`);
+  return adjustedMetadata;
+}
 
 /**
  * Converts raw mouse events to cursor keyframes
@@ -278,7 +319,7 @@ export class MetadataExporter {
   }
 
   /**
-   * Load metadata from JSON file
+   * Load metadata from JSON file and apply frame offset to timestamps
    */
   static loadMetadata(metadataPath: string): RecordingMetadata {
     const { readFileSync } = require('fs');
@@ -286,7 +327,10 @@ export class MetadataExporter {
       const data = readFileSync(metadataPath, 'utf-8');
       const metadata = JSON.parse(data) as RecordingMetadata;
       logger.info(`Metadata loaded from: ${metadataPath}`);
-      return metadata;
+      
+      // Apply frame offset to all timestamps
+      const adjustedMetadata = applyFrameOffsetToMetadata(metadata);
+      return adjustedMetadata;
     } catch (error) {
       logger.error('Failed to load metadata:', error);
       throw new Error(`Failed to load metadata: ${error instanceof Error ? error.message : String(error)}`);
