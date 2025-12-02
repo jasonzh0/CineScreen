@@ -36,6 +36,9 @@ export class Timeline {
     this.metadata = metadata;
     this.duration = duration;
     this.updateTimelineWidth();
+    // Force a reflow to ensure width is applied
+    void this.ruler.offsetWidth;
+    void this.track.offsetWidth;
     this.render();
   }
 
@@ -52,18 +55,13 @@ export class Timeline {
     // Set width on ruler and track to make timeline scrollable
     // Remove 'right: 0' CSS that would override the width
     this.ruler.style.width = `${timelineWidth}px`;
+    this.ruler.style.minWidth = `${timelineWidth}px`;
+    this.ruler.style.maxWidth = `${timelineWidth}px`;
     this.ruler.style.right = 'auto';
     this.track.style.width = `${timelineWidth}px`;
+    this.track.style.minWidth = `${timelineWidth}px`;
+    this.track.style.maxWidth = `${timelineWidth}px`;
     this.track.style.right = 'auto';
-    
-    logger.debug('Timeline width updated:', {
-      duration: this.duration.toFixed(2),
-      durationSeconds: durationSeconds.toFixed(2),
-      pixelsPerSecond: this.pixelsPerSecond,
-      timelineWidth: timelineWidth.toFixed(2),
-      rulerWidth: this.ruler.offsetWidth.toFixed(2),
-      trackWidth: this.track.offsetWidth.toFixed(2),
-    });
   }
 
   /**
@@ -83,20 +81,8 @@ export class Timeline {
 
   updatePlayhead(time: number) {
     if (!this.duration) return;
-    // time is in seconds, duration is in milliseconds
-    const timeMs = time * 1000;
-    const timelineWidth = this.getTimelineWidth();
-    const position = (timeMs / this.duration) * timelineWidth;
+    const position = time * this.pixelsPerSecond;
     this.playhead.style.left = `${position}px`;
-    
-    // Debug logging
-    logger.debug('Timeline playhead update:', {
-      time: time.toFixed(3),
-      timeMs: timeMs.toFixed(2),
-      duration: this.duration.toFixed(2),
-      timelineWidth: timelineWidth.toFixed(2),
-      position: position.toFixed(2),
-    });
   }
 
   private setupEventListeners() {
@@ -132,27 +118,16 @@ export class Timeline {
     const rect = this.container.getBoundingClientRect();
     const mouseX = e.clientX - rect.left;
     const scrollLeft = this.container.scrollLeft;
-    // Calculate mouse position relative to the timeline content, accounting for scroll position
-    const x = mouseX + scrollLeft;
+    let x = mouseX + scrollLeft;
     
+    // Clamp x to the actual timeline width to prevent seeking beyond the video duration
     const timelineWidth = this.getTimelineWidth();
+    x = Math.max(0, Math.min(x, timelineWidth));
     
-    // Calculate time based on position in the full timeline
-    const timeMs = (x / timelineWidth) * this.duration;
-    const timeSeconds = timeMs / 1000; // Convert to seconds
-    const clampedTime = Math.max(0, Math.min(timeSeconds, this.duration / 1000));
-    
-    // Debug logging
-    logger.debug('Timeline seek calculation:', {
-      mouseX: mouseX.toFixed(2),
-      scrollLeft: scrollLeft.toFixed(2),
-      absoluteX: x.toFixed(2),
-      timelineWidth: timelineWidth.toFixed(2),
-      duration: this.duration.toFixed(2),
-      timeMs: timeMs.toFixed(2),
-      timeSeconds: timeSeconds.toFixed(3),
-      clampedTime: clampedTime.toFixed(3),
-    });
+    // Calculate time: position (px) / pixelsPerSecond = time in seconds
+    const timeSeconds = x / this.pixelsPerSecond;
+    const durationSeconds = this.duration / 1000;
+    const clampedTime = Math.max(0, Math.min(timeSeconds, durationSeconds));
     
     if (this.onSeek) {
       this.onSeek(clampedTime);
@@ -162,19 +137,15 @@ export class Timeline {
   private render() {
     if (!this.metadata || !this.duration) return;
 
-    // Ensure timeline width is set
     this.updateTimelineWidth();
     
-    // Wait for container to have width before rendering
     if (this.container.offsetWidth === 0) {
-      // Defer rendering until container has dimensions
       setTimeout(() => this.render(), 100);
       return;
     }
     
     const timelineWidth = this.getTimelineWidth();
     if (timelineWidth === 0) {
-      // Defer rendering until timeline has width
       setTimeout(() => this.render(), 100);
       return;
     }
@@ -205,12 +176,9 @@ export class Timeline {
   private createKeyframeMarker(timestamp: number, type: 'cursor' | 'zoom' | 'click', data: any) {
     if (!this.duration || this.duration === 0) return;
     
-    const timelineWidth = this.getTimelineWidth();
-    if (timelineWidth === 0) return; // Can't position if timeline has no width
-    
-    // Clamp timestamp to actual video duration (keyframes beyond video end won't be shown)
     const clampedTimestamp = Math.max(0, Math.min(timestamp, this.duration));
-    const position = (clampedTimestamp / this.duration) * timelineWidth;
+    const timeSeconds = clampedTimestamp / 1000;
+    const position = timeSeconds * this.pixelsPerSecond;
     
     const marker = document.createElement('div');
     marker.className = `keyframe-marker ${type}`;
@@ -221,7 +189,7 @@ export class Timeline {
     
     marker.addEventListener('click', (e) => {
       e.stopPropagation();
-      const time = clampedTimestamp / 1000; // Use clamped timestamp for seeking
+      const time = clampedTimestamp / 1000;
       if (this.onSeek) {
         this.onSeek(time);
       }
@@ -245,28 +213,9 @@ export class Timeline {
       marks.push(time);
     }
 
-    logger.debug('Rendering ruler:', {
-      duration: this.duration.toFixed(2),
-      durationSeconds: (this.duration / 1000).toFixed(2),
-      timelineWidth: timelineWidth.toFixed(2),
-      interval: interval.toFixed(2),
-      intervalSeconds: (interval / 1000).toFixed(2),
-      numMarks: marks.length,
-      rulerWidth: this.ruler.offsetWidth.toFixed(2),
-      rulerStyleWidth: this.ruler.style.width,
-    });
-
     marks.forEach(time => {
-      const position = (time / this.duration) * timelineWidth;
       const timeSeconds = time / 1000;
-      
-      logger.debug(`Ruler mark at ${this.formatTime(timeSeconds)}:`, {
-        time: time.toFixed(2),
-        timeSeconds: timeSeconds.toFixed(3),
-        position: position.toFixed(2),
-        timelineWidth: timelineWidth.toFixed(2),
-        ratio: (time / this.duration).toFixed(4),
-      });
+      const position = timeSeconds * this.pixelsPerSecond;
       
       const mark = document.createElement('div');
       mark.className = 'ruler-mark';
@@ -280,7 +229,7 @@ export class Timeline {
       const label = document.createElement('div');
       label.textContent = this.formatTime(timeSeconds);
       label.style.position = 'absolute';
-      label.style.left = `${position + 2}px`;
+      label.style.left = '4px';
       label.style.top = '2px';
       label.style.fontSize = '10px';
       label.style.color = '#999';
@@ -291,18 +240,23 @@ export class Timeline {
   }
 
   private calculateRulerInterval(): number {
-    // Calculate appropriate interval based on duration
     // Return interval in milliseconds
-    if (this.duration < 10000) return 1000; // 1 second
-    if (this.duration < 60000) return 5000; // 5 seconds
-    if (this.duration < 300000) return 10000; // 10 seconds
-    return 30000; // 30 seconds
+    if (this.duration < 10000) return 1000;
+    if (this.duration < 60000) return 5000;
+    if (this.duration < 300000) return 10000;
+    return 30000;
   }
 
   private formatTime(seconds: number): string {
-    const mins = Math.floor(seconds / 60);
-    const secs = Math.floor(seconds % 60);
-    return `${mins}:${secs.toString().padStart(2, '0')}`;
+    if (!isFinite(seconds) || seconds < 0) {
+      return '00:00';
+    }
+    
+    const totalSeconds = Math.floor(seconds);
+    const mins = Math.floor(totalSeconds / 60);
+    const secs = totalSeconds % 60;
+    
+    return `${mins.toString().padStart(2, '0')}:${secs.toString().padStart(2, '0')}`;
   }
 }
 
