@@ -31,7 +31,7 @@ function convertMouseEventsToKeyframes(
   const convertCoords = (x: number, y: number) => {
     return convertToVideoCoordinates ? convertToVideoCoordinates(x, y) : { x, y };
   };
-  
+
   // Extract click events and convert coordinates
   for (const event of mouseEvents) {
     if (event.action === 'down' || event.action === 'up') {
@@ -51,31 +51,31 @@ function convertMouseEventsToKeyframes(
   // Only store start and end keyframes - all intermediate positions are interpolated
   // Find first and last move events
   const moveEvents = mouseEvents.filter(e => e.action === 'move');
-  
+
   if (moveEvents.length > 0) {
     const firstMove = moveEvents[0];
     const lastMove = moveEvents[moveEvents.length - 1];
-    
+
     // Convert screen coordinates to video coordinates
     const firstPos = convertCoords(firstMove.x, firstMove.y);
     const lastPos = convertCoords(lastMove.x, lastMove.y);
-    
+
     // Start keyframe at timestamp 0 (beginning of video)
-        cursorKeyframes.push({
+    cursorKeyframes.push({
       timestamp: 0,
       x: firstPos.x,
       y: firstPos.y,
       easing: 'easeInOut', // Default easing for the segment
     });
-    
+
     // End keyframe at video duration (end of video)
     // Only add if position changed or we have a valid duration
     if (videoDuration > 0 && (firstPos.x !== lastPos.x || firstPos.y !== lastPos.y || videoDuration > firstMove.timestamp)) {
-          cursorKeyframes.push({
+      cursorKeyframes.push({
         timestamp: videoDuration,
         x: lastPos.x,
         y: lastPos.y,
-          });
+      });
     }
   } else if (mouseEvents.length > 0) {
     // Fallback: use first event if no move events
@@ -169,19 +169,33 @@ export class MetadataExporter {
 
       // Always scale coordinates if screen dimensions differ from video dimensions
       // This handles Retina displays (2x scaling) and other resolution differences
-      if (screenDimensions && 
-          (screenDimensions.width !== videoDimensions.width || 
-           screenDimensions.height !== videoDimensions.height)) {
-        const scaleX = videoDimensions.width / screenDimensions.width;
-        const scaleY = videoDimensions.height / screenDimensions.height;
+      let scaleX = 1;
+      let scaleY = 1;
+
+      if (recordingRegion) {
+        // If region is defined, scale based on region dimensions
+        // This handles the case where video is physical pixels (Retina) and region is logical
+        scaleX = videoDimensions.width / recordingRegion.width;
+        scaleY = videoDimensions.height / recordingRegion.height;
+      } else if (screenDimensions &&
+        (screenDimensions.width !== videoDimensions.width ||
+          screenDimensions.height !== videoDimensions.height)) {
+        // Full screen recording: scale based on screen dimensions
+        scaleX = videoDimensions.width / screenDimensions.width;
+        scaleY = videoDimensions.height / screenDimensions.height;
+      }
+
+      if (scaleX !== 1 || scaleY !== 1) {
         const originalX = x;
         const originalY = y;
         x = x * scaleX;
         y = y * scaleY;
         logger.debug(`Scaled coordinates: (${originalX}, ${originalY}) -> (${x}, ${y}) using scale (${scaleX}, ${scaleY})`);
-        logger.debug(`Screen: ${screenDimensions.width}x${screenDimensions.height}, Video: ${videoDimensions.width}x${videoDimensions.height}`);
-      } else if (!screenDimensions) {
-        logger.warn('No screen dimensions provided - coordinates may be incorrect for Retina displays');
+        if (recordingRegion) {
+          logger.debug(`Region: ${recordingRegion.width}x${recordingRegion.height}, Video: ${videoDimensions.width}x${videoDimensions.height}`);
+        } else if (screenDimensions) {
+          logger.debug(`Screen: ${screenDimensions.width}x${screenDimensions.height}, Video: ${videoDimensions.width}x${videoDimensions.height}`);
+        }
       }
 
       // Clamp to video bounds
