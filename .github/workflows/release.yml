@@ -29,7 +29,7 @@ jobs:
         run: npm run build
 
       - name: Package application
-        run: npm run package:mac
+        run: npm run package:mac -- --publish never
 
       - name: Upload release artifacts
         uses: softprops/action-gh-release@v2
