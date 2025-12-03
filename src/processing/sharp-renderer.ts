@@ -300,8 +300,27 @@ export function createFrameDataFromKeyframes(
   const totalFrames = Math.ceil(videoDuration / frameInterval);
   const frameDataList: FrameData[] = [];
 
-  // Convert frame interval to seconds for velocity calculation
+  // Convert frame interval to seconds for physics simulation
   const deltaTime = frameInterval / 1000;
+
+  // Initialize smooth position trackers
+  const initialX = cursorKeyframes.length > 0 ? cursorKeyframes[0].x : videoDimensions.width / 2;
+  const initialY = cursorKeyframes.length > 0 ? cursorKeyframes[0].y : videoDimensions.height / 2;
+
+  // Determine cursor animation style
+  const cursorAnimationStyle = cursorConfig?.animationStyle ?? 'mellow';
+  const cursorStyle = ANIMATION_STYLES[cursorAnimationStyle];
+
+  // Cursor smoother with look-ahead to prevent lag
+  // We look ahead by the smooth time to ensure the cursor arrives "on time" despite smoothing
+  const cursorSmoothTime = cursorStyle.smoothTime;
+  const cursorLookAheadMs = cursorSmoothTime * 1000; // Convert to milliseconds
+
+  const cursorSmoother = new SmoothPosition2D(
+    initialX,
+    initialY,
+    cursorSmoothTime
+  );
 
   // Interpolate cursor position function (matching preview logic)
   const interpolateCursor = (timestamp: number): { x: number; y: number } | null => {
@@ -427,12 +446,10 @@ export function createFrameDataFromKeyframes(
   };
 
   // Previous positions for velocity calculation
-  let prevCursorX = videoDimensions.width / 2;
-  let prevCursorY = videoDimensions.height / 2;
+  let prevSmoothedCursorX = initialX;
+  let prevSmoothedCursorY = initialY;
   let prevZoomCenterX = videoDimensions.width / 2;
   let prevZoomCenterY = videoDimensions.height / 2;
-  let prevSmoothedCursorX = videoDimensions.width / 2;
-  let prevSmoothedCursorY = videoDimensions.height / 2;
 
   // Track cursor movement for "hide when static"
   const staticThreshold = CURSOR_STATIC_THRESHOLD;
@@ -453,25 +470,42 @@ export function createFrameDataFromKeyframes(
     // Calculate timestamp, clamping to videoDuration
     const timestamp = Math.min(frameIndex * frameInterval, videoDuration);
 
-    // Get cursor position from keyframes
-    // Keyframes are stored in video coordinate space (0 to videoWidth, 0 to videoHeight)
-    const cursorPos = interpolateCursor(timestamp);
-    if (!cursorPos) continue;
+    // ========================================
+    // CURSOR MOVEMENT WITH SMOOTHING
+    // ========================================
+    // Use look-ahead smoothing to ensure cursor arrives on time
 
-    // Ensure cursor position is within video bounds
-    const clampedX = Math.max(0, Math.min(videoDimensions.width, cursorPos.x));
-    const clampedY = Math.max(0, Math.min(videoDimensions.height, cursorPos.y));
+    // 1. Calculate look-ahead target
+    const lookAheadTimestamp = Math.min(timestamp + cursorLookAheadMs, videoDuration);
+
+    // Get cursor position from keyframes (with look-ahead)
+    // Keyframes are stored in video coordinate space (0 to videoWidth, 0 to videoHeight)
+    const targetCursorPos = interpolateCursor(lookAheadTimestamp);
+    if (!targetCursorPos) continue;
+
+    // Ensure target cursor position is within video bounds
+    let targetCursorX = Math.max(0, Math.min(videoDimensions.width, targetCursorPos.x));
+    let targetCursorY = Math.max(0, Math.min(videoDimensions.height, targetCursorPos.y));
+
+    // 2. Update smoother
+    cursorSmoother.setTarget(targetCursorX, targetCursorY);
+    const smoothedPos = cursorSmoother.update(deltaTime);
+
+    // 3. Use smoothed position
+    const smoothedCursor = { x: smoothedPos.x, y: smoothedPos.y };
+
+    // Ensure smoothed position is within video bounds
+    const clampedX = Math.max(0, Math.min(videoDimensions.width, smoothedCursor.x));
+    const clampedY = Math.max(0, Math.min(videoDimensions.height, smoothedCursor.y));
 
     // Log first few cursor positions for debugging
     if (frameIndex < 5) {
-      logger.debug(`Frame ${frameIndex}: timestamp=${timestamp}, cursorPos=(${clampedX}, ${clampedY}), videoDims=(${videoDimensions.width}, ${videoDimensions.height})`);
+      logger.debug(`Frame ${frameIndex}: timestamp=${timestamp}, targetPos=(${targetCursorX}, ${targetCursorY}), smoothedPos=(${clampedX}, ${clampedY}), videoDims=(${videoDimensions.width}, ${videoDimensions.height})`);
     }
 
-    // Calculate velocity for motion blur
-    const velocityX = (clampedX - prevCursorX) / deltaTime;
-    const velocityY = (clampedY - prevCursorY) / deltaTime;
-    prevCursorX = clampedX;
-    prevCursorY = clampedY;
+    // Calculate velocity for motion blur (using smoothed position)
+    const velocityX = (clampedX - prevSmoothedCursorX) / deltaTime;
+    const velocityY = (clampedY - prevSmoothedCursorY) / deltaTime;
 
     // Check if cursor is moving (for hide when static)
     const movementDistance = Math.sqrt(
@@ -574,8 +608,13 @@ export function createFrameDataFromEvents(
 
   // Cursor smoother with look-ahead to prevent lag
   // We look ahead by the smooth time to ensure the cursor arrives "on time" despite smoothing
+  // This compensates for the smoothing delay by targeting future positions
   const cursorSmoothTime = cursorStyle.smoothTime;
   const cursorLookAheadFrames = Math.ceil(cursorSmoothTime * frameRate);
+  
+  // Ensure look-ahead doesn't exceed available events (safety check)
+  // The look-ahead frames calculation ensures we target positions that will be reached
+  // at the right time despite the smoothing delay
 
   const cursorSmoother = new SmoothPosition2D(
     initialX,

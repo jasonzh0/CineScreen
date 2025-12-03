@@ -1,30 +1,24 @@
-import type { RecordingMetadata, CursorKeyframe, ZoomKeyframe, CursorSegment, ZoomSegment, EasingType } from '../../types/metadata';
+import type { RecordingMetadata, ZoomKeyframe, ZoomSegment, EasingType } from '../../types/metadata';
 
 export class KeyframePanel {
   private container: HTMLElement;
-  private cursorList: HTMLElement;
   private zoomList: HTMLElement;
   private metadata: RecordingMetadata | null = null;
   private onSeek: ((time: number) => void) | null = null;
-  private onDeleteCursorKeyframe: ((timestamp: number) => void) | null = null;
   private onDeleteZoomKeyframe: ((timestamp: number) => void) | null = null;
-  private onUpdateCursorSegment: ((segment: CursorSegment) => void) | null = null;
   private onUpdateZoomSegment: ((segment: ZoomSegment) => void) | null = null;
 
   constructor(
-    cursorListId: string,
     zoomListId: string
   ) {
-    const cursorList = document.getElementById(cursorListId);
     const zoomList = document.getElementById(zoomListId);
 
-    if (!cursorList || !zoomList) {
-      throw new Error('Keyframe panel containers not found');
+    if (!zoomList) {
+      throw new Error('Zoom keyframe panel container not found');
     }
 
-    this.cursorList = cursorList;
     this.zoomList = zoomList;
-    this.container = cursorList.parentElement || document.body;
+    this.container = zoomList.parentElement || document.body;
   }
 
   setMetadata(metadata: RecordingMetadata) {
@@ -36,16 +30,8 @@ export class KeyframePanel {
     this.onSeek = callback;
   }
 
-  setOnDeleteCursorKeyframe(callback: (timestamp: number) => void) {
-    this.onDeleteCursorKeyframe = callback;
-  }
-
   setOnDeleteZoomKeyframe(callback: (timestamp: number) => void) {
     this.onDeleteZoomKeyframe = callback;
-  }
-
-  setOnUpdateCursorSegment(callback: (segment: CursorSegment) => void) {
-    this.onUpdateCursorSegment = callback;
   }
 
   setOnUpdateZoomSegment(callback: (segment: ZoomSegment) => void) {
@@ -55,32 +41,15 @@ export class KeyframePanel {
   private render() {
     if (!this.metadata) return;
 
-    this.renderCursorSegments();
     this.renderZoomSegments();
   }
 
   /**
    * Convert keyframes to segments
    */
-  private keyframesToCursorSegments(keyframes: CursorKeyframe[]): CursorSegment[] {
-    if (keyframes.length < 2) return [];
-    
-    const segments: CursorSegment[] = [];
-    for (let i = 0; i < keyframes.length - 1; i++) {
-      const start = keyframes[i];
-      const end = keyframes[i + 1];
-      segments.push({
-        start,
-        end,
-        easing: end.easing || start.easing || 'easeInOut',
-      });
-    }
-    return segments;
-  }
-
   private keyframesToZoomSegments(keyframes: ZoomKeyframe[]): ZoomSegment[] {
     if (keyframes.length < 2) return [];
-    
+
     const segments: ZoomSegment[] = [];
     for (let i = 0; i < keyframes.length - 1; i++) {
       const start = keyframes[i];
@@ -94,41 +63,13 @@ export class KeyframePanel {
     return segments;
   }
 
-  private renderCursorSegments() {
-    this.cursorList.innerHTML = '';
-
-    if (!this.metadata) return;
-
-    const segments = this.keyframesToCursorSegments(this.metadata.cursor.keyframes);
-    
-    segments.forEach((segment, index) => {
-      const item = this.createSegmentItem(
-        segment,
-        'cursor',
-        index,
-        this.formatTime(segment.start.timestamp / 1000),
-        this.formatTime(segment.end.timestamp / 1000),
-        `(${Math.round(segment.start.x)}, ${Math.round(segment.start.y)}) → (${Math.round(segment.end.x)}, ${Math.round(segment.end.y)})`
-      );
-      this.cursorList.appendChild(item);
-    });
-
-    if (segments.length === 0) {
-      const empty = document.createElement('div');
-      empty.textContent = 'No cursor segments (need at least 2 keyframes)';
-      empty.style.padding = '10px';
-      empty.style.color = '#999';
-      this.cursorList.appendChild(empty);
-    }
-  }
-
   private renderZoomSegments() {
     this.zoomList.innerHTML = '';
 
     if (!this.metadata) return;
 
     const segments = this.keyframesToZoomSegments(this.metadata.zoom.keyframes);
-    
+
     segments.forEach((segment, index) => {
       const item = this.createSegmentItem(
         segment,
@@ -151,7 +92,7 @@ export class KeyframePanel {
   }
 
   private createSegmentItem(
-    segment: CursorSegment | ZoomSegment,
+    segment: ZoomSegment,
     type: 'cursor' | 'zoom',
     index: number,
     startTime: string,
@@ -181,7 +122,7 @@ export class KeyframePanel {
     timeRange.style.fontWeight = '600';
     timeRange.style.fontSize = '12px';
     timeRange.style.cursor = 'pointer';
-    
+
     timeRange.innerHTML = `
       <span>${startTime}</span>
       <span style="color: #666;">→</span>
@@ -218,9 +159,7 @@ export class KeyframePanel {
     curveSelector.addEventListener('change', (e) => {
       const newEasing = (e.target as HTMLSelectElement).value as EasingType;
       const updatedSegment = { ...segment, easing: newEasing };
-      if (type === 'cursor' && this.onUpdateCursorSegment) {
-        this.onUpdateCursorSegment(updatedSegment as CursorSegment);
-      } else if (type === 'zoom' && this.onUpdateZoomSegment) {
+      if (type === 'zoom' && this.onUpdateZoomSegment) {
         this.onUpdateZoomSegment(updatedSegment as ZoomSegment);
       }
     });
@@ -256,9 +195,7 @@ export class KeyframePanel {
 
     deleteStartBtn.addEventListener('click', (e) => {
       e.stopPropagation();
-      if (type === 'cursor' && this.onDeleteCursorKeyframe) {
-        this.onDeleteCursorKeyframe(segment.start.timestamp);
-      } else if (type === 'zoom' && this.onDeleteZoomKeyframe) {
+      if (type === 'zoom' && this.onDeleteZoomKeyframe) {
         this.onDeleteZoomKeyframe(segment.start.timestamp);
       }
     });
@@ -275,9 +212,7 @@ export class KeyframePanel {
 
     deleteEndBtn.addEventListener('click', (e) => {
       e.stopPropagation();
-      if (type === 'cursor' && this.onDeleteCursorKeyframe) {
-        this.onDeleteCursorKeyframe(segment.end.timestamp);
-      } else if (type === 'zoom' && this.onDeleteZoomKeyframe) {
+      if (type === 'zoom' && this.onDeleteZoomKeyframe) {
         this.onDeleteZoomKeyframe(segment.end.timestamp);
       }
     });

@@ -110,16 +110,15 @@ export class MouseTracker {
           this.lastButtonState.middle = buttonStates.middle;
         }
 
-        // Record position changes (moves)
-        if (position.x !== this.lastPosition.x || position.y !== this.lastPosition.y) {
-          this.events.push({
-            timestamp,
-            x: position.x,
-            y: position.y,
-            action: 'move',
-          });
-          this.lastPosition = position;
-        }
+        // Record position at every interval (even when stationary)
+        // This ensures complete timeline data for smooth interpolation
+        this.events.push({
+          timestamp,
+          x: position.x,
+          y: position.y,
+          action: 'move',
+        });
+        this.lastPosition = position;
       } catch (error) {
         logger.error(`[ERROR] Error in tracking interval (iteration ${iterationCount}):`, error);
       }

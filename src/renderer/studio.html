@@ -29,9 +29,9 @@
     }
 
     #toolbar {
-      background: #2a2a2a;
+      background: #1a1a1a;
       padding: 10px 20px;
-      border-bottom: 1px solid #3a3a3a;
+      border-bottom: 1px solid #2a2a2a;
       display: flex;
       align-items: center;
       gap: 10px;
@@ -101,8 +101,8 @@
 
     #sidebar {
       width: 300px;
-      background: #2a2a2a;
-      border-left: 1px solid #3a3a3a;
+      background: #1a1a1a;
+      border-left: 1px solid #2a2a2a;
       display: flex;
       flex-direction: column;
       overflow-y: auto;
@@ -110,7 +110,7 @@
 
     .sidebar-section {
       padding: 15px;
-      border-bottom: 1px solid #3a3a3a;
+      border-bottom: 1px solid #2a2a2a;
     }
 
     .sidebar-section h3 {
@@ -203,8 +203,8 @@
     }
 
     #timeline-container {
-      background: #2a2a2a;
-      border-top: 1px solid #3a3a3a;
+      background: #1a1a1a;
+      border-top: 1px solid #2a2a2a;
       height: 200px;
       display: flex;
       flex-direction: column;
@@ -212,7 +212,7 @@
 
     #timeline-header {
       padding: 10px 20px;
-      border-bottom: 1px solid #3a3a3a;
+      border-bottom: 1px solid #2a2a2a;
       display: flex;
       align-items: center;
       justify-content: space-between;
@@ -233,40 +233,125 @@
       left: 0;
       right: 0;
       height: 30px;
-      border-bottom: 1px solid #3a3a3a;
+      border-bottom: 1px solid #2a2a2a;
+      background: #1a1a1a;
     }
 
-    .timeline-track {
+    .timeline-rows {
       position: absolute;
       top: 30px;
       left: 0;
       right: 0;
       bottom: 0;
+      display: flex;
+      flex-direction: column;
     }
 
-    .keyframe-marker {
+    .timeline-row {
+      flex: 1;
+      position: relative;
+      border-bottom: 1px solid #2a2a2a;
+      min-height: 60px;
+      background: #1e1e1e;
+    }
+
+    .timeline-row:last-child {
+      border-bottom: none;
+    }
+
+    .timeline-row-label {
       position: absolute;
-      width: 8px;
-      height: 8px;
-      border-radius: 50%;
-      transform: translate(-50%, -50%);
-      cursor: pointer;
-      border: 2px solid #fff;
+      left: 0;
+      top: 0;
+      bottom: 0;
+      width: 100px;
+      background: #1a1a1a;
+      border-right: 1px solid #2a2a2a;
+      display: flex;
+      align-items: center;
+      padding-left: 12px;
+      font-size: 12px;
+      color: #aaa;
+      z-index: 5;
     }
 
-    .keyframe-marker.cursor {
-      background: #4a9eff;
-      top: 50%;
+    .timeline-row-content {
+      position: absolute;
+      left: 100px;
+      top: 0;
+      right: 0;
+      bottom: 0;
     }
 
-    .keyframe-marker.zoom {
+    .zoom-section {
+      position: absolute;
+      height: 100%;
+      background: rgba(255, 107, 107, 0.3);
+      border: 1px solid #ff6b6b;
+      border-radius: 2px;
+      cursor: move;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      font-size: 10px;
+      color: #ff6b6b;
+      user-select: none;
+      transition: background 0.2s;
+    }
+
+    .zoom-section:hover {
+      background: rgba(255, 107, 107, 0.4);
+    }
+
+    .zoom-section.dragging {
+      background: rgba(255, 107, 107, 0.5);
+      z-index: 20;
+    }
+
+    .zoom-section.selected {
+      background: rgba(255, 107, 107, 0.5);
+      border: 2px solid #ff6b6b;
+      box-shadow: 0 0 0 2px rgba(255, 107, 107, 0.3);
+    }
+
+    .zoom-section.selected:hover {
+      background: rgba(255, 107, 107, 0.6);
+    }
+
+    .zoom-section-handle {
+      position: absolute;
+      top: 0;
+      bottom: 0;
+      width: 4px;
       background: #ff6b6b;
-      top: 70%;
+      cursor: ew-resize;
     }
 
-    .keyframe-marker.click {
-      background: #51cf66;
-      top: 30%;
+    .zoom-section-handle.left {
+      left: 0;
+    }
+
+    .zoom-section-handle.right {
+      right: 0;
+    }
+
+    .zoom-section-handle:hover {
+      background: #ff8e8e;
+    }
+
+    .video-section {
+      position: absolute;
+      height: 100%;
+      background: rgba(74, 158, 255, 0.2);
+      border: 1px solid #4a9eff;
+      border-radius: 2px;
+      display: flex;
+      align-items: center;
+      padding-left: 8px;
+      font-size: 10px;
+      color: #4a9eff;
+      user-select: none;
+      pointer-events: none;
     }
 
     .playhead {
@@ -291,9 +376,9 @@
     }
 
     #status-bar {
-      background: #2a2a2a;
+      background: #1a1a1a;
       padding: 8px 20px;
-      border-top: 1px solid #3a3a3a;
+      border-top: 1px solid #2a2a2a;
       font-size: 12px;
       color: #999;
     }
@@ -348,10 +433,6 @@
       </div>
 
       <div id="sidebar">
-        <div class="sidebar-section">
-          <h3>Cursor Keyframes</h3>
-          <div id="cursor-keyframes-list"></div>
-        </div>
         <div class="sidebar-section">
           <h3>Zoom Keyframes</h3>
           <div id="zoom-keyframes-list"></div>
@@ -411,7 +492,16 @@
       </div>
       <div id="timeline">
         <div class="timeline-ruler"></div>
-        <div class="timeline-track"></div>
+        <div class="timeline-rows">
+          <div class="timeline-row" id="video-row">
+            <div class="timeline-row-label">Video</div>
+            <div class="timeline-row-content"></div>
+          </div>
+          <div class="timeline-row" id="zoom-row">
+            <div class="timeline-row-label">Zoom</div>
+            <div class="timeline-row-content"></div>
+          </div>
+        </div>
         <div class="playhead"></div>
       </div>
     </div>

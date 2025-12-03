@@ -86,7 +86,7 @@ async function init() {
 
     // Initialize keyframe panel
     logger.debug('Creating KeyframePanel...');
-    keyframePanel = new KeyframePanel('cursor-keyframes-list', 'zoom-keyframes-list');
+    keyframePanel = new KeyframePanel('zoom-keyframes-list');
     logger.debug('KeyframePanel created');
 
     // Set up metadata update callbacks
@@ -127,6 +127,19 @@ async function init() {
       renderPreview();
     });
 
+    timeline.setOnZoomUpdate((keyframes) => {
+      if (metadata && zoomEditor) {
+        // Update zoom keyframes in metadata
+        metadata.zoom.keyframes = keyframes;
+        // Notify zoom editor of the update
+        zoomEditor.setMetadata(metadata);
+        // Update keyframe panel
+        keyframePanel?.setMetadata(metadata);
+        // Re-render preview
+        renderPreview();
+      }
+    });
+
     // Set up keyframe panel callbacks
     keyframePanel.setOnSeek((time) => {
       videoPreview?.seekTo(time);
@@ -134,19 +147,8 @@ async function init() {
       renderPreview();
     });
 
-    keyframePanel.setOnDeleteCursorKeyframe((timestamp) => {
-      cursorEditor?.removeCursorKeyframe(timestamp);
-    });
-
     keyframePanel.setOnDeleteZoomKeyframe((timestamp) => {
       zoomEditor?.removeZoomKeyframe(timestamp);
-    });
-
-    keyframePanel.setOnUpdateCursorSegment((segment) => {
-      // Update the easing type on the start keyframe
-      cursorEditor?.updateCursorKeyframe(segment.start.timestamp, {
-        easing: segment.easing,
-      });
     });
 
     keyframePanel.setOnUpdateZoomSegment((segment) => {
