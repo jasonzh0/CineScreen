@@ -1,16 +1,15 @@
-import type { RecordingMetadata, ZoomKeyframe, ZoomSegment, EasingType } from '../../types/metadata';
+import type { RecordingMetadata } from '../../types/metadata';
+import type { ZoomSection } from '../../processing/zoom-tracker';
 
 export class KeyframePanel {
   private container: HTMLElement;
   private zoomList: HTMLElement;
   private metadata: RecordingMetadata | null = null;
   private onSeek: ((time: number) => void) | null = null;
-  private onDeleteZoomKeyframe: ((timestamp: number) => void) | null = null;
-  private onUpdateZoomSegment: ((segment: ZoomSegment) => void) | null = null;
+  private onDeleteZoomSection: ((startTime: number) => void) | null = null;
+  private onUpdateZoomSection: ((startTime: number, updates: Partial<ZoomSection>) => void) | null = null;
 
-  constructor(
-    zoomListId: string
-  ) {
+  constructor(zoomListId: string) {
     const zoomList = document.getElementById(zoomListId);
 
     if (!zoomList) {
@@ -30,75 +29,45 @@ export class KeyframePanel {
     this.onSeek = callback;
   }
 
-  setOnDeleteZoomKeyframe(callback: (timestamp: number) => void) {
-    this.onDeleteZoomKeyframe = callback;
+  setOnDeleteZoomKeyframe(callback: (startTime: number) => void) {
+    this.onDeleteZoomSection = callback;
   }
 
-  setOnUpdateZoomSegment(callback: (segment: ZoomSegment) => void) {
-    this.onUpdateZoomSegment = callback;
+  setOnUpdateZoomSegment(callback: (startTime: number, updates: Partial<ZoomSection>) => void) {
+    this.onUpdateZoomSection = callback;
   }
 
   private render() {
     if (!this.metadata) return;
 
-    this.renderZoomSegments();
+    this.renderZoomSections();
   }
 
-  /**
-   * Convert keyframes to segments
-   */
-  private keyframesToZoomSegments(keyframes: ZoomKeyframe[]): ZoomSegment[] {
-    if (keyframes.length < 2) return [];
-
-    const segments: ZoomSegment[] = [];
-    for (let i = 0; i < keyframes.length - 1; i++) {
-      const start = keyframes[i];
-      const end = keyframes[i + 1];
-      segments.push({
-        start,
-        end,
-        easing: end.easing || start.easing || 'easeInOut',
-      });
-    }
-    return segments;
-  }
-
-  private renderZoomSegments() {
+  private renderZoomSections() {
     this.zoomList.innerHTML = '';
 
     if (!this.metadata) return;
 
-    const segments = this.keyframesToZoomSegments(this.metadata.zoom.keyframes);
+    const sections = this.metadata.zoom.sections;
 
-    segments.forEach((segment, index) => {
-      const item = this.createSegmentItem(
-        segment,
-        'zoom',
-        index,
-        this.formatTime(segment.start.timestamp / 1000),
-        this.formatTime(segment.end.timestamp / 1000),
-        `${segment.start.level.toFixed(1)}x → ${segment.end.level.toFixed(1)}x`
-      );
-      this.zoomList.appendChild(item);
-    });
-
-    if (segments.length === 0) {
+    if (sections.length === 0) {
       const empty = document.createElement('div');
-      empty.textContent = 'No zoom segments (need at least 2 keyframes)';
+      empty.textContent = 'No zoom sections. Add sections using the button above or they will be auto-generated from mouse movement.';
       empty.style.padding = '10px';
       empty.style.color = '#999';
+      empty.style.fontSize = '12px';
+      empty.style.textAlign = 'center';
       this.zoomList.appendChild(empty);
+      return;
     }
+
+    sections.forEach((section, index) => {
+      const item = this.createSectionItem(section, index);
+      this.zoomList.appendChild(item);
+    });
   }
 
-  private createSegmentItem(
-    segment: ZoomSegment,
-    type: 'cursor' | 'zoom',
-    index: number,
-    startTime: string,
-    endTime: string,
-    details: string
-  ): HTMLElement {
+  private createSectionItem(section: ZoomSection, index: number): HTMLElement {
     const item = document.createElement('div');
     item.style.display = 'flex';
     item.style.flexDirection = 'column';
@@ -109,7 +78,7 @@ export class KeyframePanel {
     item.style.borderRadius = '4px';
     item.style.border = '1px solid #4a4a4a';
 
-    // Header row with time range and curve selector
+    // Header row with time range
     const header = document.createElement('div');
     header.style.display = 'flex';
     header.style.justifyContent = 'space-between';
@@ -123,6 +92,9 @@ export class KeyframePanel {
     timeRange.style.fontSize = '12px';
     timeRange.style.cursor = 'pointer';
 
+    const startTime = this.formatTime(section.startTime / 1000);
+    const endTime = this.formatTime(section.endTime / 1000);
+
     timeRange.innerHTML = `
       <span>${startTime}</span>
       <span style="color: #666;">→</span>
@@ -131,100 +103,159 @@ export class KeyframePanel {
 
     timeRange.addEventListener('click', () => {
       if (this.onSeek) {
-        this.onSeek(segment.start.timestamp / 1000);
+        this.onSeek(section.startTime / 1000);
       }
     });
 
-    // Curve selector
-    const curveSelector = document.createElement('select');
-    curveSelector.style.background = '#2a2a2a';
-    curveSelector.style.border = '1px solid #4a4a4a';
-    curveSelector.style.borderRadius = '4px';
-    curveSelector.style.color = '#e0e0e0';
-    curveSelector.style.padding = '4px 8px';
-    curveSelector.style.fontSize = '11px';
-    curveSelector.style.cursor = 'pointer';
+    // Delete button
+    const deleteBtn = document.createElement('button');
+    deleteBtn.textContent = '×';
+    deleteBtn.title = 'Delete zoom section';
+    deleteBtn.style.background = 'transparent';
+    deleteBtn.style.border = 'none';
+    deleteBtn.style.color = '#ff6b6b';
+    deleteBtn.style.fontSize = '20px';
+    deleteBtn.style.cursor = 'pointer';
+    deleteBtn.style.padding = '0 6px';
 
-    const easingTypes: EasingType[] = ['linear', 'easeIn', 'easeOut', 'easeInOut'];
-    easingTypes.forEach(easing => {
-      const option = document.createElement('option');
-      option.value = easing;
-      option.textContent = easing;
-      if (segment.easing === easing) {
-        option.selected = true;
-      }
-      curveSelector.appendChild(option);
-    });
-
-    curveSelector.addEventListener('change', (e) => {
-      const newEasing = (e.target as HTMLSelectElement).value as EasingType;
-      const updatedSegment = { ...segment, easing: newEasing };
-      if (type === 'zoom' && this.onUpdateZoomSegment) {
-        this.onUpdateZoomSegment(updatedSegment as ZoomSegment);
+    deleteBtn.addEventListener('click', (e) => {
+      e.stopPropagation();
+      if (this.onDeleteZoomSection) {
+        this.onDeleteZoomSection(section.startTime);
       }
     });
 
     header.appendChild(timeRange);
-    header.appendChild(curveSelector);
+    header.appendChild(deleteBtn);
 
-    // Details row
-    const detailsRow = document.createElement('div');
-    detailsRow.style.display = 'flex';
-    detailsRow.style.justifyContent = 'space-between';
-    detailsRow.style.alignItems = 'center';
+    // Editable properties
+    const propertiesContainer = document.createElement('div');
+    propertiesContainer.style.display = 'flex';
+    propertiesContainer.style.flexDirection = 'column';
+    propertiesContainer.style.gap = '8px';
 
-    const detailsLabel = document.createElement('div');
-    detailsLabel.textContent = details;
-    detailsLabel.style.fontSize = '11px';
-    detailsLabel.style.color = '#999';
+    // Scale editor
+    const scaleRow = document.createElement('div');
+    scaleRow.style.display = 'flex';
+    scaleRow.style.alignItems = 'center';
+    scaleRow.style.gap = '8px';
+    scaleRow.style.fontSize = '11px';
 
-    // Delete buttons for start and end keyframes
-    const deleteControls = document.createElement('div');
-    deleteControls.style.display = 'flex';
-    deleteControls.style.gap = '4px';
+    const scaleLabel = document.createElement('label');
+    scaleLabel.textContent = 'Scale:';
+    scaleLabel.style.color = '#999';
+    scaleLabel.style.minWidth = '50px';
 
-    const deleteStartBtn = document.createElement('button');
-    deleteStartBtn.textContent = '×';
-    deleteStartBtn.title = 'Delete start keyframe';
-    deleteStartBtn.style.background = 'transparent';
-    deleteStartBtn.style.border = 'none';
-    deleteStartBtn.style.color = '#ff6b6b';
-    deleteStartBtn.style.fontSize = '16px';
-    deleteStartBtn.style.cursor = 'pointer';
-    deleteStartBtn.style.padding = '2px 6px';
+    const scaleInput = document.createElement('input');
+    scaleInput.type = 'range';
+    scaleInput.min = '1.0';
+    scaleInput.max = '5.0';
+    scaleInput.step = '0.1';
+    scaleInput.value = section.scale.toString();
+    scaleInput.style.flex = '1';
+    scaleInput.style.height = '4px';
+    scaleInput.style.background = '#3a3a3a';
+    scaleInput.style.borderRadius = '2px';
 
-    deleteStartBtn.addEventListener('click', (e) => {
-      e.stopPropagation();
-      if (type === 'zoom' && this.onDeleteZoomKeyframe) {
-        this.onDeleteZoomKeyframe(segment.start.timestamp);
+    const scaleValue = document.createElement('span');
+    scaleValue.textContent = `${section.scale.toFixed(1)}x`;
+    scaleValue.style.color = '#e0e0e0';
+    scaleValue.style.minWidth = '40px';
+    scaleValue.style.textAlign = 'right';
+
+    scaleInput.addEventListener('input', (e) => {
+      const newScale = parseFloat((e.target as HTMLInputElement).value);
+      scaleValue.textContent = `${newScale.toFixed(1)}x`;
+      if (this.onUpdateZoomSection) {
+        this.onUpdateZoomSection(section.startTime, { scale: newScale });
       }
     });
 
-    const deleteEndBtn = document.createElement('button');
-    deleteEndBtn.textContent = '×';
-    deleteEndBtn.title = 'Delete end keyframe';
-    deleteEndBtn.style.background = 'transparent';
-    deleteEndBtn.style.border = 'none';
-    deleteEndBtn.style.color = '#ff6b6b';
-    deleteEndBtn.style.fontSize = '16px';
-    deleteEndBtn.style.cursor = 'pointer';
-    deleteEndBtn.style.padding = '2px 6px';
+    scaleRow.appendChild(scaleLabel);
+    scaleRow.appendChild(scaleInput);
+    scaleRow.appendChild(scaleValue);
 
-    deleteEndBtn.addEventListener('click', (e) => {
-      e.stopPropagation();
-      if (type === 'zoom' && this.onDeleteZoomKeyframe) {
-        this.onDeleteZoomKeyframe(segment.end.timestamp);
+    // Center X editor
+    const centerXRow = document.createElement('div');
+    centerXRow.style.display = 'flex';
+    centerXRow.style.alignItems = 'center';
+    centerXRow.style.gap = '8px';
+    centerXRow.style.fontSize = '11px';
+
+    const centerXLabel = document.createElement('label');
+    centerXLabel.textContent = 'Center X:';
+    centerXLabel.style.color = '#999';
+    centerXLabel.style.minWidth = '50px';
+
+    const centerXInput = document.createElement('input');
+    centerXInput.type = 'number';
+    centerXInput.value = Math.round(section.centerX).toString();
+    centerXInput.style.flex = '1';
+    centerXInput.style.background = '#2a2a2a';
+    centerXInput.style.border = '1px solid #4a4a4a';
+    centerXInput.style.color = '#e0e0e0';
+    centerXInput.style.padding = '4px 8px';
+    centerXInput.style.borderRadius = '4px';
+    centerXInput.style.fontSize = '11px';
+
+    centerXInput.addEventListener('change', (e) => {
+      const newCenterX = parseFloat((e.target as HTMLInputElement).value);
+      if (!isNaN(newCenterX) && this.onUpdateZoomSection) {
+        this.onUpdateZoomSection(section.startTime, { centerX: newCenterX });
       }
     });
 
-    deleteControls.appendChild(deleteStartBtn);
-    deleteControls.appendChild(deleteEndBtn);
+    centerXRow.appendChild(centerXLabel);
+    centerXRow.appendChild(centerXInput);
 
-    detailsRow.appendChild(detailsLabel);
-    detailsRow.appendChild(deleteControls);
+    // Center Y editor
+    const centerYRow = document.createElement('div');
+    centerYRow.style.display = 'flex';
+    centerYRow.style.alignItems = 'center';
+    centerYRow.style.gap = '8px';
+    centerYRow.style.fontSize = '11px';
+
+    const centerYLabel = document.createElement('label');
+    centerYLabel.textContent = 'Center Y:';
+    centerYLabel.style.color = '#999';
+    centerYLabel.style.minWidth = '50px';
+
+    const centerYInput = document.createElement('input');
+    centerYInput.type = 'number';
+    centerYInput.value = Math.round(section.centerY).toString();
+    centerYInput.style.flex = '1';
+    centerYInput.style.background = '#2a2a2a';
+    centerYInput.style.border = '1px solid #4a4a4a';
+    centerYInput.style.color = '#e0e0e0';
+    centerYInput.style.padding = '4px 8px';
+    centerYInput.style.borderRadius = '4px';
+    centerYInput.style.fontSize = '11px';
+
+    centerYInput.addEventListener('change', (e) => {
+      const newCenterY = parseFloat((e.target as HTMLInputElement).value);
+      if (!isNaN(newCenterY) && this.onUpdateZoomSection) {
+        this.onUpdateZoomSection(section.startTime, { centerY: newCenterY });
+      }
+    });
+
+    centerYRow.appendChild(centerYLabel);
+    centerYRow.appendChild(centerYInput);
+
+    // Duration info (read-only)
+    const duration = section.endTime - section.startTime;
+    const durationInfo = document.createElement('div');
+    durationInfo.style.fontSize = '11px';
+    durationInfo.style.color = '#666';
+    durationInfo.style.marginTop = '4px';
+    durationInfo.textContent = `Duration: ${(duration / 1000).toFixed(2)}s`;
+
+    propertiesContainer.appendChild(scaleRow);
+    propertiesContainer.appendChild(centerXRow);
+    propertiesContainer.appendChild(centerYRow);
+    propertiesContainer.appendChild(durationInfo);
 
     item.appendChild(header);
-    item.appendChild(detailsRow);
+    item.appendChild(propertiesContainer);
 
     return item;
   }
@@ -232,7 +263,8 @@ export class KeyframePanel {
   private formatTime(seconds: number): string {
     const mins = Math.floor(seconds / 60);
     const secs = Math.floor(seconds % 60);
-    return `${mins}:${secs.toString().padStart(2, '0')}`;
+    const ms = Math.floor((seconds % 1) * 100);
+    return `${mins}:${secs.toString().padStart(2, '0')}.${ms.toString().padStart(2, '0')}`;
   }
 }
 

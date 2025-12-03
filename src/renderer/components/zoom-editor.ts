@@ -1,4 +1,5 @@
-import type { RecordingMetadata, ZoomKeyframe, EasingType } from '../../types/metadata';
+import type { RecordingMetadata } from '../../types/metadata';
+import type { ZoomSection } from '../../processing/zoom-tracker';
 
 export class ZoomEditor {
   private metadata: RecordingMetadata | null = null;
@@ -17,44 +18,21 @@ export class ZoomEditor {
     this.onMetadataUpdate = callback;
   }
 
-  addZoomKeyframe(timestamp: number, centerX: number, centerY: number, level: number) {
+  addZoomSection(startTime: number, endTime: number, scale: number, centerX: number, centerY: number) {
     if (!this.metadata) return;
 
-    const videoWidth = this.metadata.video.width;
-    const videoHeight = this.metadata.video.height;
+    const newSection: ZoomSection = {
+      startTime,
+      endTime,
+      scale,
+      centerX,
+      centerY,
+    };
 
-    // Find if keyframe already exists at this timestamp (within 100ms tolerance)
-    const tolerance = 100;
-    const existingIndex = this.metadata.zoom.keyframes.findIndex(
-      kf => Math.abs(kf.timestamp - timestamp) < tolerance
-    );
+    this.metadata.zoom.sections.push(newSection);
 
-    if (existingIndex >= 0) {
-      // Update existing keyframe
-      this.metadata.zoom.keyframes[existingIndex] = {
-        ...this.metadata.zoom.keyframes[existingIndex],
-        timestamp,
-        centerX,
-        centerY,
-        level,
-        cropWidth: videoWidth / level,
-        cropHeight: videoHeight / level,
-      };
-    } else {
-      // Add new keyframe
-      const newKeyframe: ZoomKeyframe = {
-        timestamp,
-        centerX,
-        centerY,
-        level,
-        cropWidth: videoWidth / level,
-        cropHeight: videoHeight / level,
-      };
-      this.metadata.zoom.keyframes.push(newKeyframe);
-      
-      // Sort by timestamp
-      this.metadata.zoom.keyframes.sort((a, b) => a.timestamp - b.timestamp);
-    }
+    // Sort by start time
+    this.metadata.zoom.sections.sort((a, b) => a.startTime - b.startTime);
 
     // Notify update
     if (this.onMetadataUpdate) {
@@ -62,12 +40,12 @@ export class ZoomEditor {
     }
   }
 
-  removeZoomKeyframe(timestamp: number) {
+  removeZoomSection(startTime: number) {
     if (!this.metadata) return;
 
-    const tolerance = 100;
-    this.metadata.zoom.keyframes = this.metadata.zoom.keyframes.filter(
-      kf => Math.abs(kf.timestamp - timestamp) >= tolerance
+    const tolerance = 100; // 100ms tolerance
+    this.metadata.zoom.sections = this.metadata.zoom.sections.filter(
+      section => Math.abs(section.startTime - startTime) >= tolerance
     );
 
     // Notify update
@@ -76,23 +54,23 @@ export class ZoomEditor {
     }
   }
 
-  updateZoomKeyframe(timestamp: number, updates: Partial<ZoomKeyframe>) {
+  updateZoomSection(startTime: number, updates: Partial<ZoomSection>) {
     if (!this.metadata) return;
 
-    const tolerance = 100;
-    const index = this.metadata.zoom.keyframes.findIndex(
-      kf => Math.abs(kf.timestamp - timestamp) < tolerance
+    const tolerance = 100; // 100ms tolerance
+    const index = this.metadata.zoom.sections.findIndex(
+      section => Math.abs(section.startTime - startTime) < tolerance
     );
 
     if (index >= 0) {
-      this.metadata.zoom.keyframes[index] = {
-        ...this.metadata.zoom.keyframes[index],
+      this.metadata.zoom.sections[index] = {
+        ...this.metadata.zoom.sections[index],
         ...updates,
       };
 
-      // Re-sort if timestamp changed
-      if (updates.timestamp !== undefined) {
-        this.metadata.zoom.keyframes.sort((a, b) => a.timestamp - b.timestamp);
+      // Re-sort if start time changed
+      if (updates.startTime !== undefined) {
+        this.metadata.zoom.sections.sort((a, b) => a.startTime - b.startTime);
       }
 
       // Notify update
@@ -105,7 +83,7 @@ export class ZoomEditor {
   setZoomLevel(level: number) {
     if (!this.metadata) return;
     this.metadata.zoom.config.level = level;
-    
+
     if (this.onMetadataUpdate) {
       this.onMetadataUpdate(this.metadata);
     }
@@ -114,14 +92,14 @@ export class ZoomEditor {
   toggleZoom(enabled: boolean) {
     if (!this.metadata) return;
     this.metadata.zoom.config.enabled = enabled;
-    
+
     if (this.onMetadataUpdate) {
       this.onMetadataUpdate(this.metadata);
     }
   }
 
-  getZoomKeyframes(): ZoomKeyframe[] {
-    return this.metadata?.zoom.keyframes || [];
+  getZoomSections(): ZoomSection[] {
+    return this.metadata?.zoom.sections || [];
   }
 }
 

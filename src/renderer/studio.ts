@@ -1,4 +1,4 @@
-import type { RecordingMetadata, CursorKeyframe, ZoomKeyframe } from '../types/metadata';
+import type { RecordingMetadata, CursorKeyframe } from '../types/metadata';
 import { Timeline } from './components/timeline';
 import { VideoPreview } from './components/video-preview';
 import { CursorEditor } from './components/cursor-editor';
@@ -158,10 +158,11 @@ async function init() {
       renderPreview();
     });
 
-    timeline.setOnZoomUpdate((keyframes) => {
+    // Zoom updates are now handled through sections
+    timeline.setOnZoomUpdate((sections) => {
       if (metadata && zoomEditor) {
-        // Update zoom keyframes in metadata
-        metadata.zoom.keyframes = keyframes;
+        // Update zoom sections in metadata
+        metadata.zoom.sections = sections;
         // Notify zoom editor of the update
         zoomEditor.setMetadata(metadata);
         // Update keyframe panel
@@ -178,15 +179,12 @@ async function init() {
       renderPreview();
     });
 
-    keyframePanel.setOnDeleteZoomKeyframe((timestamp) => {
-      zoomEditor?.removeZoomKeyframe(timestamp);
+    keyframePanel.setOnDeleteZoomKeyframe((startTime) => {
+      zoomEditor?.removeZoomSection(startTime);
     });
 
-    keyframePanel.setOnUpdateZoomSegment((segment) => {
-      // Update the easing type on the start keyframe
-      zoomEditor?.updateZoomKeyframe(segment.start.timestamp, {
-        easing: segment.easing,
-      });
+    keyframePanel.setOnUpdateZoomSegment((startTime, updates) => {
+      zoomEditor?.updateZoomSection(startTime, updates);
     });
   } catch (error) {
     logger.error('Failed to initialize components:', error);
@@ -300,8 +298,7 @@ async function loadStudioData() {
     // Auto-create cursor keyframes from clicks if there are clicks but few keyframes
     if (metadata) {
       autoCreateKeyframesFromClicks(metadata);
-      // Auto-create zoom keyframes from clicks
-      autoCreateZoomKeyframesFromClicks(metadata);
+      // Note: Zoom sections are now generated on-demand, not pre-created from clicks
     }
 
     // Update timeline with metadata
@@ -525,13 +522,13 @@ function setupEventListeners() {
   if (videoEl) {
     const updatePlayPauseState = (playing: boolean) => {
       isPlaying = playing;
-      
+
       // Update toolbar button classes
       const btn = document.getElementById('play-pause-btn');
       if (btn) {
         const playIcon = btn.querySelector('.play-icon') as HTMLElement;
         const pauseIcon = btn.querySelector('.pause-icon') as HTMLElement;
-        
+
         if (playing) {
           btn.classList.add('playing');
           if (playIcon) playIcon.style.display = 'none';
@@ -565,6 +562,34 @@ function setupEventListeners() {
       return;
     }
     await exportVideo();
+  });
+
+  // Add zoom section button
+  const addZoomSectionBtn = document.getElementById('add-zoom-section-btn');
+  addZoomSectionBtn?.addEventListener('click', () => {
+    if (!metadata || !videoPreview || !zoomEditor) {
+      alert('No video loaded');
+      return;
+    }
+
+    const videoEl = videoPreview.getVideoElement();
+    const currentTimeMs = videoEl.currentTime * 1000; // Current playhead position in ms
+    const videoDurationMs = getActualVideoDuration();
+
+    // Default section: 2 seconds duration, centered at current time
+    const sectionDuration = 2000; // 2 seconds
+    const startTime = Math.max(0, currentTimeMs - sectionDuration / 2);
+    const endTime = Math.min(videoDurationMs, startTime + sectionDuration);
+
+    // Default zoom: 2x scale, centered on video
+    const scale = metadata.zoom.config.level || 2.0;
+    const centerX = metadata.video.width / 2;
+    const centerY = metadata.video.height / 2;
+
+    // Add the section
+    zoomEditor.addZoomSection(startTime, endTime, scale, centerX, centerY);
+
+    logger.info(`Added zoom section: ${startTime}ms - ${endTime}ms, scale: ${scale}x`);
   });
 }
 
@@ -998,165 +1023,8 @@ function autoCreateKeyframesFromClicks(metadata: RecordingMetadata) {
   }
 }
 
-/**
- * Automatically create zoom keyframes from click events.
- * Zooms in on click positions.
- */
-function autoCreateZoomKeyframesFromClicks(metadata: RecordingMetadata) {
-  if (!metadata.clicks || metadata.clicks.length === 0) {
-    return; // No clicks to convert
-  }
-
-  // Get click "down" events (actual clicks, not releases)
-  const clickDownEvents = metadata.clicks.filter(c => c.action === 'down');
-
-  if (clickDownEvents.length === 0) {
-    return; // No actual clicks
-  }
-
-  // Clear existing zoom keyframes and start fresh from clicks
-  // Keep only the initial keyframe at timestamp 0 if it exists
-  const existingZoomKeyframes = metadata.zoom.keyframes.length;
-  const initialKeyframe = metadata.zoom.keyframes.find(kf => kf.timestamp === 0);
-
-  // Reset zoom keyframes - we'll generate new ones from clicks
-  metadata.zoom.keyframes = [];
-
-  // Add initial keyframe (no zoom) if we had one, otherwise create default
-  if (initialKeyframe) {
-    metadata.zoom.keyframes.push({
-      timestamp: 0,
-      centerX: initialKeyframe.centerX,
-      centerY: initialKeyframe.centerY,
-      level: 1.0,
-      cropWidth: metadata.video.width,
-      cropHeight: metadata.video.height,
-    });
-  } else {
-    metadata.zoom.keyframes.push({
-      timestamp: 0,
-      centerX: metadata.video.width / 2,
-      centerY: metadata.video.height / 2,
-      level: 1.0,
-      cropWidth: metadata.video.width,
-      cropHeight: metadata.video.height,
-    });
-  }
-
-  // Get zoom config - use existing config level, or default to 2.0 if disabled or not set
-  // If level is 1.0 (disabled), use 2.0 for click-based zoom
-  const configLevel = metadata.zoom.config?.level || 1.0;
-  const zoomLevel = configLevel > 1.0 ? configLevel : 2.0;
-  const videoWidth = metadata.video.width;
-  const videoHeight = metadata.video.height;
-
-  // Calculate crop dimensions from zoom level
-  const cropWidth = videoWidth / zoomLevel;
-  const cropHeight = videoHeight / zoomLevel;
-
-  // Calculate 7 frames duration in milliseconds (for zoom start timing)
-  const frameDurationMs = (7 / metadata.video.frameRate) * 1000;
-  const minKeyframeSpacing = 10; // Minimum spacing between keyframes in milliseconds
-
-  // Collect all new zoom keyframes
-  const newZoomKeyframes: ZoomKeyframe[] = [];
-
-  // Add zoom keyframes for each click
-  for (let i = 0; i < clickDownEvents.length; i++) {
-    const click = clickDownEvents[i];
-
-    // Zoom keyframe 1: 7 frames before the click, zoom out (level 1.0) or previous zoom state
-    const beforeTimestamp = Math.max(0, click.timestamp - frameDurationMs);
-
-    // Only create "before" keyframe if it's actually before the click timestamp
-    if (beforeTimestamp < click.timestamp) {
-      // Use previous click's zoom state, or no zoom if first click
-      const prevClick = i > 0 ? clickDownEvents[i - 1] : null;
-      const prevZoomLevel = prevClick ? zoomLevel : 1.0;
-      const prevCropWidth = videoWidth / prevZoomLevel;
-      const prevCropHeight = videoHeight / prevZoomLevel;
-      const prevCenterX = prevClick ? prevClick.x : videoWidth / 2;
-      const prevCenterY = prevClick ? prevClick.y : videoHeight / 2;
-
-      newZoomKeyframes.push({
-        timestamp: beforeTimestamp,
-        centerX: prevCenterX,
-        centerY: prevCenterY,
-        level: prevZoomLevel,
-        cropWidth: prevCropWidth,
-        cropHeight: prevCropHeight,
-      });
-    }
-
-    // Zoom keyframe 2: At the click timestamp, zoom in on click position
-    newZoomKeyframes.push({
-      timestamp: click.timestamp,
-      centerX: click.x,
-      centerY: click.y,
-      level: zoomLevel,
-      cropWidth: cropWidth,
-      cropHeight: cropHeight,
-    });
-  }
-
-  // Add new zoom keyframes to existing ones
-  metadata.zoom.keyframes.push(...newZoomKeyframes);
-
-  // Sort zoom keyframes by timestamp
-  metadata.zoom.keyframes.sort((a, b) => a.timestamp - b.timestamp);
-
-  // Deduplicate zoom keyframes - ensure each timestamp is unique
-  const deduplicated: ZoomKeyframe[] = [];
-
-  for (let i = 0; i < metadata.zoom.keyframes.length; i++) {
-    const current = metadata.zoom.keyframes[i];
-
-    // Check if this keyframe is too close to the previous one
-    if (deduplicated.length > 0) {
-      const last = deduplicated[deduplicated.length - 1];
-      const timeDiff = current.timestamp - last.timestamp;
-
-      if (timeDiff < minKeyframeSpacing) {
-        // Too close - merge by keeping the later one (prefer zoom in over zoom out)
-        if (current.timestamp >= last.timestamp) {
-          deduplicated[deduplicated.length - 1] = current;
-        }
-        // Otherwise keep the existing one
-        continue;
-      }
-    }
-
-    // Far enough from previous keyframe - add it
-    deduplicated.push(current);
-  }
-
-  // Replace with deduplicated array
-  metadata.zoom.keyframes = deduplicated;
-
-  // Ensure there's a final zoom keyframe at the end of the video
-  const actualVideoDuration = getActualVideoDuration() || metadata.video.duration;
-  const lastZoomKeyframe = metadata.zoom.keyframes[metadata.zoom.keyframes.length - 1];
-
-  if (!lastZoomKeyframe || lastZoomKeyframe.timestamp < actualVideoDuration - 100) {
-    // Add final zoom keyframe - zoom out to default if last click was zoomed in
-    const finalZoomLevel = lastZoomKeyframe?.level || 1.0;
-    const finalCropWidth = videoWidth / finalZoomLevel;
-    const finalCropHeight = videoHeight / finalZoomLevel;
-    const finalCenterX = lastZoomKeyframe?.centerX || videoWidth / 2;
-    const finalCenterY = lastZoomKeyframe?.centerY || videoHeight / 2;
-
-    metadata.zoom.keyframes.push({
-      timestamp: actualVideoDuration,
-      centerX: finalCenterX,
-      centerY: finalCenterY,
-      level: finalZoomLevel,
-      cropWidth: finalCropWidth,
-      cropHeight: finalCropHeight,
-    });
-  }
-
-  logger.info(`Created ${metadata.zoom.keyframes.length} zoom keyframes from clicks`);
-}
+// Zoom sections are now generated on-demand from mouse events during rendering
+// No need to pre-create zoom keyframes from clicks
 
 // Debug: Log that script is loading
 logger.info('Studio script loading...');

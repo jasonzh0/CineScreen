@@ -1,4 +1,5 @@
-import type { RecordingMetadata, ZoomKeyframe } from '../../types/metadata';
+import type { RecordingMetadata } from '../../types/metadata';
+import type { ZoomSection } from '../../processing/zoom-tracker';
 import { createLogger } from '../../utils/logger';
 
 const logger = createLogger('Timeline');
@@ -13,10 +14,8 @@ export class Timeline {
   private duration: number = 0;
   private pixelsPerSecond: number = 100;
   private onSeek: ((time: number) => void) | null = null;
-  private onZoomUpdate: ((keyframes: ZoomKeyframe[]) => void) | null = null;
+  private onZoomUpdate: ((sections: ZoomSection[]) => void) | null = null;
   private draggedZoomSection: HTMLElement | null = null;
-  private dragStartX: number = 0;
-  private dragStartTime: number = 0;
   private selectedZoomSection: HTMLElement | null = null;
 
   constructor(containerId: string) {
@@ -57,7 +56,7 @@ export class Timeline {
     this.onSeek = callback;
   }
 
-  setOnZoomUpdate(callback: (keyframes: ZoomKeyframe[]) => void) {
+  setOnZoomUpdate(callback: (sections: ZoomSection[]) => void) {
     this.onZoomUpdate = callback;
   }
 
@@ -210,7 +209,7 @@ export class Timeline {
     // Render video section (full duration)
     this.renderVideoSection();
 
-    // Render zoom sections as draggable regions
+    // Render zoom sections
     this.renderZoomSections();
 
     // Render ruler
@@ -243,30 +242,20 @@ export class Timeline {
   }
 
   private renderZoomSections() {
-    if (!this.metadata || !this.metadata.zoom.keyframes.length) return;
+    if (!this.metadata || !this.metadata.zoom.sections.length) return;
 
-    const keyframes = this.metadata.zoom.keyframes;
+    const sections = this.metadata.zoom.sections;
 
-    // Create segments from keyframes
-    // Each segment is from one keyframe to the next (or to end of video)
-    for (let i = 0; i < keyframes.length; i++) {
-      const startKeyframe = keyframes[i];
-      const endKeyframe = i < keyframes.length - 1
-        ? keyframes[i + 1]
-        : { ...startKeyframe, timestamp: this.duration, level: startKeyframe.level };
-
-      // Only render sections where zoom level > 1.0
-      if (startKeyframe.level > 1.0 || (endKeyframe.level && endKeyframe.level > 1.0)) {
-        this.createZoomSection(startKeyframe, endKeyframe, i);
-      }
-    }
+    sections.forEach((section, index) => {
+      this.createZoomSection(section, index);
+    });
   }
 
-  private createZoomSection(startKeyframe: ZoomKeyframe, endKeyframe: ZoomKeyframe, index: number) {
+  private createZoomSection(section: ZoomSection, index: number) {
     if (!this.duration || this.duration === 0) return;
 
-    const startTime = Math.max(0, Math.min(startKeyframe.timestamp, this.duration));
-    const endTime = Math.max(0, Math.min(endKeyframe.timestamp, this.duration));
+    const startTime = Math.max(0, Math.min(section.startTime, this.duration));
+    const endTime = Math.max(0, Math.min(section.endTime, this.duration));
 
     if (startTime >= endTime) return;
 
@@ -274,40 +263,37 @@ export class Timeline {
     const endPosition = (endTime / 1000) * this.pixelsPerSecond;
     const width = endPosition - startPosition;
 
-    const section = document.createElement('div');
-    section.className = 'zoom-section';
-    section.style.left = `${startPosition}px`;
-    section.style.width = `${width}px`;
-    section.dataset.startTime = startTime.toString();
-    section.dataset.endTime = endTime.toString();
-    section.dataset.index = index.toString();
+    const sectionEl = document.createElement('div');
+    sectionEl.className = 'zoom-section';
+    sectionEl.style.left = `${startPosition}px`;
+    sectionEl.style.width = `${width}px`;
+    sectionEl.dataset.startTime = startTime.toString();
+    sectionEl.dataset.endTime = endTime.toString();
+    sectionEl.dataset.index = index.toString();
 
     // Display zoom level
-    const avgLevel = ((startKeyframe.level + endKeyframe.level) / 2).toFixed(1);
-    section.textContent = `${avgLevel}x`;
+    sectionEl.textContent = `${section.scale.toFixed(1)}x`;
 
     // Create resize handles
     const leftHandle = document.createElement('div');
     leftHandle.className = 'zoom-section-handle left';
-    section.appendChild(leftHandle);
+    sectionEl.appendChild(leftHandle);
 
     const rightHandle = document.createElement('div');
     rightHandle.className = 'zoom-section-handle right';
-    section.appendChild(rightHandle);
+    sectionEl.appendChild(rightHandle);
 
     // Setup drag handlers
-    this.setupZoomSectionDrag(section, leftHandle, rightHandle);
+    this.setupZoomSectionDrag(sectionEl, leftHandle, rightHandle);
 
     // Setup selection handler
-    this.setupZoomSectionSelection(section);
+    this.setupZoomSectionSelection(sectionEl);
 
-    this.zoomRow.appendChild(section);
+    this.zoomRow.appendChild(sectionEl);
   }
 
   private setupZoomSectionSelection(section: HTMLElement) {
     let mouseDownTime = 0;
-    let mouseDownX = 0;
-    let mouseDownY = 0;
     let hasMoved = false;
 
     section.addEventListener('mousedown', (e) => {
@@ -317,18 +303,12 @@ export class Timeline {
       }
 
       mouseDownTime = Date.now();
-      mouseDownX = e.clientX;
-      mouseDownY = e.clientY;
       hasMoved = false;
     });
 
-    section.addEventListener('mousemove', (e) => {
+    section.addEventListener('mousemove', () => {
       if (mouseDownTime > 0) {
-        const deltaX = Math.abs(e.clientX - mouseDownX);
-        const deltaY = Math.abs(e.clientY - mouseDownY);
-        if (deltaX > 3 || deltaY > 3) {
-          hasMoved = true;
-        }
+        hasMoved = true;
       }
     });
 
@@ -375,22 +355,20 @@ export class Timeline {
 
     const section = this.selectedZoomSection;
     const startTime = parseFloat(section.dataset.startTime || '0');
-    const endTime = parseFloat(section.dataset.endTime || '0');
 
-    // Remove keyframes within this section's time range
+    // Remove section from metadata
     const tolerance = 50; // 50ms tolerance
-    const updatedKeyframes = this.metadata.zoom.keyframes.filter(kf => {
-      // Keep keyframes that are clearly outside the section
-      return kf.timestamp < (startTime - tolerance) || kf.timestamp > (endTime + tolerance);
+    const updatedSections = this.metadata.zoom.sections.filter(s => {
+      return Math.abs(s.startTime - startTime) >= tolerance;
     });
 
-    // If we removed keyframes, update metadata
-    if (updatedKeyframes.length !== this.metadata.zoom.keyframes.length) {
-      this.metadata.zoom.keyframes = updatedKeyframes;
+    // If we removed a section, update metadata
+    if (updatedSections.length !== this.metadata.zoom.sections.length) {
+      this.metadata.zoom.sections = updatedSections;
 
       // Notify update
       if (this.onZoomUpdate) {
-        this.onZoomUpdate(updatedKeyframes);
+        this.onZoomUpdate(updatedSections);
       }
 
       // Re-render timeline
@@ -473,8 +451,8 @@ export class Timeline {
 
     const handleMouseUp = () => {
       if (isDragging && this.metadata) {
-        // Update keyframes based on new positions
-        this.updateZoomKeyframesFromSections();
+        // Update sections based on new positions
+        this.updateZoomSectionsFromDOM();
       }
 
       isDragging = false;
@@ -496,51 +474,32 @@ export class Timeline {
     rightHandle.addEventListener('mousedown', (e) => handleMouseDown(e, 'resize-right'));
   }
 
-  private updateZoomKeyframesFromSections() {
+  private updateZoomSectionsFromDOM() {
     if (!this.metadata) return;
 
-    const sections = Array.from(this.zoomRow.querySelectorAll('.zoom-section')) as HTMLElement[];
-    const updatedKeyframes: ZoomKeyframe[] = [...this.metadata.zoom.keyframes];
+    const sectionElements = Array.from(this.zoomRow.querySelectorAll('.zoom-section')) as HTMLElement[];
 
-    // Update timestamps for keyframes based on section positions
-    sections.forEach((section) => {
-      const startTime = parseFloat(section.dataset.startTime || '0');
-      const endTime = parseFloat(section.dataset.endTime || '0');
-      const index = parseInt(section.dataset.index || '0');
+    sectionElements.forEach((sectionEl) => {
+      const startTime = parseFloat(sectionEl.dataset.startTime || '0');
+      const endTime = parseFloat(sectionEl.dataset.endTime || '0');
+      const index = parseInt(sectionEl.dataset.index || '0');
 
-      // Update the start keyframe timestamp
-      if (index < updatedKeyframes.length) {
-        updatedKeyframes[index] = { ...updatedKeyframes[index], timestamp: startTime };
-      }
-
-      // Update the end keyframe timestamp (next keyframe)
-      if (index + 1 < updatedKeyframes.length) {
-        updatedKeyframes[index + 1] = { ...updatedKeyframes[index + 1], timestamp: endTime };
-      } else if (index < updatedKeyframes.length) {
-        // If this is the last section, add a keyframe at the end time
-        const lastKeyframe = updatedKeyframes[updatedKeyframes.length - 1];
-        updatedKeyframes.push({ ...lastKeyframe, timestamp: endTime });
+      // Update the section in metadata
+      if (index < this.metadata!.zoom.sections.length) {
+        this.metadata!.zoom.sections[index] = {
+          ...this.metadata!.zoom.sections[index],
+          startTime,
+          endTime,
+        };
       }
     });
 
-    // Sort by timestamp and remove duplicates
-    updatedKeyframes.sort((a, b) => a.timestamp - b.timestamp);
-    const uniqueKeyframes: ZoomKeyframe[] = [];
-    const tolerance = 50; // 50ms tolerance for duplicate detection
+    // Sort by start time
+    this.metadata.zoom.sections.sort((a, b) => a.startTime - b.startTime);
 
-    updatedKeyframes.forEach((kf) => {
-      const isDuplicate = uniqueKeyframes.some(
-        existing => Math.abs(existing.timestamp - kf.timestamp) < tolerance
-      );
-      if (!isDuplicate) {
-        uniqueKeyframes.push(kf);
-      }
-    });
-
-    // Update metadata and notify
+    // Notify update
     if (this.onZoomUpdate) {
-      this.metadata.zoom.keyframes = uniqueKeyframes;
-      this.onZoomUpdate(uniqueKeyframes);
+      this.onZoomUpdate(this.metadata.zoom.sections);
     }
   }
 
@@ -606,3 +565,4 @@ export class Timeline {
     return `${mins.toString().padStart(2, '0')}:${secs.toString().padStart(2, '0')}`;
   }
 }
+

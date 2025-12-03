@@ -2,7 +2,7 @@ import { spawn } from 'child_process';
 import { join, dirname } from 'path';
 import { existsSync, mkdirSync, unlinkSync } from 'fs';
 import type { MouseEvent, CursorConfig, MouseEffectsConfig, ZoomConfig } from '../types';
-import type { RecordingMetadata, CursorKeyframe, ZoomKeyframe } from '../types/metadata';
+import type { RecordingMetadata, CursorKeyframe } from '../types/metadata';
 import { interpolateMousePositions } from './effects';
 import { getCursorAssetFilePath } from './cursor-renderer';
 import { getFfmpegPath } from '../utils/ffmpeg-path';
@@ -91,7 +91,7 @@ export class VideoProcessor {
       zoomConfig,
       onProgress,
     } = options;
-    
+
     let cursorConfig = initialCursorConfig;
 
     // Validate inputs
@@ -131,22 +131,22 @@ export class VideoProcessor {
     try {
       // Step 1: Get video and screen dimensions
       onProgress?.(PROGRESS_ANALYZING_VIDEO, 'Analyzing video...');
-    const videoDimensions = await getVideoDimensions(inputVideo);
+      const videoDimensions = await getVideoDimensions(inputVideo);
       logger.info('Video dimensions:', videoDimensions);
 
-    let screenDimensions;
-    try {
-      screenDimensions = await getScreenDimensions();
-      logger.debug('Screen dimensions:', screenDimensions);
-    } catch (error) {
-      logger.warn('Could not get screen dimensions, using video dimensions:', error);
-      screenDimensions = videoDimensions;
-    }
+      let screenDimensions;
+      try {
+        screenDimensions = await getScreenDimensions();
+        logger.debug('Screen dimensions:', screenDimensions);
+      } catch (error) {
+        logger.warn('Could not get screen dimensions, using video dimensions:', error);
+        screenDimensions = videoDimensions;
+      }
 
       // Step 2: Extract frames from video
       onProgress?.(PROGRESS_EXTRACTING_FRAMES, 'Extracting frames...');
       logger.info('Extracting frames from video...');
-      
+
       const extractionResult = await extractFrames({
         inputVideo,
         outputDir: tempDir,
@@ -159,7 +159,7 @@ export class VideoProcessor {
       // This ensures cursor animation matches the actual video length
       const actualVideoDuration = (extractionResult.frameCount / frameRate) * 1000; // Convert to milliseconds
       const effectiveVideoDuration = Math.min(videoDuration, actualVideoDuration);
-      
+
       if (actualVideoDuration < videoDuration) {
         logger.warn(
           `Video duration mismatch: metadata says ${videoDuration}ms but actual video is ${actualVideoDuration}ms. ` +
@@ -171,8 +171,8 @@ export class VideoProcessor {
       onProgress?.(PROGRESS_PREPARING_CURSOR, 'Preparing cursor...');
       const cursorAssetPath = getCursorAssetFilePath(cursorConfig.shape);
       if (!cursorAssetPath || !existsSync(cursorAssetPath)) {
-      throw new Error(`Cursor asset not found for shape: ${cursorConfig.shape}`);
-    }
+        throw new Error(`Cursor asset not found for shape: ${cursorConfig.shape}`);
+      }
 
       preparedCursorPath = join(tempDir, `cursor_${Date.now()}.png`);
       await prepareCursorImage(cursorAssetPath, cursorConfig.size, preparedCursorPath);
@@ -181,15 +181,15 @@ export class VideoProcessor {
       // Step 4: Create rendered frames directory
       renderedFrameDir = join(tempDir, `rendered_${Date.now()}`);
       mkdirSync(renderedFrameDir, { recursive: true });
-        
+
       // Step 5: Interpolate mouse events for frame timing
       onProgress?.(PROGRESS_PROCESSING_MOUSE_DATA, 'Processing mouse data...');
       let interpolatedEvents: MouseEvent[] = [];
       try {
         interpolatedEvents = interpolateMousePositions(mouseEvents, frameRate, effectiveVideoDuration);
-          } catch (error) {
+      } catch (error) {
         throw new Error(`Failed to interpolate mouse positions: ${error instanceof Error ? error.message : String(error)}`);
-        }
+      }
 
       // Step 6: Create frame data with cursor positions and zoom
       // Use effectiveVideoDuration to match actual extracted frames
@@ -233,17 +233,17 @@ export class VideoProcessor {
       const maxFrameIndex = extractionResult.frameCount;
       const totalFrames = Math.min(frameDataList.length, maxFrameIndex);
       const batchSize = FRAME_BATCH_SIZE;
-      
+
       if (frameDataList.length > maxFrameIndex) {
         logger.warn(
           `Frame data list (${frameDataList.length} frames) exceeds extracted frames (${maxFrameIndex}). ` +
           `Limiting to ${maxFrameIndex} frames to match video.`
         );
       }
-      
+
       for (let i = 0; i < totalFrames; i += batchSize) {
         const batch = frameDataList.slice(i, i + batchSize);
-        
+
         await Promise.all(
           batch.map(async (frameData) => {
             // Skip if frame index exceeds extracted frame count
@@ -251,7 +251,7 @@ export class VideoProcessor {
               logger.debug(`Skipping frame ${frameData.frameIndex + 1} (exceeds extracted frame count ${maxFrameIndex})`);
               return;
             }
-            
+
             const frameNum = String(frameData.frameIndex + 1).padStart(FRAME_NUMBER_PADDING, '0');
             const inputPath = join(extractedFrameDir!, `frame_${frameNum}.png`);
             const outputPath = join(renderedFrameDir!, `frame_${frameNum}.png`);
@@ -284,7 +284,7 @@ export class VideoProcessor {
         width: outputDimensions.width,
         height: outputDimensions.height,
       });
-      
+
       onProgress?.(PROGRESS_COMPLETE, 'Complete');
       logger.info('Video processing completed successfully');
 
@@ -351,7 +351,7 @@ export class VideoProcessor {
       const videoDimensions = await getVideoDimensions(inputVideo);
       logger.info('Video dimensions (from file):', videoDimensions);
       logger.info('Video dimensions (from metadata):', { width: metadata.video.width, height: metadata.video.height });
-      
+
       // Check for dimension mismatch
       if (videoDimensions.width !== metadata.video.width || videoDimensions.height !== metadata.video.height) {
         logger.warn(`Video dimension mismatch! File: ${videoDimensions.width}x${videoDimensions.height}, Metadata: ${metadata.video.width}x${metadata.video.height}`);
@@ -370,10 +370,10 @@ export class VideoProcessor {
       // Step 2: Extract frames from video
       onProgress?.(PROGRESS_EXTRACTING_FRAMES, 'Extracting frames...');
       logger.info('Extracting frames from video...');
-      
+
       const frameRate = metadata.video.frameRate;
       const videoDuration = metadata.video.duration;
-      
+
       const extractionResult = await extractFrames({
         inputVideo,
         outputDir: tempDir,
@@ -386,7 +386,7 @@ export class VideoProcessor {
       // This ensures cursor animation matches the actual video length
       const actualVideoDuration = (extractionResult.frameCount / frameRate) * 1000; // Convert to milliseconds
       const effectiveVideoDuration = Math.min(videoDuration, actualVideoDuration);
-      
+
       if (actualVideoDuration < videoDuration) {
         logger.warn(
           `Video duration mismatch: metadata says ${videoDuration}ms but actual video is ${actualVideoDuration}ms. ` +
@@ -409,14 +409,14 @@ export class VideoProcessor {
       // Step 4: Create rendered frames directory
       renderedFrameDir = join(tempDir, `rendered_${Date.now()}`);
       mkdirSync(renderedFrameDir, { recursive: true });
-        
+
       // Step 5: Create frame data directly from keyframes (matching preview timing)
       // Coordinates in metadata are already in video space (converted during export)
       // Use effectiveVideoDuration to match actual extracted frames
       onProgress?.(PROGRESS_PROCESSING_MOUSE_DATA, 'Processing keyframes...');
       const frameDataList = createFrameDataFromKeyframes(
         metadata.cursor.keyframes,
-        metadata.zoom.keyframes,
+        metadata.zoom.sections,
         frameRate,
         effectiveVideoDuration,
         videoDimensions,
@@ -454,17 +454,17 @@ export class VideoProcessor {
       const maxFrameIndex = extractionResult.frameCount;
       const totalFrames = Math.min(frameDataList.length, maxFrameIndex);
       const batchSize = FRAME_BATCH_SIZE;
-      
+
       if (frameDataList.length > maxFrameIndex) {
         logger.warn(
           `Frame data list (${frameDataList.length} frames) exceeds extracted frames (${maxFrameIndex}). ` +
           `Limiting to ${maxFrameIndex} frames to match video.`
         );
       }
-      
+
       for (let i = 0; i < totalFrames; i += batchSize) {
         const batch = frameDataList.slice(i, i + batchSize);
-        
+
         await Promise.all(
           batch.map(async (frameData) => {
             // Skip if frame index exceeds extracted frame count
@@ -472,7 +472,7 @@ export class VideoProcessor {
               logger.debug(`Skipping frame ${frameData.frameIndex + 1} (exceeds extracted frame count ${maxFrameIndex})`);
               return;
             }
-            
+
             const frameNum = String(frameData.frameIndex + 1).padStart(FRAME_NUMBER_PADDING, '0');
             const inputPath = join(extractedFrameDir!, `frame_${frameNum}.png`);
             const outputPath = join(renderedFrameDir!, `frame_${frameNum}.png`);
@@ -505,7 +505,7 @@ export class VideoProcessor {
         width: outputDimensions.width,
         height: outputDimensions.height,
       });
-      
+
       onProgress?.(PROGRESS_COMPLETE, 'Complete');
       logger.info('Video processing completed successfully');
 
@@ -539,4 +539,4 @@ export class VideoProcessor {
     }
   }
 
-  }
+}

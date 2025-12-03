@@ -1,7 +1,8 @@
 import sharp from 'sharp';
 import { existsSync, readFileSync } from 'fs';
 import type { MouseEvent, ZoomConfig, CursorConfig } from '../types';
-import type { CursorKeyframe, ZoomKeyframe } from '../types/metadata';
+import type { CursorKeyframe } from '../types/metadata';
+import { detectZoomSections, generateSmoothedZoom, type VideoDimensions } from './zoom-tracker';
 import { createLogger } from '../utils/logger';
 import { SmoothPosition2D, SmoothValue, applyDeadZone, getAdaptiveSmoothTime, ANIMATION_STYLES } from './smooth-motion';
 import { applyCursorMotionBlur, calculateVelocity } from './motion-blur';
@@ -194,7 +195,7 @@ export async function renderFrame(
       // Apply motion blur if enabled (blur is applied relative to cursor speed)
       if (options.cursorConfig?.motionBlur?.enabled && cursorBuffer) {
         const motionBlurStrength = options.cursorConfig.motionBlur.strength ?? 0.5;
-        
+
         // Velocity is already in pixels per second from frame data
         // Pass it directly to motion blur function which scales blur based on speed
         cursorBuffer = await applyCursorMotionBlur(
@@ -247,7 +248,7 @@ function calculateClickAnimationScale(
   // Find the most recent click "down" event within animation duration
   const clickDownEvents = clicks.filter(c => c.action === 'down');
   let mostRecentClick: { timestamp: number } | null = null;
-  
+
   for (const click of clickDownEvents) {
     const timeSinceClick = timestamp - click.timestamp;
     if (timeSinceClick >= 0 && timeSinceClick <= CURSOR_CLICK_ANIMATION_DURATION_MS) {
@@ -263,7 +264,7 @@ function calculateClickAnimationScale(
 
   const timeSinceClick = timestamp - mostRecentClick.timestamp;
   const progress = timeSinceClick / CURSOR_CLICK_ANIMATION_DURATION_MS;
-  
+
   // Scale down quickly, then scale back up
   // Use easeOut for scale down (first half), easeIn for scale up (second half)
   if (progress < 0.5) {
@@ -285,7 +286,7 @@ function calculateClickAnimationScale(
  */
 export function createFrameDataFromKeyframes(
   cursorKeyframes: CursorKeyframe[],
-  zoomKeyframes: ZoomKeyframe[],
+  zoomSections: import('./zoom-tracker').ZoomSection[],
   frameRate: number,
   videoDuration: number,
   videoDimensions: { width: number; height: number },
@@ -296,6 +297,18 @@ export function createFrameDataFromKeyframes(
   const frameInterval = 1000 / frameRate;
   const totalFrames = Math.ceil(videoDuration / frameInterval);
   const frameDataList: FrameData[] = [];
+
+  // Pre-calculate smoothed zoom regions from sections
+  let zoomRegions: import('./zoom-tracker').ZoomRegion[] = [];
+  if (zoomConfig?.enabled && zoomSections.length > 0) {
+    zoomRegions = generateSmoothedZoom(
+      zoomSections,
+      videoDimensions,
+      zoomConfig,
+      frameRate,
+      videoDuration
+    );
+  }
 
   // Convert frame interval to seconds for physics simulation
   const deltaTime = frameInterval / 1000;
@@ -379,67 +392,22 @@ export function createFrameDataFromKeyframes(
     };
   };
 
-  // Interpolate zoom function
+  // Interpolate zoom function using pre-calculated regions
   const interpolateZoom = (timestamp: number): { centerX: number; centerY: number; level: number } | null => {
-    if (!zoomConfig?.enabled || zoomKeyframes.length === 0) {
+    if (!zoomConfig?.enabled || zoomRegions.length === 0) {
       return { centerX: videoDimensions.width / 2, centerY: videoDimensions.height / 2, level: 1.0 };
     }
-    if (zoomKeyframes.length === 1) {
-      const kf = zoomKeyframes[0];
-      return { centerX: kf.centerX, centerY: kf.centerY, level: kf.level };
+
+    // Find the region for this timestamp
+    // Since zoomRegions are generated per frame, we can map timestamp to index
+    // Or use the helper if timestamps don't align perfectly
+    const frameIndex = Math.floor(timestamp / frameInterval);
+    if (frameIndex >= 0 && frameIndex < zoomRegions.length) {
+      const region = zoomRegions[frameIndex];
+      return { centerX: region.centerX, centerY: region.centerY, level: region.scale };
     }
 
-    // Find bracketing keyframes
-    let prev: typeof zoomKeyframes[0] | null = null;
-    let next: typeof zoomKeyframes[0] | null = null;
-
-    for (let i = 0; i < zoomKeyframes.length; i++) {
-      if (zoomKeyframes[i].timestamp <= timestamp) {
-        prev = zoomKeyframes[i];
-        next = zoomKeyframes[i + 1] || zoomKeyframes[i];
-      } else {
-        if (!prev) {
-          prev = zoomKeyframes[0];
-          next = zoomKeyframes[0];
-        } else {
-          next = zoomKeyframes[i];
-        }
-        break;
-      }
-    }
-
-    if (!prev || !next) return null;
-    if (prev.timestamp === next.timestamp) {
-      return { centerX: prev.centerX, centerY: prev.centerY, level: prev.level };
-    }
-
-    // Interpolate with easing
-    const timeDiff = next.timestamp - prev.timestamp;
-    const t = timeDiff > 0 ? (timestamp - prev.timestamp) / timeDiff : 0;
-
-    const easingType: EasingType = (prev.easing || 'easeInOut') as EasingType;
-    let easedT: number;
-    switch (easingType) {
-      case 'linear':
-        easedT = t;
-        break;
-      case 'easeIn':
-        easedT = easeIn(t);
-        break;
-      case 'easeOut':
-        easedT = easeOut(t);
-        break;
-      case 'easeInOut':
-      default:
-        easedT = easeInOut(t);
-        break;
-    }
-
-    return {
-      centerX: prev.centerX + (next.centerX - prev.centerX) * easedT,
-      centerY: prev.centerY + (next.centerY - prev.centerY) * easedT,
-      level: prev.level + (next.level - prev.level) * easedT,
-    };
+    return { centerX: videoDimensions.width / 2, centerY: videoDimensions.height / 2, level: 1.0 };
   };
 
   // Previous positions for velocity calculation
@@ -608,7 +576,7 @@ export function createFrameDataFromEvents(
   // This compensates for the smoothing delay by targeting future positions
   const cursorSmoothTime = cursorStyle.smoothTime;
   const cursorLookAheadFrames = Math.ceil(cursorSmoothTime * frameRate);
-  
+
   // Ensure look-ahead doesn't exceed available events (safety check)
   // The look-ahead frames calculation ensures we target positions that will be reached
   // at the right time despite the smoothing delay
@@ -619,23 +587,6 @@ export function createFrameDataFromEvents(
     cursorSmoothTime
   );
 
-  // Determine zoom animation style (prefer animationStyle over legacy smoothness)
-  const zoomAnimationStyle = zoomConfig?.animationStyle ??
-    (zoomConfig?.smoothness === 'cinematic' ? 'slow' :
-      zoomConfig?.smoothness === 'snappy' ? 'quick' : 'mellow');
-  const zoomStyle = ANIMATION_STYLES[zoomAnimationStyle];
-  const baseSmoothTime = zoomStyle.smoothTime;
-
-  // Zoom center smoother (Screen Studio-like cinematic following)
-  const zoomCenterSmoother = new SmoothPosition2D(
-    videoDimensions.width / 2,
-    videoDimensions.height / 2,
-    baseSmoothTime
-  );
-
-  // Dead zone radius - prevents jitter when cursor is nearly stationary
-  const deadZoneRadius = (zoomConfig?.deadZone ?? DEFAULT_ZOOM_DEAD_ZONE) * scaleX; // Scale with video
-
   // Previous cursor position for velocity calculation
   let prevCursorX = initialX; // This is no longer used for velocity calculation, but kept for consistency if needed elsewhere
   let prevCursorY = initialY; // Same as above
@@ -643,6 +594,28 @@ export function createFrameDataFromEvents(
   let prevSmoothedCursorY = initialY;
   let prevZoomCenterX = videoDimensions.width / 2;
   let prevZoomCenterY = videoDimensions.height / 2;
+
+  // Pre-calculate zoom regions if enabled
+  let zoomRegions: import('./zoom-tracker').ZoomRegion[] = [];
+  if (zoomConfig?.enabled) {
+    const scaledEvents = events.map(e => ({
+      ...e,
+      x: e.x * scaleX,
+      y: e.y * scaleY
+    }));
+    const zoomSections = detectZoomSections(
+      scaledEvents,
+      videoDimensions,
+      zoomConfig
+    );
+    zoomRegions = generateSmoothedZoom(
+      zoomSections,
+      videoDimensions,
+      zoomConfig,
+      frameRate,
+      videoDuration
+    );
+  }
 
   // Track cursor movement for "hide when static" feature
   const staticThreshold = CURSOR_STATIC_THRESHOLD; // pixels - cursor is considered static if movement < this
@@ -653,20 +626,7 @@ export function createFrameDataFromEvents(
   const loopPosition = cursorConfig?.loopPosition ?? false;
   const loopStartFrame = loopPosition ? Math.max(0, totalFrames - Math.floor(frameRate * CURSOR_LOOP_DURATION_SECONDS)) : totalFrames;
 
-  // ========================================
-  // SMART AUTO-ZOOM: Focus Detection
-  // ========================================
-  // Only zoom if user focuses on an area for configured duration
-  // Otherwise, don't zoom at all
-  const focusRequiredMs = ZOOM_FOCUS_REQUIRED_MS; // Must focus for configured duration before zoom activates
-  const focusThreshold = ZOOM_FOCUS_THRESHOLD * scaleX; // Max movement to be considered "focused"
-  const focusAreaRadius = ZOOM_FOCUS_AREA_RADIUS * scaleX; // Must stay within this radius to maintain focus
 
-  let focusStartTime: number | null = null; // When focus started
-  let focusAnchorX = initialX; // The position where focus started
-  let focusAnchorY = initialY;
-  let currentZoomLevel = 1.0; // Smoothly interpolate zoom level
-  const zoomTransitionSpeed = ZOOM_TRANSITION_SPEED; // How fast to transition zoom (slower for smoother effect)
 
   for (let frameIndex = 0; frameIndex < totalFrames; frameIndex++) {
     // Calculate timestamp, clamping to videoDuration to avoid floating-point precision issues
@@ -739,101 +699,24 @@ export function createFrameDataFromEvents(
     // Calculate click animation scale
     const clickAnimationScale = clicks ? calculateClickAnimationScale(timestamp, clicks) : 1.0;
 
-    // ========================================
-    // SMART AUTO-ZOOM: 2-Second Focus Detection
-    // ========================================
-    // Check if cursor is within focus area
-    const distanceFromAnchor = Math.sqrt(
-      Math.pow(smoothedCursor.x - focusAnchorX, 2) +
-      Math.pow(smoothedCursor.y - focusAnchorY, 2)
-    );
-
-    // Check if cursor has moved too much (breaking focus)
-    const isWithinFocusArea = distanceFromAnchor < focusAreaRadius;
-
-    if (isWithinFocusArea) {
-      // Cursor is staying in one area
-      if (focusStartTime === null) {
-        // Start tracking focus
-        focusStartTime = timestamp;
-        focusAnchorX = smoothedCursor.x;
-        focusAnchorY = smoothedCursor.y;
-      }
-    } else {
-      // Cursor moved too far - reset focus tracking
-      focusStartTime = null;
-      focusAnchorX = smoothedCursor.x;
-      focusAnchorY = smoothedCursor.y;
-    }
-
-    // Calculate how long user has been focused
-    const focusDuration = focusStartTime !== null ? timestamp - focusStartTime : 0;
-    const isFocused = focusDuration >= focusRequiredMs; // Only true after 2 seconds
-
-    // Initialize zoom values
+    // Get zoom data from pre-calculated regions
     let zoomCenterX = smoothedCursor.x;
     let zoomCenterY = smoothedCursor.y;
     let zoomLevel = 1.0;
 
+    if (zoomConfig?.enabled && frameIndex < zoomRegions.length) {
+      const region = zoomRegions[frameIndex];
+      zoomCenterX = region.centerX;
+      zoomCenterY = region.centerY;
+      zoomLevel = region.scale;
+    }
+    // Calculate zoom velocity for motion blur
+    let zoomVelocityX = 0;
+    let zoomVelocityY = 0;
+
     if (zoomConfig?.enabled) {
-      // Target zoom level: only zoom if focused for 2+ seconds
-      const targetZoomLevel = isFocused ? zoomConfig.level : 1.0;
-
-      // Smoothly transition zoom level (auto-zoom only when focused)
-      if (zoomConfig?.autoZoom !== false) {
-        // Gradual zoom in/out
-        if (targetZoomLevel > currentZoomLevel) {
-          currentZoomLevel = Math.min(targetZoomLevel, currentZoomLevel + zoomTransitionSpeed);
-        } else if (targetZoomLevel < currentZoomLevel) {
-          currentZoomLevel = Math.max(targetZoomLevel, currentZoomLevel - zoomTransitionSpeed * ZOOM_OUT_SPEED_MULTIPLIER); // Zoom out faster
-        }
-      } else {
-        // Auto-zoom disabled, always use configured level
-        currentZoomLevel = zoomConfig.level;
-      }
-
-      zoomLevel = currentZoomLevel;
-
-      // Apply dead zone to prevent micro-movements
-      const targetWithDeadZone = applyDeadZone(
-        zoomCenterSmoother.getPosition(),
-        { x: smoothedCursor.x, y: smoothedCursor.y },
-        deadZoneRadius
-      );
-
-      // Adaptive smooth time based on cursor velocity
-      // Fast movements = quicker following, slow movements = more cinematic
-      const minSmoothTime = zoomStyle.minSmoothTime;
-
-      const adaptiveSmoothTime = getAdaptiveSmoothTime(
-        velocityX,
-        velocityY,
-        baseSmoothTime,
-        minSmoothTime,
-        ZOOM_VELOCITY_THRESHOLD   // Velocity threshold (pixels per second)
-      );
-
-      // Create a temporary smoother with adaptive timing
-      // This is a simplified approach - in production you'd modify the smoother's internal time
-      const followStrength = baseSmoothTime / adaptiveSmoothTime;
-
-      // Set target and update zoom center with smooth following
-      zoomCenterSmoother.setTarget(targetWithDeadZone.x, targetWithDeadZone.y);
-      const smoothedZoomCenter = zoomCenterSmoother.update(deltaTime * followStrength);
-
-      zoomCenterX = smoothedZoomCenter.x;
-      zoomCenterY = smoothedZoomCenter.y;
-
-      // Clamp zoom center to keep view within bounds
-      const halfWidth = (videoDimensions.width / zoomLevel) / 2;
-      const halfHeight = (videoDimensions.height / zoomLevel) / 2;
-
-      zoomCenterX = Math.max(halfWidth, Math.min(videoDimensions.width - halfWidth, zoomCenterX));
-      zoomCenterY = Math.max(halfHeight, Math.min(videoDimensions.height - halfHeight, zoomCenterY));
-
-      // Calculate zoom velocity for motion blur
-      const zoomVelocityX = (zoomCenterX - prevZoomCenterX) / deltaTime;
-      const zoomVelocityY = (zoomCenterY - prevZoomCenterY) / deltaTime;
+      zoomVelocityX = (zoomCenterX - prevZoomCenterX) / deltaTime;
+      zoomVelocityY = (zoomCenterY - prevZoomCenterY) / deltaTime;
       prevZoomCenterX = zoomCenterX;
       prevZoomCenterY = zoomCenterY;
 

@@ -1,109 +1,67 @@
-import type { RecordingMetadata, ZoomKeyframe, EasingType } from '../../types/metadata';
-import { easeInOut, easeIn, easeOut } from '../../processing/effects';
+import type { RecordingMetadata } from '../../types/metadata';
+import { generateSmoothedZoom, type ZoomRegion } from '../../processing/zoom-tracker';
+
+// Cache for smoothed zoom regions
+let cachedRegions: ZoomRegion[] | null = null;
+let cachedMetadataHash: string | null = null;
 
 /**
- * Apply easing function based on type
+ * Generate a hash of the zoom configuration to detect changes
  */
-function applyEasing(t: number, easing: EasingType): number {
-  switch (easing) {
-    case 'linear':
-      return t;
-    case 'easeIn':
-      return easeIn(t);
-    case 'easeOut':
-      return easeOut(t);
-    case 'easeInOut':
-    default:
-      return easeInOut(t);
-  }
+function getZoomHash(metadata: RecordingMetadata): string {
+  const sections = metadata.zoom.sections;
+  const config = metadata.zoom.config;
+  return JSON.stringify({
+    enabled: config.enabled,
+    level: config.level,
+    sections: sections.map(s => ({
+      startTime: s.startTime,
+      endTime: s.endTime,
+      scale: s.scale,
+      centerX: s.centerX,
+      centerY: s.centerY,
+    })),
+  });
 }
 
 /**
- * Interpolate zoom region between keyframes
+ * Get zoom region for a specific timestamp using smoothed zoom generation
  */
-function interpolateZoomRegion(
-  keyframes: ZoomKeyframe[],
+function getZoomRegion(
+  metadata: RecordingMetadata,
   timestamp: number,
   videoWidth: number,
   videoHeight: number
-): { centerX: number; centerY: number; level: number; cropWidth: number; cropHeight: number } | null {
-  if (keyframes.length === 0) {
-    return {
-      centerX: videoWidth / 2,
-      centerY: videoHeight / 2,
-      level: 1.0,
-      cropWidth: videoWidth,
-      cropHeight: videoHeight,
-    };
-  }
+): ZoomRegion | null {
+  const { sections, config } = metadata.zoom;
 
-  if (keyframes.length === 1) {
-    const kf = keyframes[0];
-    return {
-      centerX: kf.centerX,
-      centerY: kf.centerY,
-      level: kf.level,
-      cropWidth: kf.cropWidth || videoWidth / kf.level,
-      cropHeight: kf.cropHeight || videoHeight / kf.level,
-    };
-  }
-
-  // Find the two keyframes that bracket this timestamp
-  let prevKeyframe: ZoomKeyframe | null = null;
-  let nextKeyframe: ZoomKeyframe | null = null;
-
-  for (let i = 0; i < keyframes.length; i++) {
-    if (keyframes[i].timestamp <= timestamp) {
-      prevKeyframe = keyframes[i];
-      nextKeyframe = keyframes[i + 1] || keyframes[i];
-    } else {
-      if (!prevKeyframe) {
-        prevKeyframe = keyframes[0];
-        nextKeyframe = keyframes[0];
-      } else {
-        nextKeyframe = keyframes[i];
-      }
-      break;
-    }
-  }
-
-  if (!prevKeyframe || !nextKeyframe) {
+  if (!config.enabled || sections.length === 0) {
     return null;
   }
 
-  // If timestamps are the same, return the keyframe value
-  if (prevKeyframe.timestamp === nextKeyframe.timestamp) {
-    return {
-      centerX: prevKeyframe.centerX,
-      centerY: prevKeyframe.centerY,
-      level: prevKeyframe.level,
-      cropWidth: prevKeyframe.cropWidth || videoWidth / prevKeyframe.level,
-      cropHeight: prevKeyframe.cropHeight || videoHeight / prevKeyframe.level,
-    };
+  // Check if we need to regenerate the cache
+  const currentHash = getZoomHash(metadata);
+  if (cachedMetadataHash !== currentHash || !cachedRegions) {
+    // Regenerate smoothed zoom regions
+    cachedRegions = generateSmoothedZoom(
+      sections,
+      { width: videoWidth, height: videoHeight },
+      config,
+      metadata.video.frameRate,
+      metadata.video.duration
+    );
+    cachedMetadataHash = currentHash;
   }
 
-  // Interpolate between keyframes
-  const timeDiff = nextKeyframe.timestamp - prevKeyframe.timestamp;
-  const t = timeDiff > 0 ? (timestamp - prevKeyframe.timestamp) / timeDiff : 0;
-  // Use easing from start keyframe, or default to easeInOut
-  const easingType: EasingType = prevKeyframe.easing || 'easeInOut';
-  const easedT = applyEasing(t, easingType);
+  // Find the region for the current timestamp
+  const frameInterval = 1000 / metadata.video.frameRate;
+  const frameIndex = Math.floor(timestamp / frameInterval);
 
-  const centerX = prevKeyframe.centerX + (nextKeyframe.centerX - prevKeyframe.centerX) * easedT;
-  const centerY = prevKeyframe.centerY + (nextKeyframe.centerY - prevKeyframe.centerY) * easedT;
-  const level = prevKeyframe.level + (nextKeyframe.level - prevKeyframe.level) * easedT;
-  const cropWidth = prevKeyframe.cropWidth || videoWidth / prevKeyframe.level;
-  const nextCropWidth = nextKeyframe.cropWidth || videoWidth / nextKeyframe.level;
-  const cropHeight = prevKeyframe.cropHeight || videoHeight / prevKeyframe.level;
-  const nextCropHeight = nextKeyframe.cropHeight || videoHeight / nextKeyframe.level;
+  if (frameIndex >= 0 && frameIndex < cachedRegions.length) {
+    return cachedRegions[frameIndex];
+  }
 
-  return {
-    centerX,
-    centerY,
-    level,
-    cropWidth: cropWidth + (nextCropWidth - cropWidth) * easedT,
-    cropHeight: cropHeight + (nextCropHeight - cropHeight) * easedT,
-  };
+  return null;
 }
 
 /**
@@ -130,14 +88,14 @@ export function renderZoom(
   }
 
   // Get zoom region at this timestamp
-  const zoomRegion = interpolateZoomRegion(
-    metadata.zoom.keyframes,
+  const zoomRegion = getZoomRegion(
+    metadata,
     timestamp,
     videoWidth,
     videoHeight
   );
 
-  if (!zoomRegion || zoomRegion.level <= 1.0) {
+  if (!zoomRegion || zoomRegion.scale <= 1.0) {
     return;
   }
 
@@ -163,7 +121,7 @@ export function renderZoom(
   ctx.strokeStyle = '#ff6b6b';
   ctx.lineWidth = 2;
   ctx.setLineDash([5, 5]);
-  
+
   // Draw rectangle
   ctx.strokeRect(cropX, cropY, cropW, cropH);
 
@@ -178,7 +136,7 @@ export function renderZoom(
   // Draw zoom level indicator
   ctx.fillStyle = '#ff6b6b';
   ctx.font = '12px monospace';
-  ctx.fillText(`${zoomRegion.level.toFixed(1)}x`, cropX + 5, cropY + 20);
+  ctx.fillText(`${zoomRegion.scale.toFixed(1)}x`, cropX + 5, cropY + 20);
 
   ctx.setLineDash([]);
 }

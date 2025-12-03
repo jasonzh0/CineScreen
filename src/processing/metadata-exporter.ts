@@ -2,7 +2,8 @@ import { writeFileSync } from 'fs';
 import { join, dirname } from 'path';
 import { existsSync, mkdirSync } from 'fs';
 import type { MouseEvent, CursorConfig, ZoomConfig, MouseEffectsConfig } from '../types';
-import type { RecordingMetadata, CursorKeyframe, ZoomKeyframe, ClickEvent, VideoInfo } from '../types/metadata';
+import type { RecordingMetadata, CursorKeyframe, ClickEvent, VideoInfo } from '../types/metadata';
+import type { ZoomSection } from './zoom-tracker';
 import { getVideoDimensions } from './video-utils';
 import { createLogger } from '../utils/logger';
 import { DEFAULT_CURSOR_FRAME_OFFSET } from '../utils/constants';
@@ -36,9 +37,10 @@ export function applyFrameOffsetToMetadata(
     },
     zoom: {
       ...metadata.zoom,
-      keyframes: metadata.zoom.keyframes.map(kf => ({
-        ...kf,
-        timestamp: Math.max(0, kf.timestamp + offsetMs),
+      sections: metadata.zoom.sections.map(section => ({
+        ...section,
+        startTime: Math.max(0, section.startTime + offsetMs),
+        endTime: Math.max(0, section.endTime + offsetMs),
       })),
     },
     clicks: metadata.clicks.map(click => ({
@@ -263,16 +265,9 @@ export class MetadataExporter {
       convertToVideoCoordinates
     );
 
-    // Zoom keyframes will be generated from clicks in the studio editor
-    // Start with default no-zoom keyframe
-    const zoomKeyframes: ZoomKeyframe[] = [{
-      timestamp: 0,
-      centerX: videoDimensions.width / 2,
-      centerY: videoDimensions.height / 2,
-      level: 1.0,
-      cropWidth: videoDimensions.width,
-      cropHeight: videoDimensions.height,
-    }];
+    // Zoom sections will be generated from clicks in the studio editor
+    // Start with no zoom sections - they will be auto-generated from mouse movement or manually added
+    const zoomSections: ZoomSection[] = [];
 
     // Create metadata object
     const metadata: RecordingMetadata = {
@@ -283,10 +278,10 @@ export class MetadataExporter {
         config: cursorConfig,
       },
       zoom: {
-        keyframes: zoomKeyframes,
+        sections: zoomSections,
         config: zoomConfig || {
-          enabled: false,
-          level: 1.0,
+          enabled: true,
+          level: 2.0,
           transitionSpeed: 300,
           padding: 0,
           followSpeed: 1.0,
@@ -327,7 +322,7 @@ export class MetadataExporter {
       const data = readFileSync(metadataPath, 'utf-8');
       const metadata = JSON.parse(data) as RecordingMetadata;
       logger.info(`Metadata loaded from: ${metadataPath}`);
-      
+
       // Apply frame offset to all timestamps
       const adjustedMetadata = applyFrameOffsetToMetadata(metadata);
       return adjustedMetadata;
