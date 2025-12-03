@@ -298,7 +298,6 @@ async function loadStudioData() {
     // Auto-create cursor keyframes from clicks if there are clicks but few keyframes
     if (metadata) {
       autoCreateKeyframesFromClicks(metadata);
-      // Note: Zoom sections are now generated on-demand, not pre-created from clicks
     }
 
     // Update timeline with metadata
@@ -927,8 +926,6 @@ function autoCreateKeyframesFromClicks(metadata: RecordingMetadata) {
   const existingKeyframes = metadata.cursor.keyframes.length;
   const clickCount = clicks.length;
 
-  // Early exit: if we already have enough keyframes, skip
-  // We expect 1 keyframe per click, so check for that
   if (existingKeyframes >= clickCount) {
     logger.debug(`Skipping auto-create: ${existingKeyframes} keyframes already exist for ${clickCount} clicks`);
     return;
@@ -986,11 +983,10 @@ function autoCreateKeyframesFromClicks(metadata: RecordingMetadata) {
     // Add new keyframes to existing ones
     metadata.cursor.keyframes.push(...newKeyframes);
 
-    // Sort keyframes by timestamp (single pass, O(n log n))
+    // Sort keyframes by timestamp
     metadata.cursor.keyframes.sort((a, b) => a.timestamp - b.timestamp);
 
     // Deduplicate keyframes - ensure each timestamp is unique
-    // Optimized: single pass through sorted array
     const deduplicated: CursorKeyframe[] = [];
     const totalKeyframes = metadata.cursor.keyframes.length;
 
@@ -1040,10 +1036,6 @@ function autoCreateKeyframesFromClicks(metadata: RecordingMetadata) {
   }
 }
 
-// Zoom sections are now generated on-demand from mouse events during rendering
-// No need to pre-create zoom keyframes from clicks
-
-// Debug: Log that script is loading
 logger.info('Studio script loading...');
 logger.debug('Window location:', window.location.href);
 logger.debug('electronAPI available:', typeof window.electronAPI !== 'undefined');

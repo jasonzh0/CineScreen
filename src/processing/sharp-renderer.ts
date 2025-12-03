@@ -4,8 +4,8 @@ import type { MouseEvent, ZoomConfig, CursorConfig } from '../types';
 import type { CursorKeyframe } from '../types/metadata';
 import { detectZoomSections, generateSmoothedZoom, type VideoDimensions } from './zoom-tracker';
 import { createLogger } from '../utils/logger';
-import { SmoothPosition2D, SmoothValue, applyDeadZone, getAdaptiveSmoothTime, ANIMATION_STYLES } from './smooth-motion';
-import { applyCursorMotionBlur, calculateVelocity } from './motion-blur';
+import { SmoothPosition2D, ANIMATION_STYLES } from './smooth-motion';
+import { applyCursorMotionBlur } from './motion-blur';
 import { easeInOut, easeIn, easeOut } from './effects';
 import type { EasingType } from '../types/metadata';
 import {
@@ -19,16 +19,6 @@ import {
   CURSOR_LOOP_DURATION_SECONDS,
   CURSOR_CLICK_ANIMATION_DURATION_MS,
   CURSOR_CLICK_ANIMATION_SCALE,
-  DEFAULT_ZOOM_DEAD_ZONE,
-  ZOOM_FOCUS_REQUIRED_MS,
-  ZOOM_FOCUS_THRESHOLD,
-  ZOOM_FOCUS_AREA_RADIUS,
-  ZOOM_TRANSITION_SPEED,
-  ZOOM_OUT_SPEED_MULTIPLIER,
-  ZOOM_VELOCITY_THRESHOLD,
-  MOTION_BLUR_MIN_VELOCITY,
-  MOTION_BLUR_MAX_SIGMA,
-  MOTION_BLUR_STRENGTH_MULTIPLIER,
 } from '../utils/constants';
 
 const logger = createLogger('SharpRenderer');
@@ -128,7 +118,6 @@ export async function renderFrame(
     frameData.cursorY = frameData.cursorY - cropY;
   }
 
-  // Log dimensions for debugging (first frame only)
   if (frameData.frameIndex === 0) {
     logger.debug(`renderFrame: frameWidth=${frameWidth}, frameHeight=${frameHeight}, outputWidth=${outputWidth}, outputHeight=${outputHeight}, currentFrameWidth=${currentFrameWidth}, currentFrameHeight=${currentFrameHeight}`);
     logger.debug(`renderFrame: cursorX=${frameData.cursorX}, cursorY=${frameData.cursorY} (before scaling)`);
@@ -421,7 +410,6 @@ export function createFrameDataFromKeyframes(
   let lastMovementTime = 0;
   const hideAfterMs = CURSOR_HIDE_AFTER_MS;
 
-  // Log first few keyframes for debugging
   if (cursorKeyframes.length > 0) {
     logger.debug(`Creating frame data from ${cursorKeyframes.length} cursor keyframes`);
     logger.debug(`Video dimensions: ${videoDimensions.width}x${videoDimensions.height}`);
@@ -463,7 +451,6 @@ export function createFrameDataFromKeyframes(
     const clampedX = Math.max(0, Math.min(videoDimensions.width, smoothedCursor.x));
     const clampedY = Math.max(0, Math.min(videoDimensions.height, smoothedCursor.y));
 
-    // Log first few cursor positions for debugging
     if (frameIndex < 5) {
       logger.debug(`Frame ${frameIndex}: timestamp=${timestamp}, targetPos=(${targetCursorX}, ${targetCursorY}), smoothedPos=(${clampedX}, ${clampedY}), videoDims=(${videoDimensions.width}, ${videoDimensions.height})`);
     }
@@ -588,8 +575,6 @@ export function createFrameDataFromEvents(
   );
 
   // Previous cursor position for velocity calculation
-  let prevCursorX = initialX; // This is no longer used for velocity calculation, but kept for consistency if needed elsewhere
-  let prevCursorY = initialY; // Same as above
   let prevSmoothedCursorX = initialX;
   let prevSmoothedCursorY = initialY;
   let prevZoomCenterX = videoDimensions.width / 2;

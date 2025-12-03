@@ -307,7 +307,6 @@ selectPathBtn.addEventListener('click', async () => {
   }
 });
 
-// Debug log functionality
 function addDebugLog(message: string) {
   const entry = document.createElement('div');
   entry.className = 'debug-log-entry';
@@ -338,7 +337,6 @@ function addDebugLog(message: string) {
   }
 }
 
-// Toggle debug log visibility
 toggleDebugBtn.addEventListener('click', () => {
   debugLogsVisible = !debugLogsVisible;
   debugLogContainer.style.display = debugLogsVisible ? 'block' : 'none';
@@ -352,13 +350,11 @@ toggleDebugBtn.addEventListener('click', () => {
   }
 });
 
-// Clear debug logs
 clearDebugBtn.addEventListener('click', () => {
   debugLogContent.innerHTML = '';
   addDebugLog('Debug logs cleared');
 });
 
-// Set up debug log listener
 const api = window.electronAPI as RendererElectronAPI | undefined;
 if (api) {
   api.onDebugLog((message: string) => {

@@ -1,5 +1,5 @@
 import { app, BrowserWindow, ipcMain, dialog } from 'electron';
-import { join, dirname, basename } from 'path';
+import { join, dirname } from 'path';
 import { existsSync, mkdirSync, copyFileSync } from 'fs';
 import { ScreenCapture } from './screen-capture';
 import { MouseTracker } from './mouse-tracker';
