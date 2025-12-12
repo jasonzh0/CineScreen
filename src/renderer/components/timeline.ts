@@ -38,6 +38,10 @@ export class Timeline {
     this.videoRow = videoRow;
     this.zoomRow = zoomRow;
 
+    // Initialize playhead at the start position (time = 0)
+    const labelWidth = 100;
+    this.playhead.style.left = `${labelWidth}px`;
+
     this.setupEventListeners();
   }
 
