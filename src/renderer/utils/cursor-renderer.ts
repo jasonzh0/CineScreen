@@ -213,16 +213,44 @@ function drawCursorShape(
 
   switch (shape) {
     case 'arrow':
+    case 'ibeam':
+    case 'ibeamvertical':
+    case 'draglink':
+    case 'contextmenu':
       drawArrowCursor(ctx, x, y, size);
       break;
     case 'pointer':
       drawPointerCursor(ctx, x, y, size);
       break;
     case 'hand':
+    case 'openhand':
       drawHandCursor(ctx, x, y, size);
+      break;
+    case 'closedhand':
+      drawClosedHandCursor(ctx, x, y, size);
       break;
     case 'crosshair':
       drawCrosshairCursor(ctx, x, y, size);
+      break;
+    case 'move':
+    case 'resizeleft':
+    case 'resizeright':
+    case 'resizeleftright':
+    case 'resizeup':
+    case 'resizedown':
+    case 'resizeupdown':
+    case 'resize':
+      drawMoveCursor(ctx, x, y, size);
+      break;
+    case 'copy':
+    case 'dragcopy':
+      drawCopyCursor(ctx, x, y, size);
+      break;
+    case 'notallowed':
+      drawNotAllowedCursor(ctx, x, y, size);
+      break;
+    case 'help':
+      drawHelpCursor(ctx, x, y, size);
       break;
     default:
       drawArrowCursor(ctx, x, y, size);
@@ -286,5 +314,90 @@ function drawCrosshairCursor(ctx: CanvasRenderingContext2D, x: number, y: number
   ctx.beginPath();
   ctx.arc(x + center, y + center, 1.5 * scale, 0, Math.PI * 2);
   ctx.fill();
+}
+
+function drawClosedHandCursor(ctx: CanvasRenderingContext2D, x: number, y: number, size: number): void {
+  const scale = size / 20;
+  ctx.beginPath();
+  // Draw a closed fist shape
+  ctx.ellipse(x + 10 * scale, y + 12 * scale, 7 * scale, 5 * scale, 0, 0, Math.PI * 2);
+  ctx.fill();
+  ctx.stroke();
+}
+
+function drawMoveCursor(ctx: CanvasRenderingContext2D, x: number, y: number, size: number): void {
+  const scale = size / 20;
+  const cx = x + 10 * scale;
+  const cy = y + 10 * scale;
+
+  // Draw four arrows pointing in each direction
+  ctx.beginPath();
+  // Up arrow
+  ctx.moveTo(cx, cy - 8 * scale);
+  ctx.lineTo(cx - 3 * scale, cy - 4 * scale);
+  ctx.moveTo(cx, cy - 8 * scale);
+  ctx.lineTo(cx + 3 * scale, cy - 4 * scale);
+  ctx.moveTo(cx, cy - 8 * scale);
+  ctx.lineTo(cx, cy - 2 * scale);
+  // Down arrow
+  ctx.moveTo(cx, cy + 8 * scale);
+  ctx.lineTo(cx - 3 * scale, cy + 4 * scale);
+  ctx.moveTo(cx, cy + 8 * scale);
+  ctx.lineTo(cx + 3 * scale, cy + 4 * scale);
+  ctx.moveTo(cx, cy + 8 * scale);
+  ctx.lineTo(cx, cy + 2 * scale);
+  // Left arrow
+  ctx.moveTo(cx - 8 * scale, cy);
+  ctx.lineTo(cx - 4 * scale, cy - 3 * scale);
+  ctx.moveTo(cx - 8 * scale, cy);
+  ctx.lineTo(cx - 4 * scale, cy + 3 * scale);
+  ctx.moveTo(cx - 8 * scale, cy);
+  ctx.lineTo(cx - 2 * scale, cy);
+  // Right arrow
+  ctx.moveTo(cx + 8 * scale, cy);
+  ctx.lineTo(cx + 4 * scale, cy - 3 * scale);
+  ctx.moveTo(cx + 8 * scale, cy);
+  ctx.lineTo(cx + 4 * scale, cy + 3 * scale);
+  ctx.moveTo(cx + 8 * scale, cy);
+  ctx.lineTo(cx + 2 * scale, cy);
+  ctx.stroke();
+}
+
+function drawCopyCursor(ctx: CanvasRenderingContext2D, x: number, y: number, size: number): void {
+  const scale = size / 20;
+  // Draw arrow first
+  drawArrowCursor(ctx, x, y, size * 0.7);
+  // Draw plus sign
+  ctx.beginPath();
+  ctx.moveTo(x + 14 * scale, y + 10 * scale);
+  ctx.lineTo(x + 14 * scale, y + 18 * scale);
+  ctx.moveTo(x + 10 * scale, y + 14 * scale);
+  ctx.lineTo(x + 18 * scale, y + 14 * scale);
+  ctx.stroke();
+}
+
+function drawNotAllowedCursor(ctx: CanvasRenderingContext2D, x: number, y: number, size: number): void {
+  const scale = size / 20;
+  const cx = x + 10 * scale;
+  const cy = y + 10 * scale;
+  const radius = 8 * scale;
+
+  ctx.beginPath();
+  ctx.arc(cx, cy, radius, 0, Math.PI * 2);
+  ctx.stroke();
+  // Draw diagonal line
+  ctx.beginPath();
+  ctx.moveTo(cx - 5.6 * scale, cy - 5.6 * scale);
+  ctx.lineTo(cx + 5.6 * scale, cy + 5.6 * scale);
+  ctx.stroke();
+}
+
+function drawHelpCursor(ctx: CanvasRenderingContext2D, x: number, y: number, size: number): void {
+  const scale = size / 20;
+  // Draw arrow first
+  drawArrowCursor(ctx, x, y, size * 0.7);
+  // Draw question mark
+  ctx.font = `${12 * scale}px sans-serif`;
+  ctx.fillText('?', x + 12 * scale, y + 18 * scale);
 }
 

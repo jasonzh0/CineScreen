@@ -4,6 +4,7 @@ export interface MouseEvent {
   y: number;
   button?: 'left' | 'right' | 'middle';
   action?: 'move' | 'down' | 'up';
+  cursorType?: string; // System cursor type (arrow, pointer, hand, etc.)
 }
 
 export interface RecordingConfig {
@@ -18,9 +19,41 @@ export interface RecordingConfig {
   };
 }
 
+/**
+ * All supported cursor shapes
+ * These map to SVG assets in src/assets/ via cursor-renderer.ts
+ */
+export type CursorShape =
+  | 'arrow'
+  | 'pointer'
+  | 'hand'
+  | 'openhand'
+  | 'closedhand'
+  | 'crosshair'
+  | 'ibeam'
+  | 'ibeamvertical'
+  | 'move'
+  | 'resizeleft'
+  | 'resizeright'
+  | 'resizeleftright'
+  | 'resizeup'
+  | 'resizedown'
+  | 'resizeupdown'
+  | 'resize'
+  | 'copy'
+  | 'dragcopy'
+  | 'draglink'
+  | 'help'
+  | 'notallowed'
+  | 'contextmenu'
+  | 'poof'
+  | 'screenshot'
+  | 'zoomin'
+  | 'zoomout';
+
 export interface CursorConfig {
   size: number;
-  shape: 'arrow' | 'pointer' | 'hand' | 'crosshair';
+  shape: CursorShape;
   color?: string;
 
   // Screen Studio-like features

@@ -20,8 +20,9 @@ export const VIDEO_ENCODING_CRF = 18;
 
 /**
  * Batch size for processing frames in parallel
+ * Higher values use more memory but process faster
  */
-export const FRAME_BATCH_SIZE = 10;
+export const FRAME_BATCH_SIZE = 50;
 
 /**
  * Frame number padding width (for frame_000001.png format)
@@ -182,12 +183,13 @@ export const TRANSPARENT_BACKGROUND = { r: 0, g: 0, b: 0, alpha: 0 };
 /**
  * PNG quality for frame output
  */
-export const PNG_QUALITY = 90;
+export const PNG_QUALITY = 80;
 
 /**
- * PNG compression level
+ * PNG compression level (0-9, lower = faster but larger files)
+ * Using 1 for speed since these are temporary files
  */
-export const PNG_COMPRESSION_LEVEL = 6;
+export const PNG_COMPRESSION_LEVEL = 1;
 
 /**
  * SVG density for conversion to PNG (DPI)

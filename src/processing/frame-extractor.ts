@@ -65,7 +65,8 @@ export async function extractFrames(options: FrameExtractionOptions): Promise<Ex
     args.push('-t', duration.toString());
   }
 
-  // Output settings
+  // Output settings - use high quality JPEG for faster extraction
+  // PNG is slow to encode, JPEG is much faster for intermediate frames
   args.push(
     '-vf', `fps=${frameRate}`,
     '-q:v', quality.toString(),
@@ -125,6 +126,7 @@ export async function extractFrames(options: FrameExtractionOptions): Promise<Ex
 
 /**
  * Encode frames back to video using FFmpeg
+ * Tries hardware acceleration first, falls back to software encoding
  */
 export async function encodeFrames(options: {
   frameDir: string;
@@ -134,6 +136,32 @@ export async function encodeFrames(options: {
   width?: number;
   height?: number;
 }): Promise<void> {
+  const { frameDir, framePattern, outputVideo, frameRate, width, height } = options;
+
+  // Try hardware encoding first, fall back to software if it fails
+  try {
+    await encodeFramesWithCodec(options, 'hardware');
+    return;
+  } catch (error) {
+    logger.warn('Hardware encoding failed, falling back to software encoding:', error);
+    await encodeFramesWithCodec(options, 'software');
+  }
+}
+
+/**
+ * Internal function to encode with specific codec
+ */
+async function encodeFramesWithCodec(
+  options: {
+    frameDir: string;
+    framePattern: string;
+    outputVideo: string;
+    frameRate: number;
+    width?: number;
+    height?: number;
+  },
+  mode: 'hardware' | 'software'
+): Promise<void> {
   const { frameDir, framePattern, outputVideo, frameRate, width, height } = options;
   const ffmpegPath = getFfmpegPath();
   const inputPattern = join(frameDir, framePattern);
@@ -148,17 +176,30 @@ export async function encodeFrames(options: {
     args.push('-vf', `scale=${width}:${height}`);
   }
 
-  args.push(
-    '-c:v', 'libx264',
-    '-preset', 'fast',
-    '-crf', '18',
-    '-pix_fmt', 'yuv420p',
-    '-movflags', 'faststart',
-    '-y',
-    outputVideo
-  );
+  if (mode === 'hardware') {
+    // macOS VideoToolbox hardware encoder - much faster
+    args.push(
+      '-c:v', 'h264_videotoolbox',
+      '-q:v', '65', // Quality (0-100, higher is better)
+      '-pix_fmt', 'yuv420p',
+      '-movflags', 'faststart',
+      '-y',
+      outputVideo
+    );
+  } else {
+    // Software encoding fallback - use ultrafast preset for speed
+    args.push(
+      '-c:v', 'libx264',
+      '-preset', 'ultrafast',
+      '-crf', '20',
+      '-pix_fmt', 'yuv420p',
+      '-movflags', 'faststart',
+      '-y',
+      outputVideo
+    );
+  }
 
-  logger.info('Encoding frames to video:', { outputVideo, frameRate });
+  logger.info(`Encoding frames to video (${mode}):`, { outputVideo, frameRate });
   logger.debug('FFmpeg args:', args.join(' '));
 
   return new Promise((resolve, reject) => {
@@ -171,10 +212,10 @@ export async function encodeFrames(options: {
 
     ffmpegProcess.on('close', (code) => {
       if (code === 0 && existsSync(outputVideo)) {
-        logger.info('Video encoded successfully');
+        logger.info(`Video encoded successfully (${mode})`);
         resolve();
       } else {
-        reject(new Error(`Encoding failed: ${errorOutput.substring(0, 500)}`));
+        reject(new Error(`Encoding failed (${mode}): ${errorOutput.substring(0, 500)}`));
       }
     });
 

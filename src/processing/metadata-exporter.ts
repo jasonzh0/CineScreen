@@ -1,7 +1,7 @@
 import { writeFileSync } from 'fs';
-import { join, dirname } from 'path';
+import { dirname } from 'path';
 import { existsSync, mkdirSync } from 'fs';
-import type { MouseEvent, CursorConfig, ZoomConfig, MouseEffectsConfig } from '../types';
+import type { MouseEvent, CursorConfig, ZoomConfig, MouseEffectsConfig, CursorShape } from '../types';
 import type { RecordingMetadata, CursorKeyframe, ClickEvent, VideoInfo } from '../types/metadata';
 import type { ZoomSection } from './zoom-tracker';
 import { getVideoDimensions } from './video-utils';
@@ -11,6 +11,22 @@ import { DEFAULT_CURSOR_FRAME_OFFSET } from '../utils/constants';
 const logger = createLogger('MetadataExporter');
 
 const METADATA_VERSION = '1.0.0';
+
+/**
+ * Converts a cursor type string to a valid CursorShape, defaulting to 'arrow' if unknown
+ */
+function toCursorShape(cursorType: string | undefined): CursorShape {
+  if (!cursorType) return 'arrow';
+  // Validate the cursor type is a known shape, fall back to 'arrow' if not
+  const validShapes: CursorShape[] = [
+    'arrow', 'pointer', 'hand', 'openhand', 'closedhand', 'crosshair',
+    'ibeam', 'ibeamvertical', 'move', 'resizeleft', 'resizeright',
+    'resizeleftright', 'resizeup', 'resizedown', 'resizeupdown', 'resize',
+    'copy', 'dragcopy', 'draglink', 'help', 'notallowed', 'contextmenu',
+    'poof', 'screenshot', 'zoomin', 'zoomout'
+  ];
+  return validShapes.includes(cursorType as CursorShape) ? (cursorType as CursorShape) : 'arrow';
+}
 
 /**
  * Apply frame offset to metadata timestamps
@@ -91,8 +107,7 @@ function convertMouseEventsToKeyframes(
     }
   }
 
-  // Only store start and end keyframes - all intermediate positions are interpolated
-  // Find first and last move events
+  // Track all move events with cursor type changes
   const moveEvents = mouseEvents.filter(e => e.action === 'move');
 
   if (moveEvents.length > 0) {
@@ -108,8 +123,25 @@ function convertMouseEventsToKeyframes(
       timestamp: 0,
       x: firstPos.x,
       y: firstPos.y,
+      shape: toCursorShape(firstMove.cursorType),
       easing: 'easeInOut', // Default easing for the segment
     });
+
+    // Add keyframes for cursor type changes
+    let lastCursorType = firstMove.cursorType;
+    for (const event of moveEvents) {
+      if (event.cursorType && event.cursorType !== lastCursorType) {
+        const pos = convertCoords(event.x, event.y);
+        cursorKeyframes.push({
+          timestamp: event.timestamp,
+          x: pos.x,
+          y: pos.y,
+          shape: toCursorShape(event.cursorType),
+          easing: 'easeInOut',
+        });
+        lastCursorType = event.cursorType;
+      }
+    }
 
     // End keyframe at video duration (end of video)
     // Only add if position changed or we have a valid duration
@@ -118,6 +150,7 @@ function convertMouseEventsToKeyframes(
         timestamp: videoDuration,
         x: lastPos.x,
         y: lastPos.y,
+        shape: toCursorShape(lastMove.cursorType),
       });
     }
   } else if (mouseEvents.length > 0) {
@@ -128,6 +161,7 @@ function convertMouseEventsToKeyframes(
       timestamp: 0,
       x: firstPos.x,
       y: firstPos.y,
+      shape: toCursorShape(firstEvent.cursorType),
       easing: 'easeInOut',
     });
 
@@ -139,6 +173,7 @@ function convertMouseEventsToKeyframes(
         timestamp: videoDuration,
         x: lastPos.x,
         y: lastPos.y,
+        shape: toCursorShape(lastEvent.cursorType),
       });
     }
   }

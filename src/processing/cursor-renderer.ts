@@ -110,17 +110,39 @@ function getAssetsDir(): string {
 
 /**
  * Map cursor shape names to asset file names
+ * Includes all system cursor types detected by cursor-type binary
  */
 const CURSOR_SHAPE_MAP: Record<string, string> = {
+  // Standard cursors
   arrow: 'cursor.svg',
   pointer: 'pointinghand.svg',
   hand: 'openhand.svg',
+  openhand: 'openhand.svg',
+  closedhand: 'closedhand.svg',
   crosshair: 'cursor.svg', // Use cursor as fallback
+  ibeam: 'cursor.svg', // Text cursor - use arrow as fallback
+  ibeamvertical: 'cursor.svg',
+
+  // Resize cursors
   move: 'move.svg',
+  resizeleft: 'resizenortheastsouthwest.svg',
+  resizeright: 'resizenortheastsouthwest.svg',
+  resizeleftright: 'resizenortheastsouthwest.svg',
+  resizeup: 'resizenortheastsouthwest.svg',
+  resizedown: 'resizenortheastsouthwest.svg',
+  resizeupdown: 'resizenortheastsouthwest.svg',
+  resize: 'resizenortheastsouthwest.svg',
+
+  // Action cursors
   copy: 'copy.svg',
+  dragcopy: 'copy.svg',
+  draglink: 'cursor.svg',
   help: 'help.svg',
   notallowed: 'notallowed.svg',
-  resize: 'resizenortheastsouthwest.svg',
+  contextmenu: 'cursor.svg',
+  poof: 'poof.svg',
+
+  // Screenshot/zoom cursors
   screenshot: 'screenshotselection.svg',
   zoomin: 'zoomin.svg',
   zoomout: 'zoomout.svg',

@@ -345,7 +345,6 @@ function setupSettingsPanel() {
   // Get settings elements
   const cursorSizeSlider = document.getElementById('cursor-size-setting') as HTMLInputElement;
   const cursorSizeValue = document.getElementById('cursor-size-value-setting') as HTMLSpanElement;
-  const cursorShapeSelect = document.getElementById('cursor-shape-setting') as HTMLSelectElement;
   const cursorColorInput = document.getElementById('cursor-color-setting') as HTMLInputElement;
   const cursorMotionBlurEnabledCheckbox = document.getElementById('cursor-motion-blur-enabled-setting') as HTMLInputElement;
   const cursorMotionBlurStrengthSlider = document.getElementById('cursor-motion-blur-strength-setting') as HTMLInputElement;
@@ -376,7 +375,6 @@ function setupSettingsPanel() {
   if (metadata.cursor.config) {
     cursorSizeSlider.value = String(metadata.cursor.config.size || 100);
     cursorSizeValue.textContent = String(metadata.cursor.config.size || 100);
-    cursorShapeSelect.value = metadata.cursor.config.shape || 'arrow';
     cursorColorInput.value = metadata.cursor.config.color || '#000000';
 
     // Initialize motion blur settings
@@ -411,13 +409,6 @@ function setupSettingsPanel() {
     cursorSizeValue.textContent = value;
     if (metadata) {
       metadata.cursor.config.size = parseInt(value);
-      renderPreview();
-    }
-  });
-
-  cursorShapeSelect.addEventListener('change', (e) => {
-    if (metadata) {
-      metadata.cursor.config.shape = (e.target as HTMLSelectElement).value as any;
       renderPreview();
     }
   });

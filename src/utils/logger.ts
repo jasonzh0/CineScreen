@@ -23,7 +23,14 @@ export function setLogSender(sender: (message: string) => void): void {
 }
 
 // Check if we're in development mode
-const DEBUG = process.env.DEBUG === 'true' || process.env.NODE_ENV === 'development';
+// Use try-catch to handle renderer context where process may not be defined
+let DEBUG = false;
+try {
+  DEBUG = typeof process !== 'undefined' && (process.env.DEBUG === 'true' || process.env.NODE_ENV === 'development');
+} catch {
+  // In renderer context, process may not be available
+  DEBUG = false;
+}
 
 /**
  * Format log message

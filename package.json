@@ -52,7 +52,8 @@
         "zip"
       ],
       "hardenedRuntime": true,
-      "gatekeeperAssess": false,
+      "gatekeeperAssess": true,
+      "identity": null,
       "entitlements": "build/entitlements.mac.plist",
       "entitlementsInherit": "build/entitlements.mac.plist",
       "extendInfo": {
@@ -75,10 +76,10 @@
         ]
       },
       {
-        "from": "native/mouse-button-state",
+        "from": "native/mouse-telemetry",
         "to": ".",
         "filter": [
-          "mouse-button-state"
+          "mouse-telemetry"
         ]
       }
     ],

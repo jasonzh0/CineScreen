@@ -33,6 +33,7 @@ export function createStudioWindow(videoPath: string, metadataPath: string): voi
       preload: preloadPath,
       nodeIntegration: false,
       contextIsolation: true,
+      webSecurity: false, // Allow loading local video files
     },
     title: 'Studio - CineScreen',
     resizable: true,
@@ -142,36 +143,17 @@ export function createStudioWindow(videoPath: string, metadataPath: string): voi
   // Wait for window to be ready
   studioWindow.webContents.once('did-finish-load', () => {
     logger.info('Studio window loaded');
-    
-    // Wait a bit for DOM to be ready, then check
+
+    // Wait a bit for DOM to be ready, then inject init data
     setTimeout(() => {
       if (!studioWindow || studioWindow.isDestroyed()) return;
-      
-      // Check if HTML loaded correctly
-      studioWindow.webContents.executeJavaScript(`
-        console.log('Checking DOM after load...');
-        console.log('Body children:', document.body.children.length);
-        console.log('Body innerHTML length:', document.body.innerHTML.length);
-        const container = document.getElementById('studio-container');
-        console.log('Container check from main process:', container);
-        if (!container) {
-          console.error('ERROR: studio-container not found in DOM!');
-          console.log('Body HTML preview:', document.body.innerHTML.substring(0, 500));
-          console.log('Document title:', document.title);
-        } else {
-          console.log('Container found!', container.offsetWidth, container.offsetHeight);
-        }
-      `).catch(err => {
-        logger.error('Failed to execute check script:', err);
-      });
-      
+
       // Inject URL parameters into window for easier access
       studioWindow.webContents.executeJavaScript(`
         window.__studioInitData = {
           videoPath: decodeURIComponent('${videoPathEncoded}'),
           metadataPath: decodeURIComponent('${metadataPathEncoded}')
         };
-        console.log('Studio init data injected:', window.__studioInitData);
       `).catch(err => {
         logger.error('Failed to inject init data:', err);
       });

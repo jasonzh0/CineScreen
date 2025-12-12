@@ -146,9 +146,10 @@ export async function renderFrame(
 
   // Resize with aspect ratio preservation (using 'contain' fit)
   // Sharp will automatically preserve aspect ratio, add background, and center the image
+  // Using 'mitchell' kernel - good balance of speed and quality (faster than lanczos3)
   pipeline = pipeline.resize(outputWidth, outputHeight, {
     fit: 'contain',
-    kernel: 'lanczos3',
+    kernel: 'mitchell',
     background: BLACK_BACKGROUND, // Black background for letterboxing
   });
 
@@ -201,10 +202,10 @@ export async function renderFrame(
   }
 
   // Calculate cursor overlay position
-  // Position is the top-left corner of the cursor image (centered on cursor point)
-  // Subtract half cursor size to center the cursor on the position
-  const cursorLeft = Math.round(frameData.cursorX - scaledCursorSize / 2);
-  const cursorTop = Math.round(frameData.cursorY - scaledCursorSize / 2);
+  // The cursor hotspot is at the top-left of the cursor image (like macOS arrow cursor)
+  // Position the image so the hotspot aligns with the cursor coordinates
+  const cursorLeft = Math.round(frameData.cursorX);
+  const cursorTop = Math.round(frameData.cursorY);
 
   // Composite cursor overlay
   if (cursorBuffer) {

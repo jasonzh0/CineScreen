@@ -1,7 +1,6 @@
 import { writeFileSync, readFileSync } from 'fs';
-import { screen } from 'electron';
 import type { MouseEvent } from '../types';
-import { getMouseButtonStates } from '../processing/click-detector';
+import { getMouseTelemetry } from '../processing/mouse-telemetry';
 import { createLogger } from '../utils/logger';
 
 const logger = createLogger('MouseTracker');
@@ -13,21 +12,7 @@ export class MouseTracker {
   private trackingInterval?: NodeJS.Timeout;
   private lastPosition = { x: 0, y: 0 };
   private lastButtonState = { left: false, right: false, middle: false };
-
-  /**
-   * Get current mouse position using Electron's screen API
-   * This returns the cursor position in screen coordinates
-   */
-  private getMousePosition(): { x: number; y: number } {
-    try {
-      const cursorPoint = screen.getCursorScreenPoint();
-      return { x: cursorPoint.x, y: cursorPoint.y };
-    } catch (error) {
-      logger.error('Error getting mouse position:', error);
-      return this.lastPosition;
-    }
-  }
-
+  private lastCursorType: string = 'arrow';
 
   /**
    * Start tracking mouse movements
@@ -43,17 +28,17 @@ export class MouseTracker {
     this.events = [];
     this.startTime = Date.now();
 
-    // Get initial position
-    this.lastPosition = this.getMousePosition();
-    logger.info(`Initial mouse position: x=${this.lastPosition.x}, y=${this.lastPosition.y}`);
-
-    // Get initial button states
+    // Get initial telemetry data
     try {
-      const initialButtonStates = await getMouseButtonStates();
-      this.lastButtonState = { ...initialButtonStates };
-      logger.info(`Initial button states: left=${initialButtonStates.left}, right=${initialButtonStates.right}, middle=${initialButtonStates.middle}`);
+      const initialTelemetry = await getMouseTelemetry();
+      this.lastPosition = initialTelemetry.position;
+      this.lastButtonState = { ...initialTelemetry.buttons };
+      this.lastCursorType = initialTelemetry.cursor;
+      logger.info(`Initial mouse position: x=${this.lastPosition.x}, y=${this.lastPosition.y}`);
+      logger.info(`Initial button states: left=${initialTelemetry.buttons.left}, right=${initialTelemetry.buttons.right}, middle=${initialTelemetry.buttons.middle}`);
+      logger.info(`Initial cursor type: ${initialTelemetry.cursor}`);
     } catch (error) {
-      logger.error('Failed to get initial button states:', error);
+      logger.error('Failed to get initial telemetry:', error);
       this.lastButtonState = { left: false, right: false, middle: false };
     }
 
@@ -69,9 +54,18 @@ export class MouseTracker {
 
       iterationCount++;
       try {
-        const buttonStates = await getMouseButtonStates();
-        const position = this.getMousePosition();
+        // Single call to get all telemetry data
+        const telemetry = await getMouseTelemetry();
+        const buttonStates = telemetry.buttons;
+        const cursorType = telemetry.cursor;
+        const position = telemetry.position;
         const timestamp = Date.now() - this.startTime;
+
+        // Track cursor type changes
+        if (cursorType !== this.lastCursorType) {
+          logger.debug(`[CURSOR] Type changed from ${this.lastCursorType} to ${cursorType} at ${timestamp}ms`);
+          this.lastCursorType = cursorType;
+        }
 
         // Detect button state changes (clicks)
         if (buttonStates.left !== this.lastButtonState.left) {
@@ -81,6 +75,7 @@ export class MouseTracker {
             y: position.y,
             button: 'left' as const,
             action: (buttonStates.left ? 'down' : 'up') as 'down' | 'up',
+            cursorType,
           };
           this.events.push(event);
           this.lastButtonState.left = buttonStates.left;
@@ -92,6 +87,7 @@ export class MouseTracker {
             y: position.y,
             button: 'right' as const,
             action: (buttonStates.right ? 'down' : 'up') as 'down' | 'up',
+            cursorType,
           };
           this.events.push(event);
           logger.info(`[CLICK] Right button ${event.action} at (${position.x}, ${position.y}) at ${timestamp}ms - Total events: ${this.events.length}`);
@@ -104,6 +100,7 @@ export class MouseTracker {
             y: position.y,
             button: 'middle' as const,
             action: (buttonStates.middle ? 'down' : 'up') as 'down' | 'up',
+            cursorType,
           };
           this.events.push(event);
           logger.info(`[CLICK] Middle button ${event.action} at (${position.x}, ${position.y}) at ${timestamp}ms - Total events: ${this.events.length}`);
@@ -117,6 +114,7 @@ export class MouseTracker {
           x: position.x,
           y: position.y,
           action: 'move',
+          cursorType,
         });
         this.lastPosition = position;
       } catch (error) {
