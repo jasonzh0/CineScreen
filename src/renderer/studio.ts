@@ -129,12 +129,14 @@ async function init() {
       metadata = updatedMetadata;
       updateTimelineDuration();
       keyframePanel?.setMetadata(updatedMetadata);
+      renderPreview();
     });
 
     zoomEditor.setOnMetadataUpdate((updatedMetadata) => {
       metadata = updatedMetadata;
       updateTimelineDuration();
       keyframePanel?.setMetadata(updatedMetadata);
+      renderPreview();
     });
 
     // Set up preview callbacks
@@ -363,7 +365,6 @@ function setupSettingsPanel() {
   // Get settings elements
   const cursorSizeSlider = document.getElementById('cursor-size-setting') as HTMLInputElement;
   const cursorSizeValue = document.getElementById('cursor-size-value-setting') as HTMLSpanElement;
-  const cursorColorInput = document.getElementById('cursor-color-setting') as HTMLInputElement;
   const cursorMotionBlurEnabledCheckbox = document.getElementById('cursor-motion-blur-enabled-setting') as HTMLInputElement;
   const cursorMotionBlurStrengthSlider = document.getElementById('cursor-motion-blur-strength-setting') as HTMLInputElement;
   const cursorMotionBlurStrengthValue = document.getElementById('cursor-motion-blur-strength-value-setting') as HTMLSpanElement;
@@ -391,7 +392,6 @@ function setupSettingsPanel() {
   if (metadata.cursor.config) {
     cursorSizeSlider.value = String(metadata.cursor.config.size || 100);
     cursorSizeValue.textContent = String(metadata.cursor.config.size || 100);
-    cursorColorInput.value = metadata.cursor.config.color || '#000000';
 
     // Initialize motion blur settings
     if (!metadata.cursor.config.motionBlur) {
@@ -420,13 +420,6 @@ function setupSettingsPanel() {
     cursorSizeValue.textContent = value;
     if (metadata) {
       metadata.cursor.config.size = parseInt(value);
-      renderPreview();
-    }
-  });
-
-  cursorColorInput.addEventListener('input', (e) => {
-    if (metadata) {
-      metadata.cursor.config.color = (e.target as HTMLInputElement).value;
       renderPreview();
     }
   });
@@ -600,38 +593,59 @@ function setupEventListeners() {
     logger.info(`Added zoom section: ${startTime}ms - ${endTime}ms, scale: ${scale}x`);
   });
 
-  // Save metadata button
-  const saveMetadataBtn = document.getElementById('save-metadata-btn');
-  saveMetadataBtn?.addEventListener('click', async () => {
+  // Toast notification helper
+  const showToast = (message: string, type: 'success' | 'error' = 'success') => {
+    const toast = document.getElementById('toast');
+    if (!toast) return;
+
+    toast.textContent = message;
+    toast.className = `toast ${type} show`;
+
+    setTimeout(() => {
+      toast.classList.remove('show');
+    }, 2000);
+  };
+
+  // Save function
+  const saveProject = async () => {
     if (!metadataManager || !metadataManager.hasMetadata() || !metadataPath) {
-      alert('No metadata loaded');
+      showToast('No metadata loaded', 'error');
       return;
     }
 
     const fullMetadata = metadataManager.getMetadata();
     if (!fullMetadata) {
-      alert('No metadata to save');
-      return;
-    }
-
-    if (!confirm('Save changes to the project file?')) {
+      showToast('No metadata to save', 'error');
       return;
     }
 
     try {
       const api = window.electronAPI as StudioElectronAPI | undefined;
       if (!api?.saveMetadata) {
-        alert('Save functionality not available');
+        showToast('Save functionality not available', 'error');
         return;
       }
 
       const result = await api.saveMetadata(metadataPath, fullMetadata);
       if (result.success) {
+        showToast('Saved');
         logger.info(`Metadata saved to: ${metadataPath}`);
       }
     } catch (error) {
       logger.error('Failed to save metadata:', error);
-      alert(`Failed to save metadata: ${error instanceof Error ? error.message : 'Unknown error'}`);
+      showToast('Failed to save', 'error');
+    }
+  };
+
+  // Save metadata button
+  const saveMetadataBtn = document.getElementById('save-metadata-btn');
+  saveMetadataBtn?.addEventListener('click', () => saveProject());
+
+  // Keyboard shortcut: Cmd+S (Mac) / Ctrl+S (Windows)
+  document.addEventListener('keydown', (e) => {
+    if ((e.metaKey || e.ctrlKey) && e.key === 's') {
+      e.preventDefault();
+      saveProject();
     }
   });
 

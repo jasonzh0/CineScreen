@@ -185,6 +185,9 @@ export class Timeline {
     const durationSeconds = this.duration / 1000;
     const clampedTime = Math.max(0, Math.min(timeSeconds, durationSeconds));
 
+    // Update playhead immediately for responsive feedback
+    this.updatePlayhead(clampedTime);
+
     if (this.onSeek) {
       this.onSeek(clampedTime);
     }
@@ -421,6 +424,8 @@ export class Timeline {
       const deltaX = currentX - startX;
       const deltaTime = (deltaX / this.pixelsPerSecond) * 1000; // Convert to milliseconds
 
+      let updated = false;
+
       if (dragType === 'move') {
         // Move the entire section
         const newStartTime = Math.max(0, Math.min(startTime + deltaTime, this.duration - (endTime - startTime)));
@@ -430,6 +435,7 @@ export class Timeline {
           section.style.left = `${(newStartTime / 1000) * this.pixelsPerSecond}px`;
           section.dataset.startTime = newStartTime.toString();
           section.dataset.endTime = newEndTime.toString();
+          updated = true;
         }
       } else if (dragType === 'resize-left') {
         // Resize from left
@@ -440,6 +446,7 @@ export class Timeline {
           section.style.left = `${(newStartTime / 1000) * this.pixelsPerSecond}px`;
           section.style.width = `${newWidth}px`;
           section.dataset.startTime = newStartTime.toString();
+          updated = true;
         }
       } else if (dragType === 'resize-right') {
         // Resize from right
@@ -449,7 +456,13 @@ export class Timeline {
         if (newWidth > 20) { // Min 20px width
           section.style.width = `${newWidth}px`;
           section.dataset.endTime = newEndTime.toString();
+          updated = true;
         }
+      }
+
+      // Update metadata in real-time for responsive preview
+      if (updated) {
+        this.updateZoomSectionsFromDOM();
       }
     };
 
