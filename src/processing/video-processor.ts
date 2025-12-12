@@ -210,11 +210,10 @@ export class VideoProcessor {
       for (let i = 0; i < totalFrames; i += batchSize) {
         const batch = frameDataList.slice(i, i + batchSize);
 
+        // Process batch in parallel for maximum performance
         await Promise.all(
           batch.map(async (frameData) => {
-            // Skip if frame index exceeds extracted frame count
             if (frameData.frameIndex >= maxFrameIndex) {
-              logger.debug(`Skipping frame ${frameData.frameIndex + 1} (exceeds extracted frame count ${maxFrameIndex})`);
               return;
             }
 
@@ -227,7 +226,11 @@ export class VideoProcessor {
               return;
             }
 
-            await renderFrame(inputPath, outputPath, { ...frameData }, renderOptions);
+            try {
+              await renderFrame(inputPath, outputPath, { ...frameData }, renderOptions);
+            } catch (error) {
+              logger.warn(`Failed to render frame ${frameNum}:`, error);
+            }
           })
         );
 

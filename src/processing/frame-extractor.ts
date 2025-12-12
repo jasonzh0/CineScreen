@@ -10,9 +10,8 @@ export interface FrameExtractionOptions {
   inputVideo: string;
   outputDir: string;
   frameRate: number;
-  quality?: number; // 1-31, lower is better quality (default: 2)
-  startTime?: number; // seconds
-  duration?: number; // seconds
+  startTime?: number;
+  duration?: number;
 }
 
 export interface ExtractionResult {
@@ -28,14 +27,7 @@ export interface ExtractionResult {
  * Returns frame directory and metadata
  */
 export async function extractFrames(options: FrameExtractionOptions): Promise<ExtractionResult> {
-  const {
-    inputVideo,
-    outputDir,
-    frameRate,
-    quality = 2,
-    startTime,
-    duration,
-  } = options;
+  const { inputVideo, outputDir, frameRate, startTime, duration } = options;
 
   if (!existsSync(inputVideo)) {
     throw new Error(`Input video not found: ${inputVideo}`);
@@ -65,11 +57,9 @@ export async function extractFrames(options: FrameExtractionOptions): Promise<Ex
     args.push('-t', duration.toString());
   }
 
-  // Output settings - use high quality JPEG for faster extraction
-  // PNG is slow to encode, JPEG is much faster for intermediate frames
+  // Output settings for PNG frame extraction (lossless, better for screen recordings)
   args.push(
     '-vf', `fps=${frameRate}`,
-    '-q:v', quality.toString(),
     '-y',
     framePattern
   );
@@ -136,9 +126,7 @@ export async function encodeFrames(options: {
   width?: number;
   height?: number;
 }): Promise<void> {
-  const { frameDir, framePattern, outputVideo, frameRate, width, height } = options;
-
-  // Try hardware encoding first, fall back to software if it fails
+  // Try hardware encoding first (much faster), fall back to software if it fails
   try {
     await encodeFramesWithCodec(options, 'hardware');
     return;
@@ -166,34 +154,44 @@ async function encodeFramesWithCodec(
   const ffmpegPath = getFfmpegPath();
   const inputPattern = join(frameDir, framePattern);
 
+  // Video filter: convert full range RGB (PNG) to limited range YUV for H.264
+  const scaleFilter = width && height
+    ? `scale=${width}:${height}:in_range=full:out_range=limited`
+    : 'scale=in_range=full:out_range=limited';
+  const vfFilters = `${scaleFilter},format=yuv420p`;
+
   const args: string[] = [
     '-framerate', frameRate.toString(),
     '-i', inputPattern,
+    '-vf', vfFilters,
   ];
 
-  // Add scaling if dimensions specified
-  if (width && height) {
-    args.push('-vf', `scale=${width}:${height}`);
-  }
-
   if (mode === 'hardware') {
-    // macOS VideoToolbox hardware encoder - much faster
+    // macOS VideoToolbox hardware encoder
     args.push(
+      '-r', frameRate.toString(),
+      '-vsync', 'cfr',
       '-c:v', 'h264_videotoolbox',
-      '-q:v', '65', // Quality (0-100, higher is better)
-      '-pix_fmt', 'yuv420p',
-      '-movflags', 'faststart',
+      '-q:v', '75',
+      '-profile:v', 'high',
+      '-level', '4.2',
+      '-color_range', 'tv',
+      '-movflags', '+faststart',
       '-y',
       outputVideo
     );
   } else {
-    // Software encoding fallback - use ultrafast preset for speed
+    // Software encoding fallback (libx264)
     args.push(
+      '-r', frameRate.toString(),
+      '-vsync', 'cfr',
       '-c:v', 'libx264',
-      '-preset', 'ultrafast',
-      '-crf', '20',
-      '-pix_fmt', 'yuv420p',
-      '-movflags', 'faststart',
+      '-preset', 'fast',
+      '-crf', '17',
+      '-profile:v', 'high',
+      '-level', '4.2',
+      '-color_range', 'tv',
+      '-movflags', '+faststart',
       '-y',
       outputVideo
     );
@@ -309,12 +307,8 @@ export function cleanupFrames(frameDir: string): void {
  */
 export function getFrameFiles(frameDir: string): string[] {
   if (!existsSync(frameDir)) return [];
-  
   return readdirSync(frameDir)
     .filter(f => f.endsWith('.png'))
     .sort()
     .map(f => join(frameDir, f));
 }
-
-
-

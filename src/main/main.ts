@@ -157,6 +157,12 @@ ipcMain.handle('start-recording', async (_, config: RecordingConfig) => {
   currentRecordingConfig = config;
 
   try {
+    // Hide the app window from screen capture to prevent it from appearing in recordings
+    if (mainWindow) {
+      logger.info('Enabling content protection to hide app from recording...');
+      mainWindow.setContentProtection(true);
+    }
+
     // Start mouse tracking first
     logger.info('Starting mouse tracking...');
     const mouseTrackingStartTime = Date.now();
@@ -185,6 +191,10 @@ ipcMain.handle('start-recording', async (_, config: RecordingConfig) => {
     mouseTracker?.stopTracking();
     // Make sure cursor is visible if recording fails
     await showSystemCursor();
+    // Disable content protection if recording failed
+    if (mainWindow) {
+      mainWindow.setContentProtection(false);
+    }
     throw error;
   }
 });
@@ -234,6 +244,12 @@ ipcMain.handle('stop-recording', async (_, config: {
     // Show system cursor again
     logger.info('Showing system cursor...');
     await ensureCursorVisible();
+
+    // Disable content protection so window is visible again
+    if (mainWindow) {
+      logger.info('Disabling content protection...');
+      mainWindow.setContentProtection(false);
+    }
 
     if (!videoPath) {
       throw new Error('Failed to stop recording');
@@ -327,6 +343,10 @@ ipcMain.handle('stop-recording', async (_, config: {
   } catch (error) {
     logger.error('Error processing recording:', error);
     recordingState.isRecording = false;
+    // Ensure content protection is disabled even on error
+    if (mainWindow) {
+      mainWindow.setContentProtection(false);
+    }
     throw error;
   }
 });

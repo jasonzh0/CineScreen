@@ -88,8 +88,10 @@ export async function renderFrame(
     frameRate,
   } = options;
 
-  // Load the frame
-  let pipeline = sharp(inputPath);
+  // Load frame and normalize color space for consistent output
+  let pipeline = sharp(inputPath)
+    .withMetadata({ icc: undefined })
+    .toColorspace('srgb');
 
   // Track current frame dimensions (may change with zoom)
   let currentFrameWidth = frameWidth;
@@ -261,8 +263,8 @@ export async function renderFrame(
     ]);
   }
 
-  // Write output
-  await pipeline.png({ quality: PNG_QUALITY, compressionLevel: PNG_COMPRESSION_LEVEL }).toFile(outputPath);
+  // Write output as PNG (lossless)
+  await pipeline.png({ compressionLevel: 1 }).toFile(outputPath);
 }
 
 // calculateClickAnimationScale is now imported from cursor-utils

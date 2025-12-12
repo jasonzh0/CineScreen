@@ -18,11 +18,8 @@ export const DEFAULT_FRAME_RATE = 30;
  */
 export const VIDEO_ENCODING_CRF = 18;
 
-/**
- * Batch size for processing frames in parallel
- * Higher values use more memory but process faster
- */
-export const FRAME_BATCH_SIZE = 50;
+/** Batch size for parallel frame processing */
+export const FRAME_BATCH_SIZE = 100;
 
 /**
  * Frame number padding width (for frame_000001.png format)
