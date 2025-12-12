@@ -157,8 +157,9 @@ ipcMain.handle('start-recording', async (_, config: RecordingConfig) => {
   currentRecordingConfig = config;
 
   try {
-    // Start mouse tracking
+    // Start mouse tracking first
     logger.info('Starting mouse tracking...');
+    const mouseTrackingStartTime = Date.now();
     await mouseTracker.startTracking();
     logger.info('Mouse tracking started');
 
@@ -172,7 +173,10 @@ ipcMain.handle('start-recording', async (_, config: RecordingConfig) => {
       ...config,
       outputPath: tempVideoPath,
     });
-    logger.info('Screen recording started successfully');
+    const videoStartTime = Date.now();
+    const mouseToVideoOffset = videoStartTime - mouseTrackingStartTime;
+    recordingState.mouseToVideoOffset = mouseToVideoOffset;
+    logger.info(`Screen recording started successfully. Mouse-to-video offset: ${mouseToVideoOffset}ms`);
 
     return { success: true };
   } catch (error) {
@@ -286,9 +290,17 @@ ipcMain.handle('stop-recording', async (_, config: {
     }
     
     const exporter = new MetadataExporter();
+    // Apply mouse-to-video timing offset to sync cursor with video
+    const mouseToVideoOffset = recordingState.mouseToVideoOffset || 0;
+    logger.debug(`Applying mouse-to-video offset: ${mouseToVideoOffset}ms to ${mouseEvents.length} events`);
+    const adjustedMouseEvents = mouseEvents.map(event => ({
+      ...event,
+      timestamp: Math.max(0, event.timestamp - mouseToVideoOffset),
+    }));
+
     const metadataPath = await exporter.exportMetadata({
       videoPath: finalVideoPath, // Use final video path so metadata is saved alongside it
-      mouseEvents,
+      mouseEvents: adjustedMouseEvents,
       cursorConfig,
       zoomConfig,
       mouseEffectsConfig,

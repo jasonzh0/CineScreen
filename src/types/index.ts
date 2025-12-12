@@ -73,6 +73,7 @@ export interface RecordingState {
   tempVideoPath?: string;
   tempMouseDataPath?: string;
   metadataPath?: string; // Path to exported metadata JSON file
+  mouseToVideoOffset?: number; // Offset in ms between mouse tracking start and video start
 }
 
 export interface PermissionStatus {
