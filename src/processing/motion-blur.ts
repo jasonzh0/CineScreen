@@ -5,15 +5,58 @@ import {
   MOTION_BLUR_BASE_MULTIPLIER,
   MOTION_BLUR_MAX_LENGTH,
   MOTION_BLUR_MIN_LENGTH,
-  MOTION_BLUR_SIGMA_FACTOR,
-  MOTION_BLUR_MAX_SIGMA,
 } from '../utils/constants';
 
 const logger = createLogger('MotionBlur');
 
 /**
+ * Create a directional motion blur kernel
+ * The kernel is a line of values along the direction of motion
+ */
+function createMotionBlurKernel(
+  angle: number,
+  length: number
+): { width: number; height: number; kernel: number[] } {
+  // Kernel size must be odd and at least 3
+  const kernelSize = Math.max(3, Math.ceil(length) | 1); // Ensure odd
+  const center = Math.floor(kernelSize / 2);
+
+  // Create empty kernel
+  const kernel: number[] = new Array(kernelSize * kernelSize).fill(0);
+
+  // Calculate direction vector
+  const angleRad = (angle * Math.PI) / 180;
+  const dx = Math.cos(angleRad);
+  const dy = Math.sin(angleRad);
+
+  // Draw a line through the kernel center in the direction of motion
+  let totalWeight = 0;
+  for (let i = -center; i <= center; i++) {
+    const x = Math.round(center + i * dx);
+    const y = Math.round(center + i * dy);
+
+    if (x >= 0 && x < kernelSize && y >= 0 && y < kernelSize) {
+      const idx = y * kernelSize + x;
+      // Use gaussian-weighted samples for smoother blur
+      const weight = Math.exp(-(i * i) / (length * length * 0.5));
+      kernel[idx] += weight;
+      totalWeight += weight;
+    }
+  }
+
+  // Normalize kernel so it sums to 1
+  if (totalWeight > 0) {
+    for (let i = 0; i < kernel.length; i++) {
+      kernel[i] /= totalWeight;
+    }
+  }
+
+  return { width: kernelSize, height: kernelSize, kernel };
+}
+
+/**
  * Apply motion blur to an image based on velocity
- * This simulates the cinematic motion blur effect
+ * This simulates the cinematic motion blur effect using directional convolution
  */
 export async function applyMotionBlur(
   imageBuffer: Buffer,
@@ -30,7 +73,7 @@ export async function applyMotionBlur(
   // Calculate blur angle and length based on velocity
   const speed = Math.sqrt(velocityX * velocityX + velocityY * velocityY);
   const angle = Math.atan2(velocityY, velocityX) * (180 / Math.PI);
-  
+
   // Blur length is proportional to speed and strength
   // Scale by frame rate to normalize across different frame rates
   const baseBlurLength = (speed / frameRate) * strength * MOTION_BLUR_BASE_MULTIPLIER;
@@ -42,18 +85,18 @@ export async function applyMotionBlur(
   }
 
   try {
-    // Use Sharp's motion blur (if available) or directional blur
-    // Sharp doesn't have native motion blur, so we'll use a combination of
-    // gaussian blur and directional effects
-    
-    // For now, we'll use a simple gaussian blur as approximation
-    // In production, you'd want to use a proper motion blur filter
-    const sigma = Math.min(blurLength * MOTION_BLUR_SIGMA_FACTOR, MOTION_BLUR_MAX_SIGMA); // Convert blur length to sigma, capped at max
-    
+    // Create directional motion blur kernel
+    const { width, height, kernel } = createMotionBlurKernel(angle, blurLength);
+
+    // Apply convolution with the motion blur kernel
     const blurred = await sharp(imageBuffer)
-      .blur(sigma)
+      .convolve({
+        width,
+        height,
+        kernel,
+      })
       .toBuffer();
-    
+
     return blurred;
   } catch (error) {
     logger.warn('Failed to apply motion blur, returning original:', error);
