@@ -5,8 +5,14 @@ import type { CursorKeyframe, EasingType } from '../types/metadata';
 import { generateSmoothedZoom } from './zoom-tracker';
 import { createLogger } from '../utils/logger';
 import { applyCursorMotionBlur } from './motion-blur';
-import { easeInOut, easeIn, easeOut } from './effects';
 import { getCursorAssetFilePath } from './cursor-renderer';
+import { SmoothPosition2D } from './smooth-motion';
+import {
+  CURSOR_SMOOTH_TIME,
+  getCursorHotspot,
+  applyEasing,
+  calculateClickAnimationScale,
+} from './cursor-utils';
 import {
   BLACK_BACKGROUND,
   TRANSPARENT_BACKGROUND,
@@ -16,62 +22,11 @@ import {
   CURSOR_STATIC_THRESHOLD,
   CURSOR_HIDE_AFTER_MS,
   CURSOR_LOOP_DURATION_SECONDS,
-  CURSOR_CLICK_ANIMATION_DURATION_MS,
-  CURSOR_CLICK_ANIMATION_SCALE,
 } from '../utils/constants';
 
 const logger = createLogger('SharpRenderer');
 
-/**
- * Cursor hotspot offsets (x, y) within the 32x32 viewBox
- * These represent the click point within the cursor image
- */
-const CURSOR_HOTSPOT_MAP: Record<string, { x: number; y: number }> = {
-  // Standard cursors
-  arrow: { x: 10, y: 7 },
-  pointer: { x: 9, y: 8 },
-  hand: { x: 10, y: 10 },
-  openhand: { x: 10, y: 10 },
-  closedhand: { x: 10, y: 10 },
-  crosshair: { x: 16, y: 16 },
-  ibeam: { x: 13, y: 8 },
-  ibeamvertical: { x: 8, y: 16 },
-
-  // Resize cursors - centered
-  move: { x: 16, y: 16 },
-  resizeleft: { x: 16, y: 16 },
-  resizeright: { x: 16, y: 16 },
-  resizeleftright: { x: 16, y: 16 },
-  resizeup: { x: 16, y: 16 },
-  resizedown: { x: 16, y: 16 },
-  resizeupdown: { x: 16, y: 16 },
-  resize: { x: 16, y: 16 },
-  resizenortheast: { x: 16, y: 16 },
-  resizesouthwest: { x: 16, y: 16 },
-  resizenorthwest: { x: 16, y: 16 },
-  resizesoutheast: { x: 16, y: 16 },
-
-  // Action cursors
-  copy: { x: 10, y: 7 },
-  dragcopy: { x: 10, y: 7 },
-  draglink: { x: 10, y: 7 },
-  help: { x: 10, y: 7 },
-  notallowed: { x: 16, y: 16 },
-  contextmenu: { x: 10, y: 7 },
-  poof: { x: 16, y: 16 },
-
-  // Zoom/screenshot cursors
-  zoomin: { x: 10, y: 10 },
-  zoomout: { x: 10, y: 10 },
-  screenshot: { x: 16, y: 16 },
-};
-
-/**
- * Get cursor hotspot offset for a given shape
- */
-function getCursorHotspot(shape: string): { x: number; y: number } {
-  return CURSOR_HOTSPOT_MAP[shape] || CURSOR_HOTSPOT_MAP.arrow || { x: 10, y: 7 };
-}
+// CURSOR_HOTSPOT_MAP and getCursorHotspot are now imported from cursor-utils
 
 // Cache for prepared cursor images (shape+size -> buffer)
 const cursorCache: Map<string, Buffer> = new Map();
@@ -310,48 +265,7 @@ export async function renderFrame(
   await pipeline.png({ quality: PNG_QUALITY, compressionLevel: PNG_COMPRESSION_LEVEL }).toFile(outputPath);
 }
 
-/**
- * Calculate cursor click animation scale based on time since click
- * Returns 1.0 (no scale) if no click is active, or scale value (0-1) during animation
- */
-function calculateClickAnimationScale(
-  timestamp: number,
-  clicks: Array<{ timestamp: number; action: string }>
-): number {
-  // Find the most recent click "down" event within animation duration
-  const clickDownEvents = clicks.filter(c => c.action === 'down');
-  let mostRecentClick: { timestamp: number } | null = null;
-
-  for (const click of clickDownEvents) {
-    const timeSinceClick = timestamp - click.timestamp;
-    if (timeSinceClick >= 0 && timeSinceClick <= CURSOR_CLICK_ANIMATION_DURATION_MS) {
-      if (!mostRecentClick || click.timestamp > mostRecentClick.timestamp) {
-        mostRecentClick = click;
-      }
-    }
-  }
-
-  if (!mostRecentClick) {
-    return 1.0; // No active click animation
-  }
-
-  const timeSinceClick = timestamp - mostRecentClick.timestamp;
-  const progress = timeSinceClick / CURSOR_CLICK_ANIMATION_DURATION_MS;
-
-  // Scale down quickly, then scale back up
-  // Use easeOut for scale down (first half), easeIn for scale up (second half)
-  if (progress < 0.5) {
-    // Scale down phase (0 to 0.5)
-    const t = progress * 2; // 0 to 1
-    const easedT = easeOut(t);
-    return 1.0 - (1.0 - CURSOR_CLICK_ANIMATION_SCALE) * easedT;
-  } else {
-    // Scale up phase (0.5 to 1.0)
-    const t = (progress - 0.5) * 2; // 0 to 1
-    const easedT = easeIn(t);
-    return CURSOR_CLICK_ANIMATION_SCALE + (1.0 - CURSOR_CLICK_ANIMATION_SCALE) * easedT;
-  }
-}
+// calculateClickAnimationScale is now imported from cursor-utils
 
 /**
  * Create frame data directly from cursor keyframes (for metadata-based export)
@@ -421,33 +335,16 @@ export function createFrameDataFromKeyframes(
       return { x: prev.x, y: prev.y, shape: prev.shape };
     }
 
-    // Interpolate with easing
+    // Interpolate with easing using shared function
     const timeDiff = next.timestamp - prev.timestamp;
     const t = timeDiff > 0 ? (timestamp - prev.timestamp) / timeDiff : 0;
-
-    // Apply easing (matching preview logic exactly)
     const easingType: EasingType = (prev.easing || 'linear') as EasingType;
-    let easedT: number;
-    switch (easingType) {
-      case 'linear':
-        easedT = t;
-        break;
-      case 'easeIn':
-        easedT = easeIn(t);
-        break;
-      case 'easeOut':
-        easedT = easeOut(t);
-        break;
-      case 'easeInOut':
-      default:
-        easedT = easeInOut(t);
-        break;
-    }
+    const easedT = applyEasing(t, easingType);
 
     return {
       x: prev.x + (next.x - prev.x) * easedT,
       y: prev.y + (next.y - prev.y) * easedT,
-      shape: prev.shape, // Use shape from previous keyframe (don't interpolate)
+      shape: prev.shape,
     };
   };
 
@@ -466,11 +363,14 @@ export function createFrameDataFromKeyframes(
     return { centerX: videoDimensions.width / 2, centerY: videoDimensions.height / 2, level: 1.0 };
   };
 
-  // Previous positions for velocity calculation
-  let prevCursorX = initialX;
-  let prevCursorY = initialY;
+  // Previous positions for velocity calculation (use raw positions for motion blur)
+  let prevRawCursorX = initialX;
+  let prevRawCursorY = initialY;
   let prevZoomCenterX = videoDimensions.width / 2;
   let prevZoomCenterY = videoDimensions.height / 2;
+
+  // Initialize cursor smoother for glide effect (matching preview)
+  const cursorSmoother = new SmoothPosition2D(initialX, initialY, CURSOR_SMOOTH_TIME);
 
   // Track cursor movement for "hide when static"
   const staticThreshold = CURSOR_STATIC_THRESHOLD;
@@ -486,30 +386,36 @@ export function createFrameDataFromKeyframes(
   for (let frameIndex = 0; frameIndex < totalFrames; frameIndex++) {
     const timestamp = Math.min(frameIndex * frameInterval, videoDuration);
 
-    // Get cursor position directly from keyframes (matching preview exactly)
+    // Get cursor position directly from keyframes
     const cursorPos = interpolateCursor(timestamp);
     if (!cursorPos) continue;
 
-    // Clamp to video bounds
-    const cursorX = Math.max(0, Math.min(videoDimensions.width, cursorPos.x));
-    const cursorY = Math.max(0, Math.min(videoDimensions.height, cursorPos.y));
+    // Raw position for velocity calculation (motion blur uses actual movement speed)
+    const rawCursorX = Math.max(0, Math.min(videoDimensions.width, cursorPos.x));
+    const rawCursorY = Math.max(0, Math.min(videoDimensions.height, cursorPos.y));
 
-    // Calculate velocity for motion blur
-    const velocityX = (cursorX - prevCursorX) / deltaTime;
-    const velocityY = (cursorY - prevCursorY) / deltaTime;
+    // Calculate velocity for motion blur using raw positions
+    const velocityX = (rawCursorX - prevRawCursorX) / deltaTime;
+    const velocityY = (rawCursorY - prevRawCursorY) / deltaTime;
 
-    // Check if cursor is moving (for hide when static)
+    // Apply smooth glide effect (matching preview exactly)
+    cursorSmoother.setTarget(rawCursorX, rawCursorY);
+    const smoothedPos = cursorSmoother.update(deltaTime);
+    const cursorX = smoothedPos.x;
+    const cursorY = smoothedPos.y;
+
+    // Check if cursor is moving (for hide when static) - use raw position
     const movementDistance = Math.sqrt(
-      Math.pow(cursorX - prevCursorX, 2) +
-      Math.pow(cursorY - prevCursorY, 2)
+      Math.pow(rawCursorX - prevRawCursorX, 2) +
+      Math.pow(rawCursorY - prevRawCursorY, 2)
     );
 
     if (movementDistance > staticThreshold) {
       lastMovementTime = timestamp;
     }
 
-    prevCursorX = cursorX;
-    prevCursorY = cursorY;
+    prevRawCursorX = rawCursorX;
+    prevRawCursorY = rawCursorY;
 
     // Determine cursor visibility
     let cursorVisible = true;

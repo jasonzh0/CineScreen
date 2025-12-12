@@ -35,13 +35,14 @@ Support for Intel Macs (x64) and other platforms may be added in the future.
 
 ### Cursor Customization
 - **Size control** - Adjustable cursor size (10-200px)
-- **Multiple shapes** - Choose from arrow, pointer, hand, or crosshair
+- **Multiple shapes** - Choose from arrow, pointer, hand, crosshair, and more
 - **Color customization** - Full color picker for cursor styling
-- **Motion blur** - Add cinematic motion blur to cursor movements
-- **Smooth motion** - Advanced smoothing algorithms for fluid cursor movement
+- **Glide effect** - Smooth cursor gliding with critically damped spring physics
+- **Directional motion blur** - Cinematic motion blur in the direction of cursor movement
 - **Animation styles** - Preset styles: slow, mellow, quick, or rapid
 - **Frame offset** - Fine-tune cursor timing synchronization
 - **Static cursor hiding** - Automatically hide cursor when not moving
+- **Click animations** - Visual feedback on mouse clicks with smooth scaling
 
 ### Zoom & Focus Effects
 - **Smart zoom** - Automatic zoom tracking that follows your cursor
@@ -56,8 +57,9 @@ Support for Intel Macs (x64) and other platforms may be added in the future.
 - **High-quality rendering** - Uses Sharp for pixel-perfect frame processing
 - **FFmpeg integration** - Professional video encoding with H.264
 - **Click detection** - Automatic click event detection and visualization
-- **Smooth interpolation** - Advanced algorithms for smooth cursor and zoom motion
-- **Effects system** - Easing functions and animation effects
+- **Smooth interpolation** - Critically damped spring physics for smooth cursor and zoom motion
+- **Effects system** - Easing functions (linear, easeIn, easeOut, easeInOut) and animation effects
+- **Consistent preview/export** - Same rendering logic for preview and final export
 
 ## Technology Stack
 
@@ -75,6 +77,11 @@ The application follows a modular architecture:
 - **Main Process** (`src/main/`) - Handles screen capture, mouse tracking, and window management
 - **Renderer Process** (`src/renderer/`) - UI for capture window and studio editor
 - **Processing** (`src/processing/`) - Video processing, cursor rendering, zoom effects, and motion blur
+  - `cursor-utils.ts` - Shared cursor utilities (interpolation, easing, hotspots, click animations)
+  - `smooth-motion.ts` - Spring physics and SmoothDamp algorithms for glide effects
+  - `motion-blur.ts` - Directional motion blur using convolution kernels
+  - `sharp-renderer.ts` - Frame-by-frame video rendering with Sharp
+  - `zoom-tracker.ts` - Zoom region calculation and smoothing
 - **Native Module** (`native/`) - Swift-based mouse button state detection
 
 ## Installation
@@ -89,7 +96,7 @@ The application follows a modular architecture:
 ```bash
 # Clone the repository
 git clone <repository-url>
-cd FreeStudio
+cd CineScreen
 
 # Install dependencies
 npm install
