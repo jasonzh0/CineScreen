@@ -387,7 +387,7 @@ function setupSettingsPanel() {
     // Initialize motion blur settings
     if (!metadata.cursor.config.motionBlur) {
       metadata.cursor.config.motionBlur = {
-        enabled: false,
+        enabled: true,
         strength: 0.5,
       };
     }
@@ -427,7 +427,7 @@ function setupSettingsPanel() {
     if (metadata) {
       if (!metadata.cursor.config.motionBlur) {
         metadata.cursor.config.motionBlur = {
-          enabled: false,
+          enabled: true,
           strength: 0.5,
         };
       }
@@ -444,7 +444,7 @@ function setupSettingsPanel() {
     if (metadata) {
       if (!metadata.cursor.config.motionBlur) {
         metadata.cursor.config.motionBlur = {
-          enabled: false,
+          enabled: true,
           strength: 0.5,
         };
       }
