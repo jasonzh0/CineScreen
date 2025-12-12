@@ -486,3 +486,30 @@ ipcMain.handle('export-video-from-studio', async (_, videoPath: string, metadata
   }
 });
 
+// Save metadata to the original JSON file
+ipcMain.handle('save-metadata', async (_event, filePath: string, metadata: object) => {
+  try {
+    const { writeFileSync } = await import('fs');
+    writeFileSync(filePath, JSON.stringify(metadata, null, 2), 'utf-8');
+    logger.info(`Metadata saved to: ${filePath}`);
+    return { success: true };
+  } catch (error) {
+    logger.error('Failed to save metadata:', error);
+    throw error;
+  }
+});
+
+// Reload metadata from the original JSON file
+ipcMain.handle('reload-metadata', async (_event, filePath: string) => {
+  try {
+    const { readFileSync } = await import('fs');
+    const content = readFileSync(filePath, 'utf-8');
+    const data = JSON.parse(content);
+    logger.info(`Metadata reloaded from: ${filePath}`);
+    return { success: true, data };
+  } catch (error) {
+    logger.error('Failed to reload metadata:', error);
+    throw error;
+  }
+});
+

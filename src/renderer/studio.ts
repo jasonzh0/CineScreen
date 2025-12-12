@@ -7,8 +7,12 @@ import { KeyframePanel } from './components/keyframe-panel';
 import { renderCursor, interpolateCursorPosition, resetCursorSmoothing } from './utils/cursor-renderer';
 import { renderZoom } from './utils/zoom-renderer';
 import { createLogger } from '../utils/logger';
+import { MetadataManager } from '../processing/metadata-manager';
 
 const logger = createLogger('Studio');
+
+// Metadata manager instance
+let metadataManager: MetadataManager | null = null;
 
 // Type definition for electronAPI - methods are available in studio context
 type StudioElectronAPI = {
@@ -22,6 +26,8 @@ type StudioElectronAPI = {
   exportVideo: (videoPath: string, metadataPath: string, metadata: RecordingMetadata) => Promise<{ success: boolean; outputPath: string }>;
   onProcessingProgress: (callback: (data: { percent: number; message: string }) => void) => void;
   removeProcessingProgressListener: () => void;
+  saveMetadata: (filePath: string, metadata: object) => Promise<{ success: boolean }>;
+  reloadMetadata: (filePath: string) => Promise<{ success: boolean; data?: RecordingMetadata }>;
 };
 
 // Extend Window interface to include electronAPI
@@ -247,6 +253,9 @@ async function loadStudioData() {
     metadata = await api.loadMetadata(metadataPath);
     logger.info('Metadata loaded successfully');
     logger.debug('Metadata:', metadata);
+
+    // Initialize metadata manager
+    metadataManager = new MetadataManager(metadata);
 
     // Reset cursor smoothing for new video
     resetCursorSmoothing();
@@ -589,6 +598,83 @@ function setupEventListeners() {
     zoomEditor.addZoomSection(startTime, endTime, scale, centerX, centerY);
 
     logger.info(`Added zoom section: ${startTime}ms - ${endTime}ms, scale: ${scale}x`);
+  });
+
+  // Save metadata button
+  const saveMetadataBtn = document.getElementById('save-metadata-btn');
+  saveMetadataBtn?.addEventListener('click', async () => {
+    if (!metadataManager || !metadataManager.hasMetadata() || !metadataPath) {
+      alert('No metadata loaded');
+      return;
+    }
+
+    const fullMetadata = metadataManager.getMetadata();
+    if (!fullMetadata) {
+      alert('No metadata to save');
+      return;
+    }
+
+    if (!confirm('Save changes to the project file?')) {
+      return;
+    }
+
+    try {
+      const api = window.electronAPI as StudioElectronAPI | undefined;
+      if (!api?.saveMetadata) {
+        alert('Save functionality not available');
+        return;
+      }
+
+      const result = await api.saveMetadata(metadataPath, fullMetadata);
+      if (result.success) {
+        logger.info(`Metadata saved to: ${metadataPath}`);
+      }
+    } catch (error) {
+      logger.error('Failed to save metadata:', error);
+      alert(`Failed to save metadata: ${error instanceof Error ? error.message : 'Unknown error'}`);
+    }
+  });
+
+  // Load (reload) metadata button
+  const loadMetadataBtn = document.getElementById('load-metadata-btn');
+  loadMetadataBtn?.addEventListener('click', async () => {
+    if (!metadataPath || !zoomEditor || !timeline) {
+      alert('No video loaded');
+      return;
+    }
+
+    if (!confirm('Reload from file? Any unsaved changes will be lost.')) {
+      return;
+    }
+
+    try {
+      const api = window.electronAPI as StudioElectronAPI | undefined;
+      if (!api?.reloadMetadata) {
+        alert('Reload functionality not available');
+        return;
+      }
+
+      const result = await api.reloadMetadata(metadataPath);
+      if (!result.success || !result.data) {
+        alert('Failed to reload metadata');
+        return;
+      }
+
+      // Update metadata and manager
+      metadata = result.data;
+      metadataManager = new MetadataManager(metadata);
+
+      // Refresh UI
+      timeline.setMetadata(metadata, getActualVideoDuration());
+      zoomEditor.setMetadata(metadata);
+      keyframePanel?.setMetadata(metadata);
+      renderPreview();
+
+      logger.info(`Metadata reloaded from: ${metadataPath}`);
+    } catch (error) {
+      logger.error('Failed to reload metadata:', error);
+      alert(`Failed to reload metadata: ${error instanceof Error ? error.message : 'Unknown error'}`);
+    }
   });
 }
 

@@ -64,6 +64,12 @@ const electronAPI = {
 
   exportVideo: (videoPath: string, metadataPath: string, metadata: RecordingMetadata): Promise<{ success: boolean; outputPath: string }> =>
     ipcRenderer.invoke('export-video-from-studio', videoPath, metadataPath, metadata),
+
+  saveMetadata: (filePath: string, metadata: object): Promise<{ success: boolean }> =>
+    ipcRenderer.invoke('save-metadata', filePath, metadata),
+
+  reloadMetadata: (filePath: string): Promise<{ success: boolean; data?: RecordingMetadata }> =>
+    ipcRenderer.invoke('reload-metadata', filePath),
 };
 
 contextBridge.exposeInMainWorld('electronAPI', electronAPI);
