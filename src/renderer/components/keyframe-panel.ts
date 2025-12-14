@@ -144,7 +144,8 @@ export class KeyframePanel {
     const scaleLabel = document.createElement('label');
     scaleLabel.textContent = 'Scale:';
     scaleLabel.style.color = '#999';
-    scaleLabel.style.minWidth = '60px';
+    scaleLabel.style.width = '60px';
+    scaleLabel.style.flexShrink = '0';
 
     const scaleInput = document.createElement('input');
     scaleInput.type = 'range';
@@ -153,6 +154,7 @@ export class KeyframePanel {
     scaleInput.step = '0.1';
     scaleInput.value = section.scale.toString();
     scaleInput.style.flex = '1';
+    scaleInput.style.minWidth = '0';
     scaleInput.style.height = '4px';
     scaleInput.style.background = '#3a3a3a';
     scaleInput.style.borderRadius = '2px';
@@ -160,7 +162,8 @@ export class KeyframePanel {
     const scaleValue = document.createElement('span');
     scaleValue.textContent = `${section.scale.toFixed(1)}x`;
     scaleValue.style.color = '#e0e0e0';
-    scaleValue.style.minWidth = '40px';
+    scaleValue.style.width = '32px';
+    scaleValue.style.flexShrink = '0';
     scaleValue.style.textAlign = 'right';
 
     scaleInput.addEventListener('input', (e) => {
@@ -185,7 +188,8 @@ export class KeyframePanel {
     const centerXLabel = document.createElement('label');
     centerXLabel.textContent = 'Center X:';
     centerXLabel.style.color = '#999';
-    centerXLabel.style.minWidth = '60px';
+    centerXLabel.style.width = '60px';
+    centerXLabel.style.flexShrink = '0';
 
     const centerXInput = document.createElement('input');
     centerXInput.type = 'number';
@@ -218,7 +222,8 @@ export class KeyframePanel {
     const centerYLabel = document.createElement('label');
     centerYLabel.textContent = 'Center Y:';
     centerYLabel.style.color = '#999';
-    centerYLabel.style.minWidth = '60px';
+    centerYLabel.style.width = '60px';
+    centerYLabel.style.flexShrink = '0';
 
     const centerYInput = document.createElement('input');
     centerYInput.type = 'number';

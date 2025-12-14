@@ -1,4 +1,4 @@
-import type { RecordingConfig, CursorConfig, ZoomConfig, MouseEffectsConfig } from '../types';
+import type { RecordingConfig, CursorConfig, ZoomConfig } from '../types';
 import { DEFAULT_FRAME_RATE, DEFAULT_CURSOR_SIZE } from '../utils/constants';
 
 // Type definition for electronAPI in renderer context
@@ -12,7 +12,6 @@ type RendererElectronAPI = {
   stopRecording: (config: {
     cursorConfig: CursorConfig;
     zoomConfig?: ZoomConfig;
-    mouseEffectsConfig?: MouseEffectsConfig;
   }) => Promise<{ success: boolean; outputPath: string; metadataPath?: string }>;
   getRecordingState: () => Promise<{
     isRecording: boolean;
@@ -232,27 +231,6 @@ stopBtn.addEventListener('click', async () => {
     followSpeed: 1.0,
   };
 
-  const mouseEffectsConfig: MouseEffectsConfig | undefined = {
-    clickCircles: {
-      enabled: false,
-      size: 40,
-      color: '#3b82f6',
-      duration: 500,
-    },
-    trail: {
-      enabled: false,
-      length: 10,
-      fadeSpeed: 0.5,
-      color: '#3b82f6',
-    },
-    highlightRing: {
-      enabled: false,
-      size: 40,
-      color: '#3b82f6',
-      pulseSpeed: 0.5,
-    },
-  };
-
   try {
     statusText.textContent = 'Stopping recording...';
     stopBtn.disabled = true;
@@ -275,7 +253,6 @@ stopBtn.addEventListener('click', async () => {
     const result = await api.stopRecording({
       cursorConfig,
       zoomConfig,
-      mouseEffectsConfig,
     });
 
     isRecording = false;
