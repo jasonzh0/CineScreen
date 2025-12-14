@@ -15,7 +15,6 @@ export interface CursorKeyframe {
   y: number; // cursor Y position
   size?: number; // cursor size (optional, inherits from config if not set)
   shape?: CursorConfig['shape']; // cursor shape (optional, inherits from config if not set)
-  color?: string; // cursor color (optional, inherits from config if not set)
   easing?: EasingType; // easing curve type for interpolation to next keyframe (default: 'easeInOut')
 }
 

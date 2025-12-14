@@ -129,9 +129,9 @@ ipcMain.handle('start-recording', async (_, config: RecordingConfig) => {
   logger.debug('Checking permissions...');
   const permissions = checkAllPermissions();
   logger.debug('Permissions check result:', permissions);
-  if (!permissions.screenRecording || !permissions.accessibility) {
+  if (!permissions.screenRecording || !permissions.accessibility || !permissions.microphone) {
     logger.error('Required permissions not granted');
-    throw new Error('Required permissions not granted');
+    throw new Error('Required permissions not granted. Please grant Screen Recording, Accessibility, and Microphone permissions.');
   }
 
   // Initialize components
@@ -211,27 +211,23 @@ ipcMain.handle('stop-recording', async (_, config: {
   mouseEffectsConfig?: MouseEffectsConfig;
 } | CursorConfig) => {
   // Handle both old format (just CursorConfig) and new format (object with cursorConfig)
-  let cursorConfig: CursorConfig | undefined;
+  let cursorConfig: CursorConfig = {
+    size: DEFAULT_CURSOR_SIZE,
+    shape: 'arrow',
+  };
   let zoomConfig: ZoomConfig | undefined;
   let mouseEffectsConfig: MouseEffectsConfig | undefined;
-  
+
   if (config && 'cursorConfig' in config) {
     // New format
-    cursorConfig = config.cursorConfig;
+    if (config.cursorConfig) {
+      cursorConfig = config.cursorConfig;
+    }
     zoomConfig = config.zoomConfig;
     mouseEffectsConfig = config.mouseEffectsConfig;
   } else if (config && 'size' in config) {
     // Old format - just CursorConfig
     cursorConfig = config as CursorConfig;
-  }
-  
-  // Provide default cursor config if not provided
-  if (!cursorConfig) {
-    cursorConfig = {
-      size: DEFAULT_CURSOR_SIZE,
-      shape: 'arrow',
-      color: '#000000',
-    };
   }
   
   logger.info('IPC: stop-recording called with config:', { cursorConfig, zoomConfig, mouseEffectsConfig });

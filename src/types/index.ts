@@ -54,16 +54,11 @@ export type CursorShape =
 export interface CursorConfig {
   size: number;
   shape: CursorShape;
-  color?: string;
-
-  // Screen Studio-like features
-  animationStyle?: 'slow' | 'mellow' | 'quick' | 'rapid'; // Default: 'mellow'
   motionBlur?: {
     enabled: boolean;
     strength: number; // 0-1
   };
   hideWhenStatic?: boolean; // Hide cursor when not moving
-  loopPosition?: boolean; // Return cursor to initial position at end
 }
 
 export interface RecordingState {
@@ -79,6 +74,7 @@ export interface RecordingState {
 export interface PermissionStatus {
   screenRecording: boolean;
   accessibility: boolean;
+  microphone: boolean;
 }
 
 export interface ZoomConfig {

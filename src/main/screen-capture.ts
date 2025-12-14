@@ -158,19 +158,37 @@ export class ScreenCapture {
 
     return new Promise((resolve, reject) => {
       let resolvedFfmpegPath: string;
+      let isSettled = false;
+      let stderrOutput = '';
+
+      const safeResolve = () => {
+        if (!isSettled) {
+          isSettled = true;
+          resolve();
+        }
+      };
+
+      const safeReject = (error: Error) => {
+        if (!isSettled) {
+          isSettled = true;
+          this.isRecording = false;
+          reject(error);
+        }
+      };
+
       try {
         // Get the resolved FFmpeg path using the utility function
         resolvedFfmpegPath = getFfmpegPath();
       } catch (error) {
         logger.error('Error in path resolution:', error);
-        reject(new Error(`Error accessing FFmpeg binary: ${error instanceof Error ? error.message : String(error)}`));
+        safeReject(new Error(`Error accessing FFmpeg binary: ${error instanceof Error ? error.message : String(error)}`));
         return;
       }
-      
+
       // Spawn FFmpeg process
       logger.debug('Spawning FFmpeg process with path:', resolvedFfmpegPath);
       logger.debug('Command:', resolvedFfmpegPath, args.join(' '));
-      
+
       // Enable stdin so we can send 'q' to gracefully quit FFmpeg
       this.recordingProcess = spawn(resolvedFfmpegPath, args, {
         stdio: ['pipe', 'pipe', 'pipe']
@@ -180,18 +198,38 @@ export class ScreenCapture {
 
       this.recordingProcess.on('error', (error) => {
         logger.error('FFmpeg process error:', error);
-        this.isRecording = false;
-        reject(new Error(`Failed to start recording: ${error.message}`));
+        safeReject(new Error(`Failed to start recording: ${error.message}`));
+      });
+
+      // Handle process exit during startup - this catches permission denials
+      this.recordingProcess.on('close', (code) => {
+        if (!isSettled) {
+          logger.error('FFmpeg process exited during startup with code:', code);
+          logger.error('FFmpeg stderr output:', stderrOutput);
+
+          // Check for common error patterns
+          let errorMessage = 'Screen recording failed to start';
+          if (stderrOutput.includes('Could not create') || stderrOutput.includes('Permission denied')) {
+            errorMessage = 'Screen recording permission denied. Please grant screen recording permission and try again.';
+          } else if (stderrOutput.includes('Invalid device') || stderrOutput.includes('No such device')) {
+            errorMessage = 'Screen capture device not found. Please check your display settings.';
+          } else if (code !== 0) {
+            errorMessage = `Screen recording failed (exit code ${code}). The screen recording permission dialog may have been dismissed.`;
+          }
+
+          safeReject(new Error(errorMessage));
+        }
       });
 
       this.recordingProcess.stderr?.on('data', (data) => {
         // FFmpeg outputs to stderr
         const output = data.toString();
+        stderrOutput += output; // Collect for error reporting
         logger.debug('FFmpeg stderr:', output.substring(0, 200)); // Log first 200 chars
         if (output.includes('frame=')) {
           // Recording started successfully
           logger.info('Recording started successfully (frame detected)');
-          resolve();
+          safeResolve();
         }
       });
 
@@ -200,13 +238,19 @@ export class ScreenCapture {
         logger.debug('FFmpeg stdout:', output.substring(0, 200));
       });
 
-      // Give it a moment to start
+      // Give it a moment to start, but only resolve if process is still running
       setTimeout(() => {
-        if (this.isRecording) {
-          logger.debug('Recording started (timeout fallback)');
-          resolve();
+        if (!isSettled && this.isRecording && this.recordingProcess && !this.recordingProcess.killed) {
+          // Check if process is actually still running
+          if (this.recordingProcess.exitCode === null) {
+            logger.debug('Recording started (timeout fallback)');
+            safeResolve();
+          } else {
+            // Process already exited, the close handler should have rejected
+            logger.warn('Timeout fired but process already exited');
+          }
         }
-      }, 1000);
+      }, 1500); // Increased timeout to give more time for permission dialog
     });
   }
 

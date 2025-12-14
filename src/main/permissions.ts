@@ -43,6 +43,22 @@ export function checkAccessibilityPermission(): boolean {
 }
 
 /**
+ * Check if microphone permission is granted
+ * Uses Electron's native API for media access
+ */
+export function checkMicrophonePermission(): boolean {
+  try {
+    const status = systemPreferences.getMediaAccessStatus('microphone');
+    const granted = status === 'granted';
+    logger.info(`Microphone permission: ${status}`);
+    return granted;
+  } catch (error) {
+    logger.error('Failed to check microphone permission:', error);
+    return false;
+  }
+}
+
+/**
  * Request screen recording permission
  * Opens System Preferences to the Screen Recording pane
  */
@@ -65,17 +81,35 @@ export async function requestAccessibilityPermission(): Promise<void> {
 }
 
 /**
+ * Request microphone permission
+ * Prompts the system dialog for microphone access
+ */
+export async function requestMicrophonePermission(): Promise<boolean> {
+  logger.info('Requesting microphone permission...');
+  try {
+    const granted = await systemPreferences.askForMediaAccess('microphone');
+    logger.info(`Microphone permission request result: ${granted ? 'granted' : 'denied'}`);
+    return granted;
+  } catch (error) {
+    logger.error('Failed to request microphone permission:', error);
+    return false;
+  }
+}
+
+/**
  * Check all required permissions
  */
 export function checkAllPermissions(): PermissionStatus {
   const screenRecording = checkScreenRecordingPermission();
   const accessibility = checkAccessibilityPermission();
+  const microphone = checkMicrophonePermission();
 
-  logger.info(`Permission status - Screen Recording: ${screenRecording}, Accessibility: ${accessibility}`);
+  logger.info(`Permission status - Screen Recording: ${screenRecording}, Accessibility: ${accessibility}, Microphone: ${microphone}`);
 
   return {
     screenRecording,
     accessibility,
+    microphone,
   };
 }
 
@@ -91,5 +125,9 @@ export async function requestMissingPermissions(): Promise<void> {
 
   if (!status.accessibility) {
     await requestAccessibilityPermission();
+  }
+
+  if (!status.microphone) {
+    await requestMicrophonePermission();
   }
 }

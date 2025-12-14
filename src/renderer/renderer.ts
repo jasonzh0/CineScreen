@@ -36,6 +36,7 @@ const statusText = document.getElementById('status-text') as HTMLSpanElement;
 const recordingStatus = document.getElementById('recording-status') as HTMLDivElement;
 const screenRecordingStatus = document.getElementById('screen-recording-status') as HTMLSpanElement;
 const accessibilityStatus = document.getElementById('accessibility-status') as HTMLSpanElement;
+const microphoneStatus = document.getElementById('microphone-status') as HTMLSpanElement;
 const requestPermissionsBtn = document.getElementById('request-permissions-btn') as HTMLButtonElement;
 const outputPathInput = document.getElementById('output-path') as HTMLInputElement;
 const selectPathBtn = document.getElementById('select-path-btn') as HTMLButtonElement;
@@ -43,6 +44,7 @@ const toggleDebugBtn = document.getElementById('toggle-debug-btn') as HTMLButton
 const clearDebugBtn = document.getElementById('clear-debug-btn') as HTMLButtonElement;
 const debugLogContainer = document.getElementById('debug-log-container') as HTMLDivElement;
 const debugLogContent = document.getElementById('debug-log-content') as HTMLDivElement;
+const autoscrollCheckbox = document.getElementById('autoscroll-checkbox') as HTMLInputElement;
 
 // Progress bar elements
 const processingProgress = document.getElementById('processing-progress') as HTMLDivElement;
@@ -92,7 +94,7 @@ async function checkPermissions() {
     updatePermissionStatus(permissions);
 
     // Start or stop polling based on permission status
-    const allGranted = permissions.screenRecording && permissions.accessibility;
+    const allGranted = permissions.screenRecording && permissions.accessibility && permissions.microphone;
     if (allGranted) {
       stopPermissionPolling();
     } else {
@@ -123,6 +125,7 @@ function stopPermissionPolling() {
 function updatePermissionStatus(permissions: {
   screenRecording: boolean;
   accessibility: boolean;
+  microphone: boolean;
 }) {
   screenRecordingStatus.textContent = permissions.screenRecording
     ? 'Granted'
@@ -134,7 +137,12 @@ function updatePermissionStatus(permissions: {
     : 'Not Granted';
   accessibilityStatus.className = `status ${permissions.accessibility ? 'granted' : 'denied'}`;
 
-  const allGranted = permissions.screenRecording && permissions.accessibility;
+  microphoneStatus.textContent = permissions.microphone
+    ? 'Granted'
+    : 'Not Granted';
+  microphoneStatus.className = `status ${permissions.microphone ? 'granted' : 'denied'}`;
+
+  const allGranted = permissions.screenRecording && permissions.accessibility && permissions.microphone;
   requestPermissionsBtn.style.display = allGranted ? 'none' : 'block';
   recordBtn.disabled = !allGranted || isRecording;
 
@@ -220,7 +228,6 @@ stopBtn.addEventListener('click', async () => {
   const cursorConfig: CursorConfig = {
     size: DEFAULT_CURSOR_SIZE,
     shape: 'arrow',
-    color: '#000000',
   };
 
   const zoomConfig: ZoomConfig | undefined = {
@@ -337,8 +344,8 @@ function addDebugLog(message: string) {
     debugLogContent.removeChild(entries[0]);
   }
 
-  // Auto-scroll to bottom
-  if (debugLogsVisible) {
+  // Auto-scroll to bottom if enabled
+  if (debugLogsVisible && autoscrollCheckbox.checked) {
     debugLogContainer.scrollTop = debugLogContainer.scrollHeight;
   }
 }
@@ -348,8 +355,8 @@ toggleDebugBtn.addEventListener('click', () => {
   debugLogContainer.style.display = debugLogsVisible ? 'block' : 'none';
   toggleDebugBtn.textContent = debugLogsVisible ? 'Hide Logs' : 'Show Logs';
 
-  // Scroll to bottom when showing
-  if (debugLogsVisible) {
+  // Scroll to bottom when showing (if autoscroll enabled)
+  if (debugLogsVisible && autoscrollCheckbox.checked) {
     setTimeout(() => {
       debugLogContainer.scrollTop = debugLogContainer.scrollHeight;
     }, 100);

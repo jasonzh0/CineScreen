@@ -33,6 +33,13 @@
         </div>
         <span id="accessibility-status" class="status">Checking...</span>
       </div>
+      <div class="permission-item">
+        <div class="permission-info">
+          <span class="permission-label">Microphone</span>
+          <span class="permission-desc">Required for system audio recording</span>
+        </div>
+        <span id="microphone-status" class="status">Checking...</span>
+      </div>
       <button id="request-permissions-btn" class="btn btn-secondary" style="display: none;">
         Open System Preferences
       </button>
@@ -84,6 +91,10 @@
         <div class="debug-controls">
           <button id="toggle-debug-btn" class="btn btn-small">Show Logs</button>
           <button id="clear-debug-btn" class="btn btn-small">Clear</button>
+          <label class="autoscroll-toggle">
+            <input type="checkbox" id="autoscroll-checkbox" checked>
+            <span>Autoscroll</span>
+          </label>
         </div>
       </div>
       <div class="debug-log-container" id="debug-log-container" style="display: none;">

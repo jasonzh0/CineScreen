@@ -91,11 +91,11 @@ export function applyEasing(t: number, easing: EasingType): number {
 export function interpolateCursorPosition(
   keyframes: CursorKeyframe[],
   timestamp: number
-): { x: number; y: number; size?: number; shape?: string; color?: string } | null {
+): { x: number; y: number; size?: number; shape?: string } | null {
   if (keyframes.length === 0) return null;
   if (keyframes.length === 1) {
     const kf = keyframes[0];
-    return { x: kf.x, y: kf.y, size: kf.size, shape: kf.shape, color: kf.color };
+    return { x: kf.x, y: kf.y, size: kf.size, shape: kf.shape };
   }
 
   // Find the two keyframes that bracket this timestamp
@@ -128,7 +128,6 @@ export function interpolateCursorPosition(
       y: prevKeyframe.y,
       size: prevKeyframe.size,
       shape: prevKeyframe.shape,
-      color: prevKeyframe.color,
     };
   }
 
@@ -151,7 +150,6 @@ export function interpolateCursorPosition(
     y,
     size,
     shape: prevKeyframe.shape || nextKeyframe.shape,
-    color: prevKeyframe.color || nextKeyframe.color,
   };
 }
 

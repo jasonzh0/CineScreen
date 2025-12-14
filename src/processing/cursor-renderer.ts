@@ -239,35 +239,33 @@ export function generateCursorSVG(config: CursorConfig | undefined): string {
     config = {
       size: DEFAULT_CURSOR_SIZE,
       shape: 'arrow',
-      color: '#000000',
     };
   }
-  
-  const { size, shape, color = '#000000' } = config;
+
+  const { size, shape } = config;
 
   // Try to load from local assets first
   const assetPath = getCursorAssetPath(shape);
   if (assetPath && existsSync(assetPath)) {
     const scaledSVG = loadAndScaleSVGCursor(assetPath, size);
     if (scaledSVG) {
-      // Apply color if needed (for cursors that support color changes)
-      // Most SVG cursors have their own colors, so we might skip this
       return scaledSVG;
     }
   }
 
-  // Fall back to generated SVG cursors
+  // Fall back to generated SVG cursors (use default black color)
+  const defaultColor = '#000000';
   switch (shape) {
     case 'arrow':
-      return generateArrowCursor(size, color);
+      return generateArrowCursor(size, defaultColor);
     case 'pointer':
-      return generatePointerCursor(size, color);
+      return generatePointerCursor(size, defaultColor);
     case 'hand':
-      return generateHandCursor(size, color);
+      return generateHandCursor(size, defaultColor);
     case 'crosshair':
-      return generateCrosshairCursor(size, color);
+      return generateCrosshairCursor(size, defaultColor);
     default:
-      return generateArrowCursor(size, color);
+      return generateArrowCursor(size, defaultColor);
   }
 }
 

@@ -353,6 +353,25 @@ h2 {
 .debug-controls {
   display: flex;
   gap: 8px;
+  align-items: center;
+}
+
+.autoscroll-toggle {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  font-size: 11px;
+  color: #888;
+  cursor: pointer;
+  margin-left: 8px;
+}
+
+.autoscroll-toggle input[type="checkbox"] {
+  cursor: pointer;
+}
+
+.autoscroll-toggle span {
+  user-select: none;
 }
 
 .btn-small {
