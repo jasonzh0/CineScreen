@@ -8,9 +8,9 @@
 
 A professional macOS screen recording application built with Electron that records your screen without the native cursor, tracks mouse movements separately, and provides a powerful post-processing studio for creating polished, cinematic screen recordings.
 
-### Result
+### Demo
 
-https://github.com/user-attachments/assets/cde73deb-9f2f-4297-ab97-29f170863c23
+https://github.com/user-attachments/assets/ffb7723b-470c-4b2f-8bac-63debe614982
 
 ### Studio
 
