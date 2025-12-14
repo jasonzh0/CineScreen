@@ -10,7 +10,8 @@ A professional macOS screen recording application built with Electron that recor
 
 ### Demo
 
-https://github.com/user-attachments/assets/ffb7723b-470c-4b2f-8bac-63debe614982
+https://github.com/user-attachments/assets/c6a94b30-2d78-452f-85c7-8d94f7ba81b4
+
 
 ### Studio
 
