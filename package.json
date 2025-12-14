@@ -27,6 +27,7 @@
   "author": "",
   "license": "MIT",
   "devDependencies": {
+    "@electron/notarize": "^3.1.1",
     "@types/node": "^20.10.0",
     "@typescript-eslint/eslint-plugin": "^6.13.0",
     "@typescript-eslint/parser": "^6.13.0",
@@ -46,7 +47,9 @@
   "build": {
     "appId": "com.cinescreen.app",
     "productName": "CineScreen",
+    "afterSign": "build/notarize.js",
     "mac": {
+      "notarize": false,
       "category": "public.app-category.utilities",
       "target": [
         "dmg",
@@ -54,7 +57,6 @@
       ],
       "hardenedRuntime": true,
       "gatekeeperAssess": false,
-      "notarize": false,
       "entitlements": "build/entitlements.mac.plist",
       "entitlementsInherit": "build/entitlements.mac.plist",
       "extendInfo": {
