@@ -200,6 +200,17 @@ async function init() {
     keyframePanel.setOnUpdateZoomSegment((startTime, updates) => {
       zoomEditor?.updateZoomSection(startTime, updates);
     });
+
+    // Sync selection between timeline and keyframe panel
+    keyframePanel.setOnSelectZoomSection((startTime) => {
+      // When keyframe panel selects, also select in timeline
+      timeline?.selectZoomSectionByStartTime(startTime);
+    });
+
+    timeline.setOnZoomSectionSelect((startTime) => {
+      // When timeline selects, also select in keyframe panel
+      keyframePanel?.selectZoomSection(startTime);
+    });
   } catch (error) {
     logger.error('Failed to initialize components:', error);
     updateStatus(`Initialization error: ${error instanceof Error ? error.message : 'Unknown error'}`);

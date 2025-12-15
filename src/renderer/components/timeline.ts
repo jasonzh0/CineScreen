@@ -15,8 +15,10 @@ export class Timeline {
   private pixelsPerSecond: number = 100;
   private onSeek: ((time: number) => void) | null = null;
   private onZoomUpdate: ((sections: ZoomSection[]) => void) | null = null;
+  private onZoomSectionSelect: ((startTime: number) => void) | null = null;
   private draggedZoomSection: HTMLElement | null = null;
   private selectedZoomSection: HTMLElement | null = null;
+  private zoomSectionElements: Map<number, HTMLElement> = new Map();
 
   constructor(containerId: string) {
     const container = document.getElementById(containerId);
@@ -62,6 +64,32 @@ export class Timeline {
 
   setOnZoomUpdate(callback: (sections: ZoomSection[]) => void) {
     this.onZoomUpdate = callback;
+  }
+
+  setOnZoomSectionSelect(callback: (startTime: number) => void) {
+    this.onZoomSectionSelect = callback;
+  }
+
+  /**
+   * Select a zoom section by its start time (called from KeyframePanel)
+   */
+  selectZoomSectionByStartTime(startTime: number) {
+    const element = this.zoomSectionElements.get(startTime);
+    if (element) {
+      this.selectZoomSection(element);
+      // Scroll the section into view
+      element.scrollIntoView({ behavior: 'smooth', block: 'nearest', inline: 'nearest' });
+    }
+  }
+
+  /**
+   * Deselect the currently selected zoom section
+   */
+  deselectZoomSection() {
+    if (this.selectedZoomSection) {
+      this.selectedZoomSection.classList.remove('selected');
+      this.selectedZoomSection = null;
+    }
   }
 
   /**
@@ -249,22 +277,27 @@ export class Timeline {
   }
 
   private renderZoomSections() {
+    this.zoomSectionElements.clear();
+
     if (!this.metadata || !this.metadata.zoom.sections.length) return;
 
     const sections = this.metadata.zoom.sections;
 
     sections.forEach((section, index) => {
-      this.createZoomSection(section, index);
+      const element = this.createZoomSection(section, index);
+      if (element) {
+        this.zoomSectionElements.set(section.startTime, element);
+      }
     });
   }
 
-  private createZoomSection(section: ZoomSection, index: number) {
-    if (!this.duration || this.duration === 0) return;
+  private createZoomSection(section: ZoomSection, index: number): HTMLElement | null {
+    if (!this.duration || this.duration === 0) return null;
 
     const startTime = Math.max(0, Math.min(section.startTime, this.duration));
     const endTime = Math.max(0, Math.min(section.endTime, this.duration));
 
-    if (startTime >= endTime) return;
+    if (startTime >= endTime) return null;
 
     const startPosition = (startTime / 1000) * this.pixelsPerSecond;
     const endPosition = (endTime / 1000) * this.pixelsPerSecond;
@@ -297,6 +330,8 @@ export class Timeline {
     this.setupZoomSectionSelection(sectionEl);
 
     this.zoomRow.appendChild(sectionEl);
+
+    return sectionEl;
   }
 
   private setupZoomSectionSelection(section: HTMLElement) {
@@ -355,6 +390,12 @@ export class Timeline {
 
     // Focus the container to receive keyboard events
     this.container.focus();
+
+    // Emit selection callback
+    const startTime = parseFloat(section.dataset.startTime || '0');
+    if (this.onZoomSectionSelect) {
+      this.onZoomSectionSelect(startTime);
+    }
   }
 
   private deleteSelectedZoomSection() {
