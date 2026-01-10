@@ -8,8 +8,11 @@ const logger = createLogger('CursorVisibility');
 
 let binaryPath: string | null = null;
 
+// Platform detection
+const isWindows = process.platform === 'win32';
+
 /**
- * Find the path to the cursor-control binary
+ * Find the path to the cursor-control binary (macOS) or script (Windows)
  * Works in both development and packaged environments
  */
 function findBinaryPath(): string {
@@ -19,6 +22,39 @@ function findBinaryPath(): string {
 
   const isDev = process.env.NODE_ENV === 'development' || !app.isPackaged;
 
+  if (isWindows) {
+    // On Windows, we use a Node.js script
+    if (isDev) {
+      const projectRoot = join(__dirname, '../../..');
+      const devPath = join(projectRoot, 'src', 'windows', 'cursor-control.js');
+      if (existsSync(devPath)) {
+        binaryPath = devPath;
+        logger.debug(`[BINARY] Found Windows cursor-control script in dev: ${binaryPath}`);
+        return binaryPath;
+      }
+      logger.warn(`[BINARY] Windows cursor-control script not found in dev at: ${devPath}`);
+    } else {
+      // Packaged app - script should be in resources
+      const resourcesPath = join(process.resourcesPath || '', 'windows', 'cursor-control.js');
+      if (existsSync(resourcesPath)) {
+        binaryPath = resourcesPath;
+        logger.debug(`[BINARY] Found Windows cursor-control script in packaged app: ${binaryPath}`);
+        return binaryPath;
+      }
+      logger.warn(`[BINARY] Windows cursor-control script not found in packaged app at: ${resourcesPath}`);
+    }
+
+    // Fallback
+    const fallbackPath = join(process.cwd(), 'src', 'windows', 'cursor-control.js');
+    if (existsSync(fallbackPath)) {
+      binaryPath = fallbackPath;
+      return binaryPath;
+    }
+
+    throw new Error('Windows cursor-control script not found.');
+  }
+
+  // macOS: original logic
   if (isDev) {
     const projectRoot = join(__dirname, '../../..');
     const devPath = join(projectRoot, 'native', 'cursor-control');
@@ -80,9 +116,10 @@ async function executeCursorCommand(command: 'hide' | 'show'): Promise<void> {
   const binPath = findBinaryPath();
 
   return new Promise((resolve, reject) => {
-    const binary = spawn(binPath, [command], {
-      stdio: ['ignore', 'pipe', 'pipe'],
-    });
+    // On Windows, spawn node with the script; on macOS, spawn the binary directly
+    const binary = isWindows
+      ? spawn('node', [binPath, command], { stdio: ['ignore', 'pipe', 'pipe'] })
+      : spawn(binPath, [command], { stdio: ['ignore', 'pipe', 'pipe'] });
 
     let stderr = '';
     let resolved = false;

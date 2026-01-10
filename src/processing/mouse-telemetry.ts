@@ -32,8 +32,11 @@ let lastCheckTime = 0;
 const CACHE_DURATION = 4; // ms - keep low for high sample rate
 let binaryPath: string | null = null;
 
+// Platform detection
+const isWindows = process.platform === 'win32';
+
 /**
- * Find the path to the mouse-telemetry binary
+ * Find the path to the mouse-telemetry binary (macOS) or script (Windows)
  * Works in both development and packaged environments
  */
 function findBinaryPath(): string {
@@ -43,6 +46,39 @@ function findBinaryPath(): string {
 
   const isDev = process.env.NODE_ENV === 'development' || !app.isPackaged;
 
+  if (isWindows) {
+    // On Windows, we use a Node.js script
+    if (isDev) {
+      const projectRoot = join(__dirname, '../../..');
+      const devPath = join(projectRoot, 'src', 'windows', 'telemetry.js');
+      if (existsSync(devPath)) {
+        binaryPath = devPath;
+        logger.debug(`[BINARY] Found Windows telemetry script in dev: ${binaryPath}`);
+        return binaryPath;
+      }
+      logger.warn(`[BINARY] Windows telemetry script not found in dev at: ${devPath}`);
+    } else {
+      // Packaged app - script should be in resources
+      const resourcesPath = join(process.resourcesPath || '', 'windows', 'telemetry.js');
+      if (existsSync(resourcesPath)) {
+        binaryPath = resourcesPath;
+        logger.debug(`[BINARY] Found Windows telemetry script in packaged app: ${binaryPath}`);
+        return binaryPath;
+      }
+      logger.warn(`[BINARY] Windows telemetry script not found in packaged app at: ${resourcesPath}`);
+    }
+
+    // Fallback
+    const fallbackPath = join(process.cwd(), 'src', 'windows', 'telemetry.js');
+    if (existsSync(fallbackPath)) {
+      binaryPath = fallbackPath;
+      return binaryPath;
+    }
+
+    throw new Error('Windows telemetry script not found.');
+  }
+
+  // macOS: original logic
   if (isDev) {
     const projectRoot = join(__dirname, '../../..');
     const devPath = join(projectRoot, 'native', 'mouse-telemetry');
@@ -111,9 +147,16 @@ export function startTelemetryStream(): void {
     const binPath = findBinaryPath();
     logger.info('[STREAM] Starting telemetry stream');
 
-    streamingProcess = spawn(binPath, ['--stream'], {
-      stdio: ['pipe', 'pipe', 'pipe'],
-    });
+    // On Windows, spawn node with the script; on macOS, spawn the binary directly
+    if (isWindows) {
+      streamingProcess = spawn('node', [binPath, '--stream'], {
+        stdio: ['pipe', 'pipe', 'pipe'],
+      });
+    } else {
+      streamingProcess = spawn(binPath, ['--stream'], {
+        stdio: ['pipe', 'pipe', 'pipe'],
+      });
+    }
 
     isStreaming = true;
 
@@ -208,9 +251,10 @@ export async function getMouseTelemetry(): Promise<MouseTelemetryData> {
     const binPath = findBinaryPath();
 
     const result = await new Promise<string>((resolve, reject) => {
-      const binary = spawn(binPath, [], {
-        stdio: ['ignore', 'pipe', 'pipe'],
-      });
+      // On Windows, spawn node with the script; on macOS, spawn the binary directly
+      const binary = isWindows
+        ? spawn('node', [binPath], { stdio: ['ignore', 'pipe', 'pipe'] })
+        : spawn(binPath, [], { stdio: ['ignore', 'pipe', 'pipe'] });
 
       let stdout = '';
       let stderr = '';
