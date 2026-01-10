@@ -157,6 +157,22 @@ docker run --rm -v $(pwd)/release:/project/release cinescreen
 - `npm run package:mac` - Create distributable macOS package
 - `npm run package:win` - Create distributable Windows package
 
+### Windows Build Prerequisites
+
+Before running `npm run package:win` on Windows, you need to enable Developer Mode to allow symbolic link creation:
+
+1. Open **Windows Settings** → **Privacy & security** → **For developers**
+2. Turn ON **Developer Mode**
+
+If you encounter the error `Cannot create symbolic link: A required privilege is not held by the client`, run the following command and try again:
+
+```powershell
+Remove-Item -Recurse -Force "$env:LOCALAPPDATA\electron-builder\Cache\winCodeSign" -ErrorAction SilentlyContinue
+npm run package:win
+```
+
+Alternatively, run your terminal as **Administrator**.
+
 ## Usage
 
 1. **Grant Permissions** - On first launch, grant necessary permissions (see below)
