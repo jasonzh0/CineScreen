@@ -64,7 +64,23 @@
         "NSMicrophoneUsageDescription": "This app needs microphone access for screen recording with audio.",
         "NSHighResolutionCapable": true
       },
-      "icon": "build/icon.png"
+      "icon": "build/icon.png",
+      "extraResources": [
+        {
+          "from": "native/mouse-telemetry",
+          "to": ".",
+          "filter": [
+            "mouse-telemetry"
+          ]
+        },
+        {
+          "from": "native/cursor-control",
+          "to": ".",
+          "filter": [
+            "cursor-control"
+          ]
+        }
+      ]
     },
     "win": {
       "target": [
@@ -92,20 +108,6 @@
         "to": "windows",
         "filter": [
           "**/*.js"
-        ]
-      },
-      {
-        "from": "native/mouse-telemetry",
-        "to": ".",
-        "filter": [
-          "mouse-telemetry"
-        ]
-      },
-      {
-        "from": "native/cursor-control",
-        "to": ".",
-        "filter": [
-          "cursor-control"
         ]
       }
     ],
