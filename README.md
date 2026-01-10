@@ -6,7 +6,7 @@
   <img src="src/assets/icon.png" alt="CineScreen Icon" width="128">
 </div>
 
-A professional macOS screen recording application built with Electron that records your screen without the native cursor, tracks mouse movements separately, and provides a powerful post-processing studio for creating polished, cinematic screen recordings.
+A professional cross-platform screen recording application built with Electron that records your screen without the native cursor, tracks mouse movements separately, and provides a powerful post-processing studio for creating polished, cinematic screen recordings.
 
 ### Result
 
@@ -23,10 +23,9 @@ https://github.com/user-attachments/assets/e3eccb0e-dd17-4c7d-91bd-399d157a0b03
 
 ## Supported Platforms
 
-Currently, CineScreen only supports:
+CineScreen supports the following platforms:
 - **macOS ARM64** (Apple Silicon) - M1, M2, M3, and later
-
-Support for Intel Macs (x64) and other platforms may be added in the future.
+- **Windows x64** - Windows 10/11 (64-bit)
 
 ## Features
 
@@ -79,12 +78,15 @@ Support for Intel Macs (x64) and other platforms may be added in the future.
 - **FFmpeg** - Video encoding and processing
 - **Sharp** - High-performance image processing
 - **Vite** - Fast build tool for renderer process
-- **Native Swift** - Mouse button state tracking
+- **Koffi** - FFI bindings for Windows native APIs
+- **Native Swift** - Mouse button state tracking (macOS only)
+- **Docker** - Cross-platform build support using electron-builder
 
 ## Installation
 
 ### Download from GitHub Releases
 
+#### macOS
 1. Go to the [Releases page](https://github.com/jasonzh0/CineScreen/releases) on GitHub
 2. Download the latest `.dmg` file from the assets section
 3. Open the downloaded DMG file
@@ -96,9 +98,25 @@ Support for Intel Macs (x64) and other platforms may be added in the future.
 - Click "Open" in the security dialog
 - Or go to System Settings > Privacy & Security and click "Open Anyway" next to the warning message
 
+#### Windows
+1. Go to the [Releases page](https://github.com/jasonzh0/CineScreen/releases) on GitHub
+2. Download the latest `.exe` installer or `.zip` file from the assets section
+3. Run the installer or extract the ZIP file
+4. Launch CineScreen from the Start Menu or extracted folder
+
 ## Development
 
+### Prerequisites
+
+- **Node.js** 18+ and npm
+- **Docker** (for cross-platform builds)
+
+### Local Development
+
 ```bash
+# Install dependencies
+npm install
+
 # Run in development mode (with hot reload)
 npm run dev
 
@@ -111,21 +129,53 @@ npm run start
 # Package for macOS (creates DMG and ZIP)
 npm run package:mac
 
+# Package for Windows (creates NSIS installer and ZIP)
+npm run package:win
+
 # Clean build artifacts
 npm run clean
+```
+
+### Docker Build (Cross-Platform)
+
+Build for Windows from any platform using Docker:
+
+```bash
+# Build the Docker image
+docker build -t cinescreen .
+
+# Run the container to build Windows package
+docker run --rm -v $(pwd)/release:/project/release cinescreen
 ```
 
 ### Development Scripts
 
 - `npm run dev` - Start development with hot reload for main, preload, and renderer
 - `npm run build` - Build all TypeScript and native components
-- `npm run build:native` - Build Swift native module
+- `npm run build:native` - Build Swift native module (macOS only)
 - `npm run start` - Run the built Electron app
 - `npm run package:mac` - Create distributable macOS package
+- `npm run package:win` - Create distributable Windows package
+
+### Windows Build Prerequisites
+
+Before running `npm run package:win` on Windows, you need to enable Developer Mode to allow symbolic link creation:
+
+1. Open **Windows Settings** → **Privacy & security** → **For developers**
+2. Turn ON **Developer Mode**
+
+If you encounter the error `Cannot create symbolic link: A required privilege is not held by the client`, run the following command and try again:
+
+```powershell
+Remove-Item -Recurse -Force "$env:LOCALAPPDATA\electron-builder\Cache\winCodeSign" -ErrorAction SilentlyContinue
+npm run package:win
+```
+
+Alternatively, run your terminal as **Administrator**.
 
 ## Usage
 
-1. **Grant Permissions** - On first launch, grant Screen Recording and Accessibility permissions
+1. **Grant Permissions** - On first launch, grant necessary permissions (see below)
 2. **Configure Output** - Set your desired output path for recordings
 3. **Start Recording** - Click "Start Recording" to begin capturing
 4. **Stop Recording** - Click "Stop Recording" when finished
@@ -134,18 +184,25 @@ npm run clean
 
 ## Permissions
 
+### macOS
 CineScreen requires the following macOS permissions:
-
 - **Screen Recording** - Required to capture screen content
 - **Accessibility** - Required for precise mouse movement tracking
 
 These permissions are requested automatically on first launch. You can also grant them manually in System Settings > Privacy & Security.
 
+### Windows
+CineScreen may require administrator privileges for certain features. No additional permissions are typically required.
+
 ## Requirements
 
+### macOS
 - macOS 10.15 (Catalina) or later
 - Screen Recording permission
 - Accessibility permission
+
+### Windows
+- Windows 10 (64-bit) or later
 
 ## License
 
@@ -154,4 +211,3 @@ This project is licensed under the MIT License - see the [LICENSE](LICENSE) file
 ## Contributing
 
 Contributions are welcome! Please feel free to submit a Pull Request.
-

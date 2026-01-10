@@ -10,16 +10,25 @@ import { DEFAULT_FRAME_RATE } from '../utils/constants';
 // Create logger for screen capture
 const logger = createLogger('ScreenCapture');
 
+// Platform detection
+const isWindows = process.platform === 'win32';
+const isMac = process.platform === 'darwin';
+
 export class ScreenCapture {
   private recordingProcess?: ChildProcess;
   private outputPath: string = '';
   private isRecording = false;
 
   /**
-   * Find the screen device index by listing avfoundation devices
+   * Find the screen device index by listing avfoundation devices (macOS only)
    * @returns The screen device index, or null if not found
    */
   private async findScreenDeviceIndex(): Promise<number | null> {
+    if (!isMac) {
+      // Windows uses gdigrab which doesn't need device enumeration
+      return null;
+    }
+
     return new Promise((resolve) => {
       let resolvedFfmpegPath: string;
       try {
@@ -97,12 +106,79 @@ export class ScreenCapture {
   }
 
   /**
+   * Build FFmpeg arguments for screen capture
+   * Uses platform-specific input methods
+   */
+  private async buildRecordingArgs(config: RecordingConfig): Promise<string[]> {
+    const frameRate = String(config.frameRate || DEFAULT_FRAME_RATE);
+
+    if (isWindows) {
+      // Windows: use gdigrab for desktop capture
+      // gdigrab captures the entire desktop by default
+      // -draw_mouse 0: Don't capture the cursor - we'll overlay our own animated cursor later
+      const args = [
+        '-f', 'gdigrab',
+        '-framerate', frameRate,
+        '-draw_mouse', '0',  // Hide cursor in recording
+        '-i', 'desktop',
+        '-c:v', 'libx264',
+        '-preset', 'medium',
+        '-crf', this.getCrfValue(config.quality || 'medium'),
+        '-pix_fmt', 'yuv420p',
+      ];
+
+      // Add crop filter for region capture
+      if (config.region) {
+        const { x, y, width, height } = config.region;
+        // For gdigrab, we can specify offset and size in the input
+        // Remove 'desktop' and add with offset
+        args.splice(args.indexOf('desktop'), 1, 'desktop');
+        // Add offset parameters before -i
+        const iIndex = args.indexOf('-i');
+        args.splice(iIndex, 0, '-offset_x', String(x), '-offset_y', String(y), '-video_size', `${width}x${height}`);
+      }
+
+      args.push(this.outputPath);
+      return args;
+    } else {
+      // macOS: use avfoundation
+      const screenDeviceIndex = await this.findScreenDeviceIndex();
+      if (screenDeviceIndex === null) {
+        throw new Error('Could not find screen capture device');
+      }
+      logger.debug('Using screen device index:', screenDeviceIndex);
+
+      const args = [
+        '-f', 'avfoundation',
+        '-framerate', frameRate,
+        '-capture_cursor', '0', // Hide cursor - we'll overlay a smooth cursor SVG later
+        '-i', `${screenDeviceIndex}:0`, // Screen input (detected index) with no audio (0)
+        '-an', // Explicitly disable audio encoding to prevent audio stream issues
+        '-c:v', 'libx264',
+        '-preset', 'medium',
+        '-crf', this.getCrfValue(config.quality || 'medium'),
+        '-pix_fmt', 'yuv420p',
+      ];
+
+      // Add crop filter for region capture
+      if (config.region) {
+        const { x, y, width, height } = config.region;
+        const cropIndex = args.indexOf('-c:v');
+        args.splice(cropIndex, 0, '-vf', `crop=${width}:${height}:${x}:${y}`);
+      }
+
+      args.push(this.outputPath);
+      return args;
+    }
+  }
+
+  /**
    * Start screen recording using ffmpeg
    * Note: This uses the system's screen capture, which on macOS can be done via avfoundation
    */
   async startRecording(config: RecordingConfig): Promise<void> {
     logger.info('startRecording called with config:', config);
-    
+
     if (this.isRecording) {
       logger.error('Recording already in progress, rejecting');
       throw new Error('Recording is already in progress');
@@ -120,41 +196,9 @@ export class ScreenCapture {
       mkdirSync(outputDir, { recursive: true });
     }
 
-    // Find the screen device index (not camera)
-    const screenDeviceIndex = await this.findScreenDeviceIndex();
-    if (screenDeviceIndex === null) {
-      throw new Error('Could not find screen capture device');
-    }
-    logger.debug('Using screen device index:', screenDeviceIndex);
-
-    // Use ffmpeg with avfoundation to capture screen (not camera)
-    // Note: This requires screen recording permission
-    // Use MKV format (Matroska) which is more forgiving for interrupted recordings
-    // MKV doesn't require moov atom at the beginning, making it more reliable
-    // avfoundation outputs uyvy422, which libx264 will automatically convert to yuv420p
-    // -capture_cursor 0: Hide cursor during recording (we'll overlay it later)
-    const args = [
-      '-f', 'avfoundation',
-      '-framerate', String(config.frameRate || DEFAULT_FRAME_RATE),
-      '-capture_cursor', '0', // Hide cursor - we'll overlay a smooth cursor SVG later
-      '-i', `${screenDeviceIndex}:0`, // Screen input (detected index) with no audio (0)
-      '-an', // Explicitly disable audio encoding to prevent audio stream issues
-      '-c:v', 'libx264',
-      '-preset', 'medium',
-      '-crf', this.getCrfValue(config.quality || 'medium'),
-      '-pix_fmt', 'yuv420p', // Output format (libx264 will convert from uyvy422)
-      this.outputPath,
-    ];
+    // Build platform-specific FFmpeg arguments
+    const args = await this.buildRecordingArgs(config);
     logger.debug('FFmpeg args:', args);
-
-    // If region is specified, add crop filter
-    if (config.region) {
-      const { x, y, width, height } = config.region;
-      const cropIndex = args.indexOf('-c:v');
-      args.splice(cropIndex, 0, 
-        '-vf', `crop=${width}:${height}:${x}:${y}`
-      );
-    }
 
     return new Promise((resolve, reject) => {
       let resolvedFfmpegPath: string;
@@ -259,7 +303,7 @@ export class ScreenCapture {
    */
   async stopRecording(): Promise<string> {
     logger.info('stopRecording called');
-    
+
     if (!this.isRecording || !this.recordingProcess) {
       logger.error('No recording in progress');
       throw new Error('No recording in progress');
@@ -272,31 +316,31 @@ export class ScreenCapture {
 
     return new Promise((resolve, reject) => {
       logger.info('Stopping FFmpeg recording...');
-      
+
       // Declare timeout variables so they can be accessed in handlers
       let sigintTimeout: NodeJS.Timeout;
       let finalTimeout: NodeJS.Timeout;
-      
+
       // Set up event handlers BEFORE sending signal to avoid race conditions
       const handleClose = async (code: number | null) => {
         if (isResolved) return; // Prevent double resolution
-        
+
         // Clean up timeouts
         if (sigintTimeout) clearTimeout(sigintTimeout);
         if (finalTimeout) clearTimeout(finalTimeout);
-        
+
         logger.debug('FFmpeg process closed with code:', code);
         this.isRecording = false;
         this.recordingProcess = undefined;
-        
+
         // Code 0 = success, null = killed, 255 = killed by signal
         // For MKV format, even if killed, the file might be usable (MKV is more forgiving)
         const isGraceful = code === 0;
         const wasKilled = code === 255 || code === null;
-        
+
         if (isGraceful || wasKilled) {
           logger.info(`Recording stopped (graceful: ${isGraceful}, killed: ${wasKilled}), waiting for file to be finalized...`);
-          
+
           try {
             // Give FFmpeg more time to flush buffers to disk
             // Increased wait time to ensure all frames are written, especially for graceful shutdowns
@@ -304,13 +348,13 @@ export class ScreenCapture {
             const flushWaitTime = wasKilled ? 6000 : 3000;
             logger.debug(`Waiting ${flushWaitTime}ms for FFmpeg to flush buffers...`);
             await new Promise(resolve => setTimeout(resolve, flushWaitTime));
-            
+
             // Wait for file to stabilize (FFmpeg might still be writing)
             // Increased wait time to ensure all frames are written
             // Wait up to 15 seconds for file to stabilize
             await waitForFileStable(outputPath, wasKilled ? 15000 : 10000, 100);
             logger.debug('File size stabilized, validating video file...');
-            
+
             // Validate the video file is complete with retries
             // This will throw if the file is still invalid after all retries
             // Increased retry interval to 1000ms to give file system more time
@@ -323,7 +367,7 @@ export class ScreenCapture {
             const errorDetails = error instanceof Error ? error.stack : JSON.stringify(error);
             logger.error('Error validating file after retries:', errorMessage);
             logger.debug('Error details:', errorDetails);
-            
+
             // If file was killed but we can't validate it, still try to proceed
             // (MKV format is more forgiving and might be partially readable)
             if (wasKilled) {
@@ -401,7 +445,7 @@ export class ScreenCapture {
           logger.debug('Sending quit command (q) to FFmpeg stdin to gracefully stop...');
           process.stdin.write('q\n');
           process.stdin.end();
-          
+
           // Give FFmpeg time to process the quit command and flush buffers
           // Wait up to 3 seconds for graceful shutdown
           setTimeout(() => {
