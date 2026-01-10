@@ -11,8 +11,76 @@ let binaryPath: string | null = null;
 // Platform detection
 const isWindows = process.platform === 'win32';
 
+// Windows: koffi cursor control (initialized lazily)
+let windowsKoffiInitialized = false;
+let ShowCursor: any = null;
+let SystemParametersInfoW: any = null;
+const SPI_SETCURSORS = 0x0057;
+
 /**
- * Find the path to the cursor-control binary (macOS) or script (Windows)
+ * Initialize koffi for Windows cursor control
+ */
+function initializeWindowsCursorControl(): boolean {
+  if (windowsKoffiInitialized) {
+    return true;
+  }
+
+  try {
+    // eslint-disable-next-line @typescript-eslint/no-var-requires
+    const koffi = require('koffi');
+    const user32 = koffi.load('user32.dll');
+
+    ShowCursor = user32.func('int ShowCursor(bool bShow)');
+    SystemParametersInfoW = user32.func('bool SystemParametersInfoW(uint uiAction, uint uiParam, pointer pvParam, uint fWinIni)');
+
+    windowsKoffiInitialized = true;
+    logger.info('[WINDOWS] Koffi cursor control initialized successfully');
+    return true;
+  } catch (error) {
+    logger.error('[WINDOWS] Failed to initialize koffi cursor control:', error);
+    return false;
+  }
+}
+
+/**
+ * Hide cursor on Windows using koffi ShowCursor API
+ */
+function hideWindowsCursor(): void {
+  if (!initializeWindowsCursorControl()) return;
+
+  try {
+    // ShowCursor uses reference counting - call multiple times to ensure hidden
+    // Cursor is hidden when internal counter < 0
+    for (let i = 0; i < 5; i++) {
+      ShowCursor(false);
+    }
+    logger.debug('[WINDOWS] Cursor hidden via ShowCursor');
+  } catch (error) {
+    logger.error('[WINDOWS] Error hiding cursor:', error);
+  }
+}
+
+/**
+ * Show cursor on Windows using koffi ShowCursor API
+ */
+function showWindowsCursor(): void {
+  if (!initializeWindowsCursorControl()) return;
+
+  try {
+    // Increment count multiple times to ensure cursor is visible
+    for (let i = 0; i < 10; i++) {
+      ShowCursor(true);
+    }
+    // Also restore system cursors as a fallback
+    SystemParametersInfoW(SPI_SETCURSORS, 0, null, 0);
+    logger.debug('[WINDOWS] Cursor shown via ShowCursor');
+  } catch (error) {
+    logger.error('[WINDOWS] Error showing cursor:', error);
+  }
+}
+
+/**
+ * Find the path to the cursor-control binary (macOS only)
  * Works in both development and packaged environments
  */
 function findBinaryPath(): string {
@@ -21,38 +89,6 @@ function findBinaryPath(): string {
   }
 
   const isDev = process.env.NODE_ENV === 'development' || !app.isPackaged;
-
-  if (isWindows) {
-    // On Windows, we use a Node.js script
-    if (isDev) {
-      const projectRoot = join(__dirname, '../../..');
-      const devPath = join(projectRoot, 'src', 'windows', 'cursor-control.js');
-      if (existsSync(devPath)) {
-        binaryPath = devPath;
-        logger.debug(`[BINARY] Found Windows cursor-control script in dev: ${binaryPath}`);
-        return binaryPath;
-      }
-      logger.warn(`[BINARY] Windows cursor-control script not found in dev at: ${devPath}`);
-    } else {
-      // Packaged app - script should be in resources
-      const resourcesPath = join(process.resourcesPath || '', 'windows', 'cursor-control.js');
-      if (existsSync(resourcesPath)) {
-        binaryPath = resourcesPath;
-        logger.debug(`[BINARY] Found Windows cursor-control script in packaged app: ${binaryPath}`);
-        return binaryPath;
-      }
-      logger.warn(`[BINARY] Windows cursor-control script not found in packaged app at: ${resourcesPath}`);
-    }
-
-    // Fallback
-    const fallbackPath = join(process.cwd(), 'src', 'windows', 'cursor-control.js');
-    if (existsSync(fallbackPath)) {
-      binaryPath = fallbackPath;
-      return binaryPath;
-    }
-
-    throw new Error('Windows cursor-control script not found.');
-  }
 
   // macOS: original logic
   if (isDev) {
@@ -110,16 +146,13 @@ function findBinaryPath(): string {
 }
 
 /**
- * Execute cursor control command using native binary
+ * Execute cursor control command using native binary (macOS only)
  */
-async function executeCursorCommand(command: 'hide' | 'show'): Promise<void> {
+async function executeCursorCommandMac(command: 'hide' | 'show'): Promise<void> {
   const binPath = findBinaryPath();
 
   return new Promise((resolve, reject) => {
-    // On Windows, spawn node with the script; on macOS, spawn the binary directly
-    const binary = isWindows
-      ? spawn('node', [binPath, command], { stdio: ['ignore', 'pipe', 'pipe'] })
-      : spawn(binPath, [command], { stdio: ['ignore', 'pipe', 'pipe'] });
+    const binary = spawn(binPath, [command], { stdio: ['ignore', 'pipe', 'pipe'] });
 
     let stderr = '';
     let resolved = false;
@@ -160,30 +193,42 @@ async function executeCursorCommand(command: 'hide' | 'show'): Promise<void> {
 }
 
 /**
- * Hide the system cursor on macOS
- * Calls hide multiple times to ensure cursor is hidden (CGDisplayHideCursor uses reference counting)
- * Also adds a small delay to ensure the OS has processed the hide request
+ * Hide the system cursor
+ * Uses ShowCursor API on Windows, native binary on macOS
+ * Calls hide multiple times to ensure cursor is hidden (reference counting)
  */
 export async function hideSystemCursor(): Promise<void> {
-  // Call hide multiple times to ensure it's truly hidden
-  // This overcomes any race conditions with the reference count
-  for (let i = 0; i < 3; i++) {
-    await executeCursorCommand('hide');
+  if (isWindows) {
+    hideWindowsCursor();
+    // Add a small delay to ensure the OS has processed the hide request
+    await new Promise(resolve => setTimeout(resolve, 50));
+    logger.info('System cursor hidden (Windows koffi)');
+  } else {
+    // macOS: Call hide multiple times to ensure it's truly hidden
+    // This overcomes any race conditions with the reference count
+    for (let i = 0; i < 3; i++) {
+      await executeCursorCommandMac('hide');
+    }
+
+    // Add a small delay to ensure the OS has processed the hide request
+    // This helps prevent the cursor from briefly appearing when recording starts
+    await new Promise(resolve => setTimeout(resolve, 50));
+
+    logger.info('System cursor hidden (macOS 3x with delay)');
   }
-
-  // Add a small delay to ensure the OS has processed the hide request
-  // This helps prevent the cursor from briefly appearing when recording starts
-  await new Promise(resolve => setTimeout(resolve, 50));
-
-  logger.info('System cursor hidden (3x with delay)');
 }
 
 /**
- * Show the system cursor on macOS
+ * Show the system cursor
  */
 export async function showSystemCursor(): Promise<void> {
-  await executeCursorCommand('show');
-  logger.info('System cursor shown');
+  if (isWindows) {
+    showWindowsCursor();
+    logger.info('System cursor shown (Windows koffi)');
+  } else {
+    await executeCursorCommandMac('show');
+    logger.info('System cursor shown (macOS)');
+  }
 }
 
 /**
@@ -191,7 +236,7 @@ export async function showSystemCursor(): Promise<void> {
  */
 export async function ensureCursorVisible(): Promise<void> {
   // Call show multiple times to ensure cursor is visible
-  // (CGDisplayHideCursor uses a reference count)
+  // (uses reference counting)
   for (let i = 0; i < 5; i++) {
     await showSystemCursor();
   }

@@ -115,9 +115,11 @@ export class ScreenCapture {
     if (isWindows) {
       // Windows: use gdigrab for desktop capture
       // gdigrab captures the entire desktop by default
+      // -draw_mouse 0: Don't capture the cursor - we'll overlay our own animated cursor later
       const args = [
         '-f', 'gdigrab',
         '-framerate', frameRate,
+        '-draw_mouse', '0',  // Hide cursor in recording
         '-i', 'desktop',
         '-c:v', 'libx264',
         '-preset', 'medium',
