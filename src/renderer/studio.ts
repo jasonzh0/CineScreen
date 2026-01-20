@@ -966,11 +966,131 @@ function setupEventListeners() {
   const saveMetadataBtn = document.getElementById('save-metadata-btn');
   saveMetadataBtn?.addEventListener('click', () => saveProject());
 
-  // Keyboard shortcut: Cmd+S (Mac) / Ctrl+S (Windows)
+  // Keyboard shortcuts
   document.addEventListener('keydown', (e) => {
+    // Don't trigger shortcuts when typing in input fields
+    const target = e.target as HTMLElement;
+    if (target.tagName === 'INPUT' || target.tagName === 'TEXTAREA' || target.isContentEditable) {
+      // Still allow Cmd+S in inputs
+      if ((e.metaKey || e.ctrlKey) && e.key === 's') {
+        e.preventDefault();
+        saveProject();
+      }
+      return;
+    }
+
+    // Cmd+S / Ctrl+S - Save
     if ((e.metaKey || e.ctrlKey) && e.key === 's') {
       e.preventDefault();
       saveProject();
+      return;
+    }
+
+    // Space - Play/Pause
+    if (e.key === ' ' || e.code === 'Space') {
+      e.preventDefault();
+      togglePlayPause();
+      return;
+    }
+
+    // Left Arrow - Step back (frame when paused, 5s when playing)
+    if (e.key === 'ArrowLeft') {
+      e.preventDefault();
+      if (!videoPreview) return;
+      const videoEl = videoPreview.getVideoElement();
+      if (isPlaying) {
+        videoEl.currentTime = Math.max(0, videoEl.currentTime - 5);
+      } else {
+        const frameTime = 1 / 30;
+        videoEl.currentTime = Math.max(0, videoEl.currentTime - frameTime);
+      }
+      resetCursorSmoothing();
+      renderPreview();
+      return;
+    }
+
+    // Right Arrow - Step forward (frame when paused, 5s when playing)
+    if (e.key === 'ArrowRight') {
+      e.preventDefault();
+      if (!videoPreview) return;
+      const videoEl = videoPreview.getVideoElement();
+      if (isPlaying) {
+        videoEl.currentTime = Math.min(videoEl.duration, videoEl.currentTime + 5);
+      } else {
+        const frameTime = 1 / 30;
+        videoEl.currentTime = Math.min(videoEl.duration, videoEl.currentTime + frameTime);
+      }
+      resetCursorSmoothing();
+      renderPreview();
+      return;
+    }
+
+    // J - Rewind 5 seconds
+    if (e.key === 'j' || e.key === 'J') {
+      e.preventDefault();
+      skipBackward();
+      return;
+    }
+
+    // K - Pause
+    if (e.key === 'k' || e.key === 'K') {
+      e.preventDefault();
+      if (videoPreview && isPlaying) {
+        videoPreview.pause();
+      }
+      return;
+    }
+
+    // L - Forward 5 seconds
+    if (e.key === 'l' || e.key === 'L') {
+      e.preventDefault();
+      skipForward();
+      return;
+    }
+
+    // Home - Go to start
+    if (e.key === 'Home') {
+      e.preventDefault();
+      if (!videoPreview) return;
+      videoPreview.getVideoElement().currentTime = 0;
+      resetCursorSmoothing();
+      renderPreview();
+      return;
+    }
+
+    // End - Go to end
+    if (e.key === 'End') {
+      e.preventDefault();
+      if (!videoPreview) return;
+      const videoEl = videoPreview.getVideoElement();
+      videoEl.currentTime = videoEl.duration;
+      resetCursorSmoothing();
+      renderPreview();
+      return;
+    }
+
+    // , (comma) - Step back one frame
+    if (e.key === ',') {
+      e.preventDefault();
+      if (!videoPreview) return;
+      const videoEl = videoPreview.getVideoElement();
+      const frameTime = 1 / 30;
+      videoEl.currentTime = Math.max(0, videoEl.currentTime - frameTime);
+      resetCursorSmoothing();
+      renderPreview();
+      return;
+    }
+
+    // . (period) - Step forward one frame
+    if (e.key === '.') {
+      e.preventDefault();
+      if (!videoPreview) return;
+      const videoEl = videoPreview.getVideoElement();
+      const frameTime = 1 / 30;
+      videoEl.currentTime = Math.min(videoEl.duration, videoEl.currentTime + frameTime);
+      resetCursorSmoothing();
+      renderPreview();
+      return;
     }
   });
 
