@@ -85,9 +85,28 @@ export const permissions: Permissions = {
   async requestMicrophone(): Promise<boolean> {
     logger.info('Requesting microphone permission...');
     try {
-      const granted = await systemPreferences.askForMediaAccess('microphone');
-      logger.info(`Microphone permission request result: ${granted ? 'granted' : 'denied'}`);
-      return granted;
+      // Check current status first
+      const status = systemPreferences.getMediaAccessStatus('microphone');
+      logger.info(`Current microphone permission status: ${status}`);
+
+      if (status === 'granted') {
+        return true;
+      }
+
+      if (status === 'not-determined') {
+        // First time request - system dialog will appear
+        const granted = await systemPreferences.askForMediaAccess('microphone');
+        logger.info(`Microphone permission request result: ${granted ? 'granted' : 'denied'}`);
+        return granted;
+      }
+
+      // Status is 'denied' or 'restricted' - must open System Preferences
+      // askForMediaAccess won't show a dialog in this case
+      logger.info('Microphone permission denied/restricted, opening System Preferences...');
+      await execAsync(
+        'open "x-apple.systempreferences:com.apple.preference.security?Privacy_Microphone"'
+      );
+      return false;
     } catch (error) {
       logger.error('Failed to request microphone permission:', error);
       return false;

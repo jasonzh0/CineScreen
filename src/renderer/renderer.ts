@@ -6,6 +6,7 @@ type RendererElectronAPI = {
   checkPermissions: () => Promise<{
     screenRecording: boolean;
     accessibility: boolean;
+    microphone: boolean;
   }>;
   requestPermissions: () => Promise<void>;
   startRecording: (config: RecordingConfig) => Promise<{ success: boolean }>;
