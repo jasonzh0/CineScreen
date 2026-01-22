@@ -7,6 +7,11 @@ exports.default = async function notarizing(context) {
     return;
   }
 
+  if (process.env.NOTARIZE !== "true") {
+    console.log("Skipping notarization: NOTARIZE is not set to true");
+    return;
+  }
+
   if (!process.env.APPLE_ID || !process.env.APPLE_APP_SPECIFIC_PASSWORD || !process.env.APPLE_TEAM_ID) {
     console.log("Skipping notarization: missing APPLE_ID, APPLE_APP_SPECIFIC_PASSWORD, or APPLE_TEAM_ID");
     return;

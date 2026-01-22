@@ -8,6 +8,11 @@ on:
         required: false
         default: true
         type: boolean
+      notarize:
+        description: 'Notarize macOS build'
+        required: false
+        default: false
+        type: boolean
     secrets:
       APPLE_CERTIFICATE:
         required: false
@@ -126,6 +131,7 @@ jobs:
           APPLE_ID: ${{ secrets.APPLE_ID }}
           APPLE_APP_SPECIFIC_PASSWORD: ${{ secrets.APPLE_APP_SPECIFIC_PASSWORD }}
           APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
+          NOTARIZE: ${{ inputs.notarize }}
         run: |
           if [ -f "$HOME/Library/Keychains/build.keychain-db" ]; then
             security unlock-keychain -p "build" build.keychain
