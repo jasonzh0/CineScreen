@@ -70,6 +70,10 @@ declare global {
   }
 }
 
+// Playback constants
+const FRAME_TIME = 1 / 30; // Approximate frame duration at 30fps
+const SKIP_SECONDS = 5;
+
 // State
 let metadata: RecordingMetadata | null = null;
 let videoPath: string = '';
@@ -508,17 +512,40 @@ function setupEventListeners() {
   const skipBackward = () => {
     if (!videoPreview) return;
     const videoEl = videoPreview.getVideoElement();
-    const currentTime = videoEl.currentTime;
-    videoEl.currentTime = Math.max(0, currentTime - 5); // Skip back 5 seconds
+    videoEl.currentTime = Math.max(0, videoEl.currentTime - SKIP_SECONDS);
+    resetCursorSmoothing();
     renderPreview();
   };
 
   const skipForward = () => {
     if (!videoPreview) return;
     const videoEl = videoPreview.getVideoElement();
-    const duration = videoEl.duration;
-    const currentTime = videoEl.currentTime;
-    videoEl.currentTime = Math.min(duration, currentTime + 5); // Skip forward 5 seconds
+    videoEl.currentTime = Math.min(videoEl.duration, videoEl.currentTime + SKIP_SECONDS);
+    resetCursorSmoothing();
+    renderPreview();
+  };
+
+  const stepFrame = (direction: 1 | -1) => {
+    if (!videoPreview) return;
+    const videoEl = videoPreview.getVideoElement();
+    const newTime = videoEl.currentTime + direction * FRAME_TIME;
+    videoEl.currentTime = Math.max(0, Math.min(videoEl.duration, newTime));
+    resetCursorSmoothing();
+    renderPreview();
+  };
+
+  const goToStart = () => {
+    if (!videoPreview) return;
+    videoPreview.getVideoElement().currentTime = 0;
+    resetCursorSmoothing();
+    renderPreview();
+  };
+
+  const goToEnd = () => {
+    if (!videoPreview) return;
+    const videoEl = videoPreview.getVideoElement();
+    videoEl.currentTime = videoEl.duration;
+    resetCursorSmoothing();
     renderPreview();
   };
 
@@ -966,11 +993,104 @@ function setupEventListeners() {
   const saveMetadataBtn = document.getElementById('save-metadata-btn');
   saveMetadataBtn?.addEventListener('click', () => saveProject());
 
-  // Keyboard shortcut: Cmd+S (Mac) / Ctrl+S (Windows)
+  // Keyboard shortcuts
   document.addEventListener('keydown', (e) => {
+    // Don't trigger shortcuts when typing in input fields
+    const target = e.target as HTMLElement;
+    if (target.tagName === 'INPUT' || target.tagName === 'TEXTAREA' || target.isContentEditable) {
+      // Still allow Cmd+S in inputs
+      if ((e.metaKey || e.ctrlKey) && e.key === 's') {
+        e.preventDefault();
+        saveProject();
+      }
+      return;
+    }
+
+    // Cmd+S / Ctrl+S - Save
     if ((e.metaKey || e.ctrlKey) && e.key === 's') {
       e.preventDefault();
       saveProject();
+      return;
+    }
+
+    // Space - Play/Pause
+    if (e.key === ' ' || e.code === 'Space') {
+      e.preventDefault();
+      togglePlayPause();
+      return;
+    }
+
+    // Left Arrow - Step back (frame when paused, 5s when playing)
+    if (e.key === 'ArrowLeft') {
+      e.preventDefault();
+      if (isPlaying) {
+        skipBackward();
+      } else {
+        stepFrame(-1);
+      }
+      return;
+    }
+
+    // Right Arrow - Step forward (frame when paused, 5s when playing)
+    if (e.key === 'ArrowRight') {
+      e.preventDefault();
+      if (isPlaying) {
+        skipForward();
+      } else {
+        stepFrame(1);
+      }
+      return;
+    }
+
+    // J - Rewind 5 seconds
+    if (e.key === 'j' || e.key === 'J') {
+      e.preventDefault();
+      skipBackward();
+      return;
+    }
+
+    // K - Pause
+    if (e.key === 'k' || e.key === 'K') {
+      e.preventDefault();
+      if (videoPreview && isPlaying) {
+        videoPreview.pause();
+      }
+      return;
+    }
+
+    // L - Forward 5 seconds
+    if (e.key === 'l' || e.key === 'L') {
+      e.preventDefault();
+      skipForward();
+      return;
+    }
+
+    // Home - Go to start
+    if (e.key === 'Home') {
+      e.preventDefault();
+      goToStart();
+      return;
+    }
+
+    // End - Go to end
+    if (e.key === 'End') {
+      e.preventDefault();
+      goToEnd();
+      return;
+    }
+
+    // , (comma) - Step back one frame
+    if (e.key === ',') {
+      e.preventDefault();
+      stepFrame(-1);
+      return;
+    }
+
+    // . (period) - Step forward one frame
+    if (e.key === '.') {
+      e.preventDefault();
+      stepFrame(1);
+      return;
     }
   });
 
