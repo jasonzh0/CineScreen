@@ -70,6 +70,10 @@ declare global {
   }
 }
 
+// Playback constants
+const FRAME_TIME = 1 / 30; // Approximate frame duration at 30fps
+const SKIP_SECONDS = 5;
+
 // State
 let metadata: RecordingMetadata | null = null;
 let videoPath: string = '';
@@ -508,17 +512,40 @@ function setupEventListeners() {
   const skipBackward = () => {
     if (!videoPreview) return;
     const videoEl = videoPreview.getVideoElement();
-    const currentTime = videoEl.currentTime;
-    videoEl.currentTime = Math.max(0, currentTime - 5); // Skip back 5 seconds
+    videoEl.currentTime = Math.max(0, videoEl.currentTime - SKIP_SECONDS);
+    resetCursorSmoothing();
     renderPreview();
   };
 
   const skipForward = () => {
     if (!videoPreview) return;
     const videoEl = videoPreview.getVideoElement();
-    const duration = videoEl.duration;
-    const currentTime = videoEl.currentTime;
-    videoEl.currentTime = Math.min(duration, currentTime + 5); // Skip forward 5 seconds
+    videoEl.currentTime = Math.min(videoEl.duration, videoEl.currentTime + SKIP_SECONDS);
+    resetCursorSmoothing();
+    renderPreview();
+  };
+
+  const stepFrame = (direction: 1 | -1) => {
+    if (!videoPreview) return;
+    const videoEl = videoPreview.getVideoElement();
+    const newTime = videoEl.currentTime + direction * FRAME_TIME;
+    videoEl.currentTime = Math.max(0, Math.min(videoEl.duration, newTime));
+    resetCursorSmoothing();
+    renderPreview();
+  };
+
+  const goToStart = () => {
+    if (!videoPreview) return;
+    videoPreview.getVideoElement().currentTime = 0;
+    resetCursorSmoothing();
+    renderPreview();
+  };
+
+  const goToEnd = () => {
+    if (!videoPreview) return;
+    const videoEl = videoPreview.getVideoElement();
+    videoEl.currentTime = videoEl.duration;
+    resetCursorSmoothing();
     renderPreview();
   };
 
@@ -996,32 +1023,22 @@ function setupEventListeners() {
     // Left Arrow - Step back (frame when paused, 5s when playing)
     if (e.key === 'ArrowLeft') {
       e.preventDefault();
-      if (!videoPreview) return;
-      const videoEl = videoPreview.getVideoElement();
       if (isPlaying) {
-        videoEl.currentTime = Math.max(0, videoEl.currentTime - 5);
+        skipBackward();
       } else {
-        const frameTime = 1 / 30;
-        videoEl.currentTime = Math.max(0, videoEl.currentTime - frameTime);
+        stepFrame(-1);
       }
-      resetCursorSmoothing();
-      renderPreview();
       return;
     }
 
     // Right Arrow - Step forward (frame when paused, 5s when playing)
     if (e.key === 'ArrowRight') {
       e.preventDefault();
-      if (!videoPreview) return;
-      const videoEl = videoPreview.getVideoElement();
       if (isPlaying) {
-        videoEl.currentTime = Math.min(videoEl.duration, videoEl.currentTime + 5);
+        skipForward();
       } else {
-        const frameTime = 1 / 30;
-        videoEl.currentTime = Math.min(videoEl.duration, videoEl.currentTime + frameTime);
+        stepFrame(1);
       }
-      resetCursorSmoothing();
-      renderPreview();
       return;
     }
 
@@ -1051,45 +1068,28 @@ function setupEventListeners() {
     // Home - Go to start
     if (e.key === 'Home') {
       e.preventDefault();
-      if (!videoPreview) return;
-      videoPreview.getVideoElement().currentTime = 0;
-      resetCursorSmoothing();
-      renderPreview();
+      goToStart();
       return;
     }
 
     // End - Go to end
     if (e.key === 'End') {
       e.preventDefault();
-      if (!videoPreview) return;
-      const videoEl = videoPreview.getVideoElement();
-      videoEl.currentTime = videoEl.duration;
-      resetCursorSmoothing();
-      renderPreview();
+      goToEnd();
       return;
     }
 
     // , (comma) - Step back one frame
     if (e.key === ',') {
       e.preventDefault();
-      if (!videoPreview) return;
-      const videoEl = videoPreview.getVideoElement();
-      const frameTime = 1 / 30;
-      videoEl.currentTime = Math.max(0, videoEl.currentTime - frameTime);
-      resetCursorSmoothing();
-      renderPreview();
+      stepFrame(-1);
       return;
     }
 
     // . (period) - Step forward one frame
     if (e.key === '.') {
       e.preventDefault();
-      if (!videoPreview) return;
-      const videoEl = videoPreview.getVideoElement();
-      const frameTime = 1 / 30;
-      videoEl.currentTime = Math.min(videoEl.duration, videoEl.currentTime + frameTime);
-      resetCursorSmoothing();
-      renderPreview();
+      stepFrame(1);
       return;
     }
   });
