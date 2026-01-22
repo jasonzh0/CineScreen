@@ -23,6 +23,7 @@ on:
 jobs:
   build:
     strategy:
+      fail-fast: false
       matrix:
         include:
           - os: macos-latest
@@ -46,11 +47,16 @@ jobs:
         run: npm ci
 
       - name: Setup code signing (macOS)
-        if: matrix.platform == 'mac' && secrets.APPLE_CERTIFICATE != ''
+        if: matrix.platform == 'mac'
         env:
           APPLE_CERTIFICATE: ${{ secrets.APPLE_CERTIFICATE }}
           APPLE_CERTIFICATE_PASSWORD: ${{ secrets.APPLE_CERTIFICATE_PASSWORD }}
         run: |
+          if [ -z "$APPLE_CERTIFICATE" ]; then
+            echo "Skipping code signing setup (no certificate provided)"
+            exit 0
+          fi
+
           # Create keychain
           security create-keychain -p "build" build.keychain
           security default-keychain -s build.keychain
@@ -83,10 +89,15 @@ jobs:
         run: npm run build
 
       - name: Sign native binary (macOS)
-        if: matrix.platform == 'mac' && secrets.APPLE_CERTIFICATE != ''
+        if: matrix.platform == 'mac'
         env:
           APPLE_CERTIFICATE: ${{ secrets.APPLE_CERTIFICATE }}
         run: |
+          if [ -z "$APPLE_CERTIFICATE" ]; then
+            echo "Skipping native binary signing (no certificate provided)"
+            exit 0
+          fi
+
           security unlock-keychain -p "build" build.keychain
 
           IDENTITY=$(security find-identity -v -p codesigning | grep "Developer ID Application" | head -1 | awk -F'"' '{print $2}')
@@ -123,7 +134,7 @@ jobs:
 
       - name: Package (Windows)
         if: matrix.platform == 'win'
-        run: npm run package:win
+        run: npm run package:win -- --publish never
 
       - name: Upload artifacts
         if: inputs.upload-artifacts

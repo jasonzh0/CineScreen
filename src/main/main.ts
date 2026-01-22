@@ -6,11 +6,8 @@ import { MouseTracker } from './mouse-tracker';
 import { VideoProcessor } from '../processing/video-processor';
 import { MetadataExporter } from '../processing/metadata-exporter';
 import { createStudioWindow, getStudioWindow } from './studio-window';
-import {
-  checkAllPermissions,
-  requestMissingPermissions,
-} from './permissions';
-import { hideSystemCursor, showSystemCursor, ensureCursorVisible } from './cursor-visibility';
+import { getPlatform } from '../platform';
+import type { Platform } from '../platform';
 import type { RecordingConfig, CursorConfig, RecordingState, ZoomConfig, MouseEffectsConfig } from '../types';
 import type { RecordingMetadata } from '../types/metadata';
 import { createLogger, setLogSender } from '../utils/logger';
@@ -26,8 +23,17 @@ let recordingState: RecordingState = {
   isRecording: false,
 };
 let currentRecordingConfig: RecordingConfig | null = null;
+let platformInstance: Platform | null = null;
 
 const isDev = !app.isPackaged;
+
+// Initialize platform on startup
+async function initPlatform(): Promise<Platform> {
+  if (!platformInstance) {
+    platformInstance = await getPlatform();
+  }
+  return platformInstance;
+}
 
 function createWindow(): void {
   const preloadPath = isDev
@@ -100,14 +106,16 @@ app.on('window-all-closed', () => {
 // Ensure cursor is visible when app quits (in case recording was interrupted)
 app.on('before-quit', async () => {
   logger.info('App quitting, ensuring cursor is visible...');
-  await ensureCursorVisible();
+  const platform = await initPlatform();
+  await platform.cursor.ensureVisible();
 });
 
 // Additional handlers to ensure cursor is restored on crashes/termination
 // This is especially important on Windows where ShowCursor uses reference counting
 const handleExit = async () => {
   logger.info('Process exiting, ensuring cursor is visible...');
-  await ensureCursorVisible();
+  const platform = await initPlatform();
+  await platform.cursor.ensureVisible();
 };
 
 process.on('SIGINT', async () => {
@@ -134,16 +142,18 @@ process.on('unhandledRejection', async (reason) => {
 
 // IPC Handlers
 
-ipcMain.handle('check-permissions', () => {
+ipcMain.handle('check-permissions', async () => {
   logger.debug('IPC: check-permissions called');
-  const permissions = checkAllPermissions();
+  const platform = await initPlatform();
+  const permissions = platform.permissions.checkAll();
   logger.debug('Permissions result:', permissions);
   return permissions;
 });
 
 ipcMain.handle('request-permissions', async () => {
   logger.debug('IPC: request-permissions called');
-  await requestMissingPermissions();
+  const platform = await initPlatform();
+  await platform.permissions.requestMissing();
   logger.debug('Request permissions completed');
 });
 
@@ -154,9 +164,12 @@ ipcMain.handle('start-recording', async (_, config: RecordingConfig) => {
     throw new Error('Recording is already in progress');
   }
 
+  // Initialize platform
+  const platform = await initPlatform();
+
   // Check permissions first
   logger.debug('Checking permissions...');
-  const permissions = checkAllPermissions();
+  const permissions = platform.permissions.checkAll();
   logger.debug('Permissions check result:', permissions);
   if (!permissions.screenRecording || !permissions.accessibility || !permissions.microphone) {
     logger.error('Required permissions not granted');
@@ -201,7 +214,7 @@ ipcMain.handle('start-recording', async (_, config: RecordingConfig) => {
     // Hide system cursor FIRST before anything else
     // This ensures the cursor is fully hidden before FFmpeg starts capturing
     logger.info('Hiding system cursor...');
-    await hideSystemCursor();
+    await platform.cursor.hide();
 
     // Add extra buffer time after cursor hide to ensure it's fully processed
     // This helps prevent the cursor from briefly appearing at the start of recording
@@ -230,7 +243,7 @@ ipcMain.handle('start-recording', async (_, config: RecordingConfig) => {
     recordingState.isRecording = false;
     mouseTracker?.stopTracking();
     // Make sure cursor is visible if recording fails
-    await showSystemCursor();
+    await platform.cursor.show();
     // Disable content protection if recording failed
     if (mainWindow) {
       mainWindow.setContentProtection(false);
@@ -272,6 +285,9 @@ ipcMain.handle('stop-recording', async (_, config: {
   }
 
   try {
+    // Initialize platform
+    const platform = await initPlatform();
+
     // Stop screen recording
     logger.info('Stopping screen recording...');
     const videoPath = await screenCapture?.stopRecording();
@@ -279,7 +295,7 @@ ipcMain.handle('stop-recording', async (_, config: {
 
     // Show system cursor again
     logger.info('Showing system cursor...');
-    await ensureCursorVisible();
+    await platform.cursor.ensureVisible();
 
     // Disable content protection so window is visible again
     if (mainWindow) {

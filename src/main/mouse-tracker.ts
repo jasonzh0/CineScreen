@@ -1,6 +1,7 @@
 import { writeFileSync, readFileSync } from 'fs';
 import type { MouseEvent } from '../types';
-import { getMouseTelemetry, startTelemetryStream, stopTelemetryStream } from '../processing/mouse-telemetry';
+import { getPlatform } from '../platform';
+import type { Platform } from '../platform';
 import { createLogger } from '../utils/logger';
 
 const logger = createLogger('MouseTracker');
@@ -13,6 +14,7 @@ export class MouseTracker {
   private lastPosition = { x: 0, y: 0 };
   private lastButtonState = { left: false, right: false, middle: false };
   private lastCursorType: string = 'arrow';
+  private platform: Platform | null = null;
 
   /**
    * Start tracking mouse movements
@@ -28,12 +30,15 @@ export class MouseTracker {
     this.events = [];
     this.startTime = Date.now();
 
+    // Initialize platform
+    this.platform = await getPlatform();
+
     // Start streaming mode for high-frequency telemetry
-    startTelemetryStream();
+    this.platform.telemetry.start();
 
     // Get initial telemetry data
     try {
-      const initialTelemetry = await getMouseTelemetry();
+      const initialTelemetry = await this.platform.telemetry.getData();
       this.lastPosition = initialTelemetry.position;
       this.lastButtonState = { ...initialTelemetry.buttons };
       this.lastCursorType = initialTelemetry.cursor;
@@ -54,12 +59,12 @@ export class MouseTracker {
     logger.info(`Starting tracking interval: ${interval}ms (${1000 / interval}Hz)`);
 
     const loop = async () => {
-      if (!this.isTracking) return;
+      if (!this.isTracking || !this.platform) return;
 
       iterationCount++;
       try {
         // Single call to get all telemetry data
-        const telemetry = await getMouseTelemetry();
+        const telemetry = await this.platform.telemetry.getData();
         const buttonStates = telemetry.buttons;
         const cursorType = telemetry.cursor;
         const position = telemetry.position;
@@ -150,7 +155,9 @@ export class MouseTracker {
     }
 
     // Stop streaming mode
-    stopTelemetryStream();
+    if (this.platform) {
+      this.platform.telemetry.stop();
+    }
 
     const clickEvents = this.events.filter(e => e.action === 'down' || e.action === 'up');
     const moveEvents = this.events.filter(e => e.action === 'move');

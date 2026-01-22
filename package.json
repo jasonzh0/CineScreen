@@ -96,7 +96,7 @@
       "dist/**/*",
       "node_modules/**/*",
       "src/assets/**/*",
-      "src/windows/**/*"
+      "src/platform/win/scripts/**/*"
     ],
     "extraResources": [
       {
@@ -107,8 +107,8 @@
         ]
       },
       {
-        "from": "src/windows",
-        "to": "windows",
+        "from": "src/platform/win/scripts",
+        "to": "platform/win/scripts",
         "filter": [
           "**/*.js"
         ]

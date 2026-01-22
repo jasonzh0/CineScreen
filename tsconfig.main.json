@@ -7,7 +7,7 @@
     "noEmit": false,
     "types": ["node"]
   },
-  "include": ["src/main/**/*", "src/processing/**/*", "src/types/**/*"],
+  "include": ["src/main/**/*", "src/processing/**/*", "src/types/**/*", "src/platform/**/*", "src/utils/**/*"],
   "exclude": ["node_modules", "dist", "src/renderer"]
 }
 
