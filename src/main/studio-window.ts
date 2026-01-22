@@ -7,7 +7,7 @@ const logger = createLogger('StudioWindow');
 
 let studioWindow: BrowserWindow | null = null;
 
-const isDev = process.env.NODE_ENV === 'development' || !process.env.NODE_ENV || !require('electron').app.isPackaged;
+const isDev = !require('electron').app.isPackaged;
 
 /**
  * Create and show the studio window

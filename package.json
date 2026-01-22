@@ -1,28 +1,29 @@
 {
   "name": "cinescreen",
   "version": "1.1.1",
-  "description": "Screen recording software for Mac with cursor overlay",
+  "description": "Screen recording software with cursor overlay",
   "main": "dist/main/main/main.js",
   "scripts": {
     "dev": "concurrently \"npm run dev:main\" \"npm run dev:preload\" \"npm run dev:renderer\"",
     "dev:main": "tsc -w --project tsconfig.main.json",
     "dev:preload": "tsc -w --project tsconfig.preload.json",
     "dev:renderer": "vite",
-    "build": "npm run build:main && npm run build:preload && npm run build:renderer && npm run build:native",
+    "build": "npm run build:main && npm run build:preload && npm run build:renderer",
     "build:native": "cd native && chmod +x build.sh && ./build.sh",
-    "prebuild": "npm run build:native",
     "build:main": "tsc --project tsconfig.main.json",
     "build:preload": "tsc --project tsconfig.preload.json",
     "build:renderer": "vite build",
     "start": "electron .",
-    "package": "rm -rf release && electron-builder",
-    "package:mac": "rm -rf release && electron-builder --mac",
-    "clean": "rm -rf release && rm -rf dist"
+    "package": "electron-builder",
+    "package:mac": "electron-builder --mac",
+    "package:win": "electron-builder --win",
+    "clean": "node -e \"const fs=require('fs');['release','dist'].forEach(d=>{if(fs.existsSync(d))fs.rmSync(d,{recursive:true})})\""
   },
   "keywords": [
     "screen-recording",
     "electron",
-    "macos"
+    "macos",
+    "windows"
   ],
   "author": "",
   "license": "MIT",
@@ -41,7 +42,7 @@
     "@ffmpeg/ffmpeg": "^0.12.6",
     "@ffmpeg/util": "^0.12.1",
     "ffmpeg-static": "^5.2.0",
-    "mac-screen-capture-permissions": "^2.1.0",
+    "koffi": "^2.9.0",
     "sharp": "^0.34.5"
   },
   "build": {
@@ -63,12 +64,36 @@
         "NSMicrophoneUsageDescription": "This app needs microphone access for screen recording with audio.",
         "NSHighResolutionCapable": true
       },
+      "icon": "build/icon.png",
+      "extraResources": [
+        {
+          "from": "native/mouse-telemetry",
+          "to": ".",
+          "filter": [
+            "mouse-telemetry"
+          ]
+        },
+        {
+          "from": "native/cursor-control",
+          "to": ".",
+          "filter": [
+            "cursor-control"
+          ]
+        }
+      ]
+    },
+    "win": {
+      "target": [
+        "nsis",
+        "zip"
+      ],
       "icon": "build/icon.png"
     },
     "files": [
       "dist/**/*",
       "node_modules/**/*",
-      "src/assets/**/*"
+      "src/assets/**/*",
+      "src/windows/**/*"
     ],
     "extraResources": [
       {
@@ -79,24 +104,18 @@
         ]
       },
       {
-        "from": "native/mouse-telemetry",
-        "to": ".",
+        "from": "src/windows",
+        "to": "windows",
         "filter": [
-          "mouse-telemetry"
-        ]
-      },
-      {
-        "from": "native/cursor-control",
-        "to": ".",
-        "filter": [
-          "cursor-control"
+          "**/*.js"
         ]
       }
     ],
     "asarUnpack": [
       "node_modules/ffmpeg-static/**/*",
       "node_modules/sharp/**/*",
-      "node_modules/@img/**/*"
+      "node_modules/@img/**/*",
+      "node_modules/koffi/**/*"
     ],
     "directories": {
       "output": "release"

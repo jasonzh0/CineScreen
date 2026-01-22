@@ -27,7 +27,7 @@ let recordingState: RecordingState = {
 };
 let currentRecordingConfig: RecordingConfig | null = null;
 
-const isDev = process.env.NODE_ENV === 'development' || !app.isPackaged;
+const isDev = !app.isPackaged;
 
 function createWindow(): void {
   const preloadPath = isDev
@@ -234,9 +234,9 @@ ipcMain.handle('stop-recording', async (_, config: {
     // Old format - just CursorConfig
     cursorConfig = config as CursorConfig;
   }
-  
+
   logger.info('IPC: stop-recording called with config:', { cursorConfig, zoomConfig, mouseEffectsConfig });
-  
+
   if (!recordingState.isRecording) {
     logger.error('No recording in progress');
     throw new Error('No recording in progress');
@@ -294,14 +294,14 @@ ipcMain.handle('stop-recording', async (_, config: {
     // Copy video to final location (preserve original extension or use .mkv)
     const videoExtension = videoPath.split('.').pop() || 'mkv';
     const finalVideoPath = finalOutputPath.replace(/\.(mp4|mov|mkv|avi|webm)$/i, `.${videoExtension}`);
-    
+
     logger.info('Copying video to final location:', finalVideoPath);
     copyFileSync(videoPath, finalVideoPath);
     logger.info('Video copied successfully');
 
     // Export metadata alongside the final video
     logger.info('Exporting metadata...');
-    
+
     // Get screen dimensions for coordinate conversion (handles Retina displays)
     let screenDimensions: { width: number; height: number } | undefined;
     try {
@@ -311,7 +311,7 @@ ipcMain.handle('stop-recording', async (_, config: {
     } catch (error) {
       logger.warn('Could not get screen dimensions for metadata export:', error);
     }
-    
+
     const exporter = new MetadataExporter();
     // Apply mouse-to-video timing offset to sync cursor with video
     const mouseToVideoOffset = recordingState.mouseToVideoOffset || 0;
@@ -416,39 +416,39 @@ ipcMain.handle('select-metadata-file', async () => {
 // Studio window IPC handlers
 ipcMain.handle('open-studio', async (_, videoPath: string, metadataPath: string) => {
   logger.info('IPC: open-studio called', { videoPath, metadataPath });
-  
+
   if (!existsSync(videoPath)) {
     throw new Error(`Video file not found: ${videoPath}`);
   }
-  
+
   if (!existsSync(metadataPath)) {
     throw new Error(`Metadata file not found: ${metadataPath}`);
   }
-  
+
   createStudioWindow(videoPath, metadataPath);
   return { success: true };
 });
 
 ipcMain.handle('load-metadata', async (_, metadataPath: string): Promise<RecordingMetadata> => {
   logger.info('IPC: load-metadata called', { metadataPath });
-  
+
   if (!existsSync(metadataPath)) {
     throw new Error(`Metadata file not found: ${metadataPath}`);
   }
-  
+
   return MetadataExporter.loadMetadata(metadataPath);
 });
 
 ipcMain.handle('get-video-info', async (_, videoPath: string) => {
   logger.info('IPC: get-video-info called', { videoPath });
-  
+
   if (!existsSync(videoPath)) {
     throw new Error(`Video file not found: ${videoPath}`);
   }
-  
+
   const { getVideoDimensions } = await import('../processing/video-utils');
   const dimensions = await getVideoDimensions(videoPath);
-  
+
   // Get video duration and frame rate using FFprobe or similar
   // For now, return dimensions and estimate frame rate
   return {
@@ -461,11 +461,11 @@ ipcMain.handle('get-video-info', async (_, videoPath: string) => {
 
 ipcMain.handle('export-video-from-studio', async (_, videoPath: string, metadataPath: string, metadata: RecordingMetadata) => {
   logger.info('IPC: export-video-from-studio called', { videoPath, metadataPath });
-  
+
   if (!existsSync(videoPath)) {
     throw new Error(`Video file not found: ${videoPath}`);
   }
-  
+
   if (!existsSync(metadataPath)) {
     throw new Error(`Metadata file not found: ${metadataPath}`);
   }
