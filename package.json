@@ -45,6 +45,9 @@
     "koffi": "^2.9.0",
     "sharp": "^0.34.5"
   },
+  "optionalDependencies": {
+    "mac-screen-capture-permissions": "^3.0.0"
+  },
   "build": {
     "appId": "com.cinescreen.app",
     "productName": "CineScreen",

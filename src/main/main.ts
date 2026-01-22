@@ -103,6 +103,35 @@ app.on('before-quit', async () => {
   await ensureCursorVisible();
 });
 
+// Additional handlers to ensure cursor is restored on crashes/termination
+// This is especially important on Windows where ShowCursor uses reference counting
+const handleExit = async () => {
+  logger.info('Process exiting, ensuring cursor is visible...');
+  await ensureCursorVisible();
+};
+
+process.on('SIGINT', async () => {
+  await handleExit();
+  process.exit(0);
+});
+
+process.on('SIGTERM', async () => {
+  await handleExit();
+  process.exit(0);
+});
+
+process.on('uncaughtException', async (error) => {
+  logger.error('Uncaught exception:', error);
+  await handleExit();
+  process.exit(1);
+});
+
+process.on('unhandledRejection', async (reason) => {
+  logger.error('Unhandled rejection:', reason);
+  await handleExit();
+  process.exit(1);
+});
+
 // IPC Handlers
 
 ipcMain.handle('check-permissions', () => {

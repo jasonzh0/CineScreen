@@ -6,99 +6,31 @@ import { createLogger } from '../utils/logger';
 
 const logger = createLogger('CursorVisibility');
 
-let binaryPath: string | null = null;
+let macBinaryPath: string | null = null;
+let windowsScriptPath: string | null = null;
 
 // Platform detection
 const isWindows = process.platform === 'win32';
 
-// Windows: koffi cursor control (initialized lazily)
-let windowsKoffiInitialized = false;
-let ShowCursor: any = null;
-let SystemParametersInfoW: any = null;
-const SPI_SETCURSORS = 0x0057;
-
 /**
- * Initialize koffi for Windows cursor control
- */
-function initializeWindowsCursorControl(): boolean {
-  if (windowsKoffiInitialized) {
-    return true;
-  }
-
-  try {
-    // eslint-disable-next-line @typescript-eslint/no-var-requires
-    const koffi = require('koffi');
-    const user32 = koffi.load('user32.dll');
-
-    ShowCursor = user32.func('int ShowCursor(bool bShow)');
-    SystemParametersInfoW = user32.func('bool SystemParametersInfoW(uint uiAction, uint uiParam, pointer pvParam, uint fWinIni)');
-
-    windowsKoffiInitialized = true;
-    logger.info('[WINDOWS] Koffi cursor control initialized successfully');
-    return true;
-  } catch (error) {
-    logger.error('[WINDOWS] Failed to initialize koffi cursor control:', error);
-    return false;
-  }
-}
-
-/**
- * Hide cursor on Windows using koffi ShowCursor API
- */
-function hideWindowsCursor(): void {
-  if (!initializeWindowsCursorControl()) return;
-
-  try {
-    // ShowCursor uses reference counting - call multiple times to ensure hidden
-    // Cursor is hidden when internal counter < 0
-    for (let i = 0; i < 5; i++) {
-      ShowCursor(false);
-    }
-    logger.debug('[WINDOWS] Cursor hidden via ShowCursor');
-  } catch (error) {
-    logger.error('[WINDOWS] Error hiding cursor:', error);
-  }
-}
-
-/**
- * Show cursor on Windows using koffi ShowCursor API
- */
-function showWindowsCursor(): void {
-  if (!initializeWindowsCursorControl()) return;
-
-  try {
-    // Increment count multiple times to ensure cursor is visible
-    for (let i = 0; i < 10; i++) {
-      ShowCursor(true);
-    }
-    // Also restore system cursors as a fallback
-    SystemParametersInfoW(SPI_SETCURSORS, 0, null, 0);
-    logger.debug('[WINDOWS] Cursor shown via ShowCursor');
-  } catch (error) {
-    logger.error('[WINDOWS] Error showing cursor:', error);
-  }
-}
-
-/**
- * Find the path to the cursor-control binary (macOS only)
+ * Find the path to the cursor-control binary (macOS)
  * Works in both development and packaged environments
  */
-function findBinaryPath(): string {
-  if (binaryPath) {
-    return binaryPath;
+function findMacBinaryPath(): string {
+  if (macBinaryPath) {
+    return macBinaryPath;
   }
 
   const isDev = process.env.NODE_ENV === 'development' || !app.isPackaged;
 
-  // macOS: original logic
   if (isDev) {
     const projectRoot = join(__dirname, '../../..');
     const devPath = join(projectRoot, 'native', 'cursor-control');
 
     if (existsSync(devPath)) {
-      binaryPath = devPath;
-      logger.debug(`[BINARY] Found cursor-control binary in dev: ${binaryPath}`);
-      return binaryPath;
+      macBinaryPath = devPath;
+      logger.debug(`[BINARY] Found cursor-control binary in dev: ${macBinaryPath}`);
+      return macBinaryPath;
     }
 
     logger.warn(`[BINARY] cursor-control binary not found in dev at: ${devPath}`);
@@ -109,9 +41,9 @@ function findBinaryPath(): string {
       const resourcesPath = join(appBundlePath, 'Contents', 'Resources', 'cursor-control');
 
       if (existsSync(resourcesPath)) {
-        binaryPath = resourcesPath;
-        logger.debug(`[BINARY] Found cursor-control binary in packaged app Resources: ${binaryPath}`);
-        return binaryPath;
+        macBinaryPath = resourcesPath;
+        logger.debug(`[BINARY] Found cursor-control binary in packaged app Resources: ${macBinaryPath}`);
+        return macBinaryPath;
       }
 
       const exeDir = dirname(exePath);
@@ -119,9 +51,9 @@ function findBinaryPath(): string {
       const resourcesPath2 = join(appBundleFromExe, 'Resources', 'cursor-control');
 
       if (existsSync(resourcesPath2)) {
-        binaryPath = resourcesPath2;
-        logger.debug(`[BINARY] Found cursor-control binary in packaged app (method 2): ${binaryPath}`);
-        return binaryPath;
+        macBinaryPath = resourcesPath2;
+        logger.debug(`[BINARY] Found cursor-control binary in packaged app (method 2): ${macBinaryPath}`);
+        return macBinaryPath;
       }
 
       logger.warn(`[BINARY] cursor-control binary not found in packaged app. Tried: ${resourcesPath}, ${resourcesPath2}`);
@@ -137,8 +69,8 @@ function findBinaryPath(): string {
 
   for (const path of fallbackPaths) {
     if (existsSync(path)) {
-      binaryPath = path;
-      return binaryPath;
+      macBinaryPath = path;
+      return macBinaryPath;
     }
   }
 
@@ -146,12 +78,57 @@ function findBinaryPath(): string {
 }
 
 /**
- * Execute cursor control command using native binary (macOS only)
+ * Find the path to the cursor-control.js script (Windows)
+ * Works in both development and packaged environments
+ */
+function findWindowsScriptPath(): string {
+  if (windowsScriptPath) {
+    return windowsScriptPath;
+  }
+
+  const isDev = process.env.NODE_ENV === 'development' || !app.isPackaged;
+
+  if (isDev) {
+    const projectRoot = join(__dirname, '../../..');
+    const devPath = join(projectRoot, 'src', 'windows', 'cursor-control.js');
+
+    if (existsSync(devPath)) {
+      windowsScriptPath = devPath;
+      logger.debug(`[WINDOWS] Found cursor-control script in dev: ${windowsScriptPath}`);
+      return windowsScriptPath;
+    }
+
+    logger.warn(`[WINDOWS] cursor-control script not found in dev at: ${devPath}`);
+  } else {
+    // Packaged app - script should be in resources
+    const resourcesPath = join(process.resourcesPath || '', 'windows', 'cursor-control.js');
+
+    if (existsSync(resourcesPath)) {
+      windowsScriptPath = resourcesPath;
+      logger.debug(`[WINDOWS] Found cursor-control script in packaged app: ${windowsScriptPath}`);
+      return windowsScriptPath;
+    }
+
+    logger.warn(`[WINDOWS] cursor-control script not found in packaged app at: ${resourcesPath}`);
+  }
+
+  // Fallback
+  const fallbackPath = join(process.cwd(), 'src', 'windows', 'cursor-control.js');
+  if (existsSync(fallbackPath)) {
+    windowsScriptPath = fallbackPath;
+    return windowsScriptPath;
+  }
+
+  throw new Error('Windows cursor-control script not found.');
+}
+
+/**
+ * Execute cursor control command using native binary (macOS)
  */
 async function executeCursorCommandMac(command: 'hide' | 'show'): Promise<void> {
-  const binPath = findBinaryPath();
+  const binPath = findMacBinaryPath();
 
-  return new Promise((resolve, reject) => {
+  return new Promise((resolve) => {
     const binary = spawn(binPath, [command], { stdio: ['ignore', 'pipe', 'pipe'] });
 
     let stderr = '';
@@ -193,16 +170,67 @@ async function executeCursorCommandMac(command: 'hide' | 'show'): Promise<void> 
 }
 
 /**
+ * Execute cursor control command using Node.js script (Windows)
+ */
+async function executeCursorCommandWindows(command: 'hide' | 'show' | 'restore'): Promise<void> {
+  const scriptPath = findWindowsScriptPath();
+
+  return new Promise((resolve) => {
+    const proc = spawn('node', [scriptPath, command], { stdio: ['ignore', 'pipe', 'pipe'] });
+
+    let stderr = '';
+    let resolved = false;
+
+    proc.stderr?.on('data', (data) => {
+      stderr += data.toString();
+    });
+
+    proc.on('close', (code) => {
+      if (resolved) return;
+      resolved = true;
+      clearTimeout(timeoutId);
+
+      if (code === 0) {
+        logger.debug(`[WINDOWS] cursor-control ${command} succeeded`);
+        resolve();
+      } else {
+        logger.warn(`[WINDOWS] cursor-control ${command} exited with code ${code}: ${stderr}`);
+        resolve(); // Don't reject - cursor control is best-effort
+      }
+    });
+
+    proc.on('error', (error) => {
+      if (resolved) return;
+      resolved = true;
+      clearTimeout(timeoutId);
+      logger.warn(`[WINDOWS] cursor-control ${command} error:`, error);
+      resolve(); // Don't reject - cursor control is best-effort
+    });
+
+    const timeoutId = setTimeout(() => {
+      if (resolved) return;
+      resolved = true;
+      proc.kill();
+      logger.warn(`[WINDOWS] cursor-control ${command} timeout`);
+      resolve(); // Don't reject - cursor control is best-effort
+    }, 500); // 500ms timeout for cursor operations
+  });
+}
+
+/**
  * Hide the system cursor
- * Uses ShowCursor API on Windows, native binary on macOS
+ * Uses cursor-control.js script on Windows, native binary on macOS
  * Calls hide multiple times to ensure cursor is hidden (reference counting)
  */
 export async function hideSystemCursor(): Promise<void> {
   if (isWindows) {
-    hideWindowsCursor();
+    // Windows: Call hide multiple times due to reference counting
+    for (let i = 0; i < 5; i++) {
+      await executeCursorCommandWindows('hide');
+    }
     // Add a small delay to ensure the OS has processed the hide request
     await new Promise(resolve => setTimeout(resolve, 50));
-    logger.info('System cursor hidden (Windows koffi)');
+    logger.info('System cursor hidden (Windows 5x with delay)');
   } else {
     // macOS: Call hide multiple times to ensure it's truly hidden
     // This overcomes any race conditions with the reference count
@@ -223,8 +251,8 @@ export async function hideSystemCursor(): Promise<void> {
  */
 export async function showSystemCursor(): Promise<void> {
   if (isWindows) {
-    showWindowsCursor();
-    logger.info('System cursor shown (Windows koffi)');
+    await executeCursorCommandWindows('show');
+    logger.info('System cursor shown (Windows)');
   } else {
     await executeCursorCommandMac('show');
     logger.info('System cursor shown (macOS)');
@@ -235,12 +263,19 @@ export async function showSystemCursor(): Promise<void> {
  * Ensure cursor is visible (call this when app closes or recording ends)
  */
 export async function ensureCursorVisible(): Promise<void> {
-  // Call show multiple times to ensure cursor is visible
-  // (uses reference counting)
-  for (let i = 0; i < 5; i++) {
-    await showSystemCursor();
+  if (isWindows) {
+    // On Windows, call show multiple times and then restore as a final fallback
+    for (let i = 0; i < 10; i++) {
+      await executeCursorCommandWindows('show');
+    }
+    // Restore system cursors as a final fallback
+    await executeCursorCommandWindows('restore');
+    logger.info('System cursor restored (Windows)');
+  } else {
+    // Call show multiple times to ensure cursor is visible
+    // (uses reference counting)
+    for (let i = 0; i < 5; i++) {
+      await showSystemCursor();
+    }
   }
 }
-
-
-

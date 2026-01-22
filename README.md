@@ -80,7 +80,6 @@ CineScreen supports the following platforms:
 - **Vite** - Fast build tool for renderer process
 - **Koffi** - FFI bindings for Windows native APIs
 - **Native Swift** - Mouse button state tracking (macOS only)
-- **Docker** - Cross-platform build support using electron-builder
 
 ## Installation
 
@@ -109,7 +108,6 @@ CineScreen supports the following platforms:
 ### Prerequisites
 
 - **Node.js** 18+ and npm
-- **Docker** (for cross-platform builds)
 
 ### Local Development
 
@@ -134,18 +132,6 @@ npm run package:win
 
 # Clean build artifacts
 npm run clean
-```
-
-### Docker Build (Cross-Platform)
-
-Build for Windows from any platform using Docker:
-
-```bash
-# Build the Docker image
-docker build -t cinescreen .
-
-# Run the container to build Windows package
-docker run --rm -v $(pwd)/release:/project/release cinescreen
 ```
 
 ### Development Scripts

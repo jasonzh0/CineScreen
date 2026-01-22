@@ -1,0 +1,133 @@
+name: Build (Reusable)
+
+on:
+  workflow_call:
+    inputs:
+      upload-artifacts:
+        description: 'Upload build artifacts'
+        required: false
+        default: true
+        type: boolean
+    secrets:
+      APPLE_CERTIFICATE:
+        required: false
+      APPLE_CERTIFICATE_PASSWORD:
+        required: false
+      APPLE_ID:
+        required: false
+      APPLE_APP_SPECIFIC_PASSWORD:
+        required: false
+      APPLE_TEAM_ID:
+        required: false
+
+jobs:
+  build:
+    strategy:
+      matrix:
+        include:
+          - os: macos-latest
+            platform: mac
+          - os: windows-latest
+            platform: win
+
+    runs-on: ${{ matrix.os }}
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+          cache: 'npm'
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Setup code signing (macOS)
+        if: matrix.platform == 'mac' && secrets.APPLE_CERTIFICATE != ''
+        env:
+          APPLE_CERTIFICATE: ${{ secrets.APPLE_CERTIFICATE }}
+          APPLE_CERTIFICATE_PASSWORD: ${{ secrets.APPLE_CERTIFICATE_PASSWORD }}
+        run: |
+          # Create keychain
+          security create-keychain -p "build" build.keychain
+          security default-keychain -s build.keychain
+          security unlock-keychain -p "build" build.keychain
+          security set-keychain-settings -t 3600 -u build.keychain
+
+          # Download and import Apple intermediate certificates
+          curl -sO https://www.apple.com/certificateauthority/DeveloperIDG2CA.cer
+          curl -sO https://www.apple.com/certificateauthority/AppleWWDRCAG3.cer
+          security import DeveloperIDG2CA.cer -k build.keychain -T /usr/bin/codesign
+          security import AppleWWDRCAG3.cer -k build.keychain -T /usr/bin/codesign
+          rm -f DeveloperIDG2CA.cer AppleWWDRCAG3.cer
+
+          # Import developer certificate
+          echo "$APPLE_CERTIFICATE" | base64 --decode > $RUNNER_TEMP/certificate.p12
+          security import $RUNNER_TEMP/certificate.p12 -k build.keychain -P "$APPLE_CERTIFICATE_PASSWORD" -T /usr/bin/codesign -T /usr/bin/security
+          security set-key-partition-list -S apple-tool:,apple:,codesign: -s -k "build" build.keychain
+          security list-keychains -d user -s build.keychain $(security list-keychains -d user | tr -d '"')
+          rm $RUNNER_TEMP/certificate.p12
+
+          # Verify certificate import
+          echo "=== Signing identities ==="
+          security find-identity -v -p codesigning
+
+      - name: Build native module (macOS)
+        if: matrix.platform == 'mac'
+        run: npm run build:native
+
+      - name: Build application
+        run: npm run build
+
+      - name: Sign native binary (macOS)
+        if: matrix.platform == 'mac' && secrets.APPLE_CERTIFICATE != ''
+        env:
+          APPLE_CERTIFICATE: ${{ secrets.APPLE_CERTIFICATE }}
+        run: |
+          security unlock-keychain -p "build" build.keychain
+
+          IDENTITY=$(security find-identity -v -p codesigning | grep "Developer ID Application" | head -1 | awk -F'"' '{print $2}')
+
+          if [ -n "$IDENTITY" ]; then
+            if [ -f "native/mouse-telemetry" ]; then
+              echo "Signing native/mouse-telemetry with: $IDENTITY"
+              codesign --force --options runtime --timestamp --sign "$IDENTITY" native/mouse-telemetry
+              codesign -vv native/mouse-telemetry
+            fi
+            if [ -f "native/cursor-control" ]; then
+              echo "Signing native/cursor-control with: $IDENTITY"
+              codesign --force --options runtime --timestamp --sign "$IDENTITY" native/cursor-control
+              codesign -vv native/cursor-control
+            fi
+          else
+            echo "Skipping native binary signing (no identity found)"
+          fi
+
+      - name: Package (macOS)
+        if: matrix.platform == 'mac'
+        timeout-minutes: 30
+        env:
+          CSC_KEYCHAIN: build.keychain
+          CSC_KEYCHAIN_PASSWORD: build
+          APPLE_ID: ${{ secrets.APPLE_ID }}
+          APPLE_APP_SPECIFIC_PASSWORD: ${{ secrets.APPLE_APP_SPECIFIC_PASSWORD }}
+          APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
+        run: |
+          if [ -f "$HOME/Library/Keychains/build.keychain-db" ]; then
+            security unlock-keychain -p "build" build.keychain
+          fi
+          npm run package:mac -- --publish never
+
+      - name: Package (Windows)
+        if: matrix.platform == 'win'
+        run: npm run package:win
+
+      - name: Upload artifacts
+        if: inputs.upload-artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: CineScreen-${{ matrix.platform }}
+          path: release/*
