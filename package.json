@@ -1,6 +1,6 @@
 {
   "name": "cinescreen",
-  "version": "1.1.1",
+  "version": "1.2.2",
   "description": "Screen recording software with cursor overlay",
   "main": "dist/main/main/main.js",
   "scripts": {
@@ -17,7 +17,8 @@
     "package": "electron-builder",
     "package:mac": "electron-builder --mac",
     "package:win": "electron-builder --win",
-    "clean": "node -e \"const fs=require('fs');['release','dist'].forEach(d=>{if(fs.existsSync(d))fs.rmSync(d,{recursive:true})})\""
+    "clean": "node -e \"const fs=require('fs');['release','dist'].forEach(d=>{if(fs.existsSync(d))fs.rmSync(d,{recursive:true})})\"",
+    "prepare": "husky"
   },
   "keywords": [
     "screen-recording",
@@ -35,6 +36,7 @@
     "concurrently": "^8.2.2",
     "electron": "^39.2.7",
     "electron-builder": "^24.9.1",
+    "husky": "^9.1.7",
     "typescript": "^5.3.2",
     "vite": "^7.2.7"
   },

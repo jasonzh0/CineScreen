@@ -1,0 +1,27 @@
+# Validate that tags match package.json version
+
+PACKAGE_VERSION=$(node -p "require('./package.json').version" 2>/dev/null)
+
+if [ -z "$PACKAGE_VERSION" ]; then
+    echo "Error: Could not read version from package.json"
+    exit 1
+fi
+
+while read local_ref local_sha remote_ref remote_sha; do
+    if [[ "$local_ref" == refs/tags/* ]]; then
+        TAG_NAME="${local_ref#refs/tags/}"
+        TAG_VERSION="${TAG_NAME#v}"
+
+        if [ "$TAG_VERSION" != "$PACKAGE_VERSION" ]; then
+            echo "Error: Tag version mismatch!"
+            echo "  Tag:             $TAG_NAME (version: $TAG_VERSION)"
+            echo "  package.json:    $PACKAGE_VERSION"
+            echo ""
+            echo "Please update package.json to version $TAG_VERSION before pushing this tag,"
+            echo "or create a tag that matches the current version: v$PACKAGE_VERSION"
+            exit 1
+        fi
+
+        echo "Tag $TAG_NAME matches package.json version $PACKAGE_VERSION"
+    fi
+done
