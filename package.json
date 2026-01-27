@@ -30,13 +30,18 @@
   "license": "MIT",
   "devDependencies": {
     "@electron/notarize": "^3.1.1",
+    "@tailwindcss/vite": "^4.1.18",
     "@types/node": "^20.10.0",
+    "@types/react": "^19.2.10",
+    "@types/react-dom": "^19.2.3",
     "@typescript-eslint/eslint-plugin": "^6.13.0",
     "@typescript-eslint/parser": "^6.13.0",
+    "@vitejs/plugin-react": "^5.1.2",
     "concurrently": "^8.2.2",
     "electron": "^39.2.7",
     "electron-builder": "^24.9.1",
     "husky": "^9.1.7",
+    "tailwindcss": "^4.1.18",
     "typescript": "^5.3.2",
     "vite": "^7.2.7"
   },
@@ -45,6 +50,8 @@
     "@ffmpeg/util": "^0.12.1",
     "ffmpeg-static": "^5.2.0",
     "koffi": "^2.9.0",
+    "react": "^19.2.4",
+    "react-dom": "^19.2.4",
     "sharp": "^0.34.5"
   },
   "optionalDependencies": {

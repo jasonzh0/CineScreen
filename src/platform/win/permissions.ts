@@ -6,6 +6,11 @@
 
 import { createLogger } from '../../utils/logger';
 import type { Permissions } from '../types';
+import type {
+  DetailedPermissionStatus,
+  PermissionRequestResult,
+  SystemPreferencesPanel,
+} from '../../types';
 
 const logger = createLogger('WinPermissions');
 
@@ -61,5 +66,49 @@ export const permissions: Permissions = {
   async requestMissing(): Promise<void> {
     // No-op on Windows - permissions are implicit
     logger.info('No permissions to request on Windows');
+  },
+
+  getDetailedStatus(): DetailedPermissionStatus {
+    // Windows doesn't require explicit permissions, so everything is granted
+    return {
+      screenRecording: { state: 'granted', canRequest: false },
+      accessibility: { state: 'granted', canRequest: false },
+      microphone: { state: 'granted', canRequest: false },
+    };
+  },
+
+  async requestScreenRecordingWithResult(): Promise<PermissionRequestResult> {
+    // Screen recording doesn't require permission on Windows
+    logger.info('Screen recording permission not needed on Windows');
+    return {
+      success: true,
+      newState: 'granted',
+      action: 'already-granted',
+    };
+  },
+
+  async requestAccessibilityWithResult(): Promise<PermissionRequestResult> {
+    // Accessibility doesn't require permission on Windows
+    logger.info('Accessibility permission not needed on Windows');
+    return {
+      success: true,
+      newState: 'granted',
+      action: 'already-granted',
+    };
+  },
+
+  async requestMicrophoneWithResult(): Promise<PermissionRequestResult> {
+    // Windows handles microphone permissions automatically when accessing the device
+    logger.info('Microphone permission handled by OS on Windows');
+    return {
+      success: true,
+      newState: 'granted',
+      action: 'already-granted',
+    };
+  },
+
+  async openSystemPreferences(_panel: SystemPreferencesPanel): Promise<void> {
+    // On Windows, we could open Settings app but permissions are implicit
+    logger.info('System Preferences not needed on Windows');
   },
 };

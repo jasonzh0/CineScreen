@@ -1,5 +1,15 @@
 import { contextBridge, ipcRenderer } from 'electron';
-import type { RecordingConfig, CursorConfig, ZoomConfig, MouseEffectsConfig, PermissionStatus, RecordingState } from '../types';
+import type {
+  RecordingConfig,
+  CursorConfig,
+  ZoomConfig,
+  MouseEffectsConfig,
+  PermissionStatus,
+  RecordingState,
+  DetailedPermissionStatus,
+  PermissionRequestResult,
+  SystemPreferencesPanel,
+} from '../types';
 import type { RecordingMetadata } from '../types/metadata';
 
 const electronAPI = {
@@ -8,6 +18,15 @@ const electronAPI = {
 
   requestPermissions: (): Promise<void> =>
     ipcRenderer.invoke('request-permissions'),
+
+  getDetailedPermissions: (): Promise<DetailedPermissionStatus> =>
+    ipcRenderer.invoke('get-detailed-permissions'),
+
+  requestPermission: (type: 'screen-recording' | 'accessibility' | 'microphone'): Promise<PermissionRequestResult> =>
+    ipcRenderer.invoke('request-permission', type),
+
+  openSystemPreferences: (panel: SystemPreferencesPanel): Promise<void> =>
+    ipcRenderer.invoke('open-system-preferences', panel),
 
   startRecording: (config: RecordingConfig): Promise<{ success: boolean }> =>
     ipcRenderer.invoke('start-recording', config),
@@ -70,6 +89,25 @@ const electronAPI = {
 
   reloadMetadata: (filePath: string): Promise<{ success: boolean; data?: RecordingMetadata }> =>
     ipcRenderer.invoke('reload-metadata', filePath),
+
+  // Recording bar events (main → renderer)
+  onRecordingCompleted: (callback: (data: { success: boolean; outputPath: string; metadataPath?: string }) => void) => {
+    ipcRenderer.on('recording-completed', (_event, data) => callback(data));
+  },
+
+  onRestartRecording: (callback: (config: RecordingConfig) => void) => {
+    ipcRenderer.on('restart-recording', (_event, config) => callback(config));
+  },
+
+  onRecordingCancelled: (callback: () => void) => {
+    ipcRenderer.on('recording-cancelled', () => callback());
+  },
+
+  removeRecordingBarListeners: () => {
+    ipcRenderer.removeAllListeners('recording-completed');
+    ipcRenderer.removeAllListeners('restart-recording');
+    ipcRenderer.removeAllListeners('recording-cancelled');
+  },
 };
 
 contextBridge.exposeInMainWorld('electronAPI', electronAPI);

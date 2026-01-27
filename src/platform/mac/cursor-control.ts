@@ -17,9 +17,10 @@ let binaryPath: string | null = null;
 /**
  * Find the path to the cursor-control binary
  * Works in both development and packaged environments
+ * Returns null if not found (cursor hiding will be skipped)
  */
-function findBinaryPath(): string {
-  if (binaryPath) {
+function findBinaryPath(): string | null {
+  if (binaryPath !== null) {
     return binaryPath;
   }
 
@@ -76,7 +77,9 @@ function findBinaryPath(): string {
     }
   }
 
-  throw new Error('cursor-control binary not found. Run: cd native && ./build.sh');
+  // Return null instead of throwing - cursor hiding is optional
+  logger.warn('cursor-control binary not found. System cursor will remain visible during recording.');
+  return null;
 }
 
 /**
@@ -85,17 +88,22 @@ function findBinaryPath(): string {
 async function executeCursorCommand(command: 'hide' | 'show'): Promise<void> {
   const binPath = findBinaryPath();
 
+  // If binary not found, skip cursor control silently
+  if (binPath === null) {
+    return;
+  }
+
   return new Promise((resolve) => {
     const binary = spawn(binPath, [command], { stdio: ['ignore', 'pipe', 'pipe'] });
 
     let stderr = '';
     let resolved = false;
 
-    binary.stderr?.on('data', (data) => {
+    binary.stderr?.on('data', (data: Buffer) => {
       stderr += data.toString();
     });
 
-    binary.on('close', (code) => {
+    binary.on('close', (code: number | null) => {
       if (resolved) return;
       resolved = true;
       clearTimeout(timeoutId);
@@ -108,7 +116,7 @@ async function executeCursorCommand(command: 'hide' | 'show'): Promise<void> {
       }
     });
 
-    binary.on('error', (error) => {
+    binary.on('error', (error: Error) => {
       if (resolved) return;
       resolved = true;
       clearTimeout(timeoutId);

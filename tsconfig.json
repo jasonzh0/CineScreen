@@ -6,14 +6,15 @@
       "ES2020",
       "DOM"
     ],
-    "moduleResolution": "node",
+    "moduleResolution": "bundler",
     "strict": true,
     "esModuleInterop": true,
     "skipLibCheck": true,
     "forceConsistentCasingInFileNames": true,
     "resolveJsonModule": true,
     "isolatedModules": true,
-    "noEmit": true
+    "noEmit": true,
+    "jsx": "react-jsx"
   },
   "include": [
     "src/**/*",

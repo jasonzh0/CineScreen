@@ -1,0 +1,186 @@
+@import "tailwindcss";
+
+@theme {
+  /* Dark theme colors */
+  --color-bg-primary: #1a1a1a;
+  --color-bg-secondary: #161616;
+  --color-bg-tertiary: #141414;
+  --color-bg-elevated: rgba(255, 255, 255, 0.02);
+
+  /* Text colors */
+  --color-text-primary: #e0e0e0;
+  --color-text-secondary: #b0b0b0;
+  --color-text-muted: #808080;
+  --color-text-disabled: #666666;
+
+  /* Accent colors */
+  --color-accent: #6aabdf;
+  --color-success: #6fcf73;
+  --color-danger: #f47066;
+  --color-warning: #e0a800;
+
+  /* Border colors */
+  --color-border-primary: rgba(255, 255, 255, 0.08);
+  --color-border-secondary: rgba(255, 255, 255, 0.04);
+
+  /* Recording colors */
+  --color-record-start: #ff4d4d;
+  --color-record-end: #e63939;
+  --color-record-hover-start: #ff6666;
+  --color-record-hover-end: #ff4d4d;
+
+  /* Zoom section colors */
+  --color-zoom-bg: rgba(180, 120, 110, 0.25);
+  --color-zoom-border: #c47a6e;
+
+  /* Video section colors */
+  --color-video-bg: rgba(74, 130, 180, 0.25);
+  --color-video-border: #5a9fd4;
+}
+
+/* Base styles - only box-sizing, let Tailwind handle margin/padding */
+*,
+*::before,
+*::after {
+  box-sizing: border-box;
+}
+
+html, body {
+  font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Oxygen, Ubuntu, Cantarell, sans-serif;
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+  background-color: #1a1a1a;
+  color: #e0e0e0;
+}
+
+/* Custom scrollbar styling */
+::-webkit-scrollbar {
+  width: 6px;
+  height: 6px;
+}
+
+::-webkit-scrollbar-track {
+  background: transparent;
+}
+
+::-webkit-scrollbar-thumb {
+  background: rgba(255, 255, 255, 0.1);
+  border-radius: 3px;
+}
+
+::-webkit-scrollbar-thumb:hover {
+  background: rgba(255, 255, 255, 0.15);
+}
+
+/* Pulse animation for recording indicator */
+@keyframes pulse {
+  0%, 100% {
+    transform: scale(1);
+    opacity: 1;
+  }
+  50% {
+    transform: scale(1.3);
+    opacity: 0;
+  }
+}
+
+.animate-pulse-recording {
+  animation: pulse 2s ease-in-out infinite;
+}
+
+/* Toast animations */
+@keyframes slide-in-right {
+  from {
+    transform: translateX(100%);
+    opacity: 0;
+  }
+  to {
+    transform: translateX(0);
+    opacity: 1;
+  }
+}
+
+@keyframes slide-out-right {
+  from {
+    transform: translateX(0);
+    opacity: 1;
+  }
+  to {
+    transform: translateX(100%);
+    opacity: 0;
+  }
+}
+
+.animate-slide-in-right {
+  animation: slide-in-right 0.3s ease forwards;
+}
+
+.animate-slide-out-right {
+  animation: slide-out-right 0.3s ease forwards;
+}
+
+/* Range input styling */
+input[type="range"] {
+  -webkit-appearance: none;
+  appearance: none;
+  background: transparent;
+  cursor: pointer;
+}
+
+input[type="range"]::-webkit-slider-runnable-track {
+  background: rgba(255, 255, 255, 0.08);
+  height: 6px;
+  border-radius: 3px;
+}
+
+input[type="range"]::-webkit-slider-thumb {
+  -webkit-appearance: none;
+  appearance: none;
+  width: 16px;
+  height: 16px;
+  background: #ffffff;
+  border-radius: 50%;
+  cursor: pointer;
+  box-shadow: 0 1px 4px rgba(0, 0, 0, 0.3);
+  margin-top: -5px;
+  transition: transform 0.15s ease;
+}
+
+input[type="range"]::-webkit-slider-thumb:hover {
+  transform: scale(1.1);
+}
+
+input[type="range"]::-webkit-slider-thumb:active {
+  transform: scale(0.95);
+}
+
+/* Color input styling */
+input[type="color"] {
+  -webkit-appearance: none;
+  appearance: none;
+  background: rgba(0, 0, 0, 0.2);
+  border: 1px solid rgba(255, 255, 255, 0.08);
+  border-radius: 6px;
+  cursor: pointer;
+}
+
+input[type="color"]::-webkit-color-swatch-wrapper {
+  padding: 2px;
+}
+
+input[type="color"]::-webkit-color-swatch {
+  border-radius: 4px;
+  border: none;
+}
+
+/* Checkbox styling */
+input[type="checkbox"] {
+  accent-color: #6aabdf;
+}
+
+/* Select dropdown styling */
+select {
+  background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='12' height='12' viewBox='0 0 12 12'%3E%3Cpath fill='%23808080' d='M6 8L2 4h8z'/%3E%3C/svg%3E");
+  background-repeat: no-repeat;
+  background-position: right 12px center;
+}

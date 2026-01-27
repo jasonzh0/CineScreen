@@ -1,57 +1,11 @@
 <!DOCTYPE html>
 <html lang="en">
-
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <title>Studio - CineScreen</title>
-  <link rel="stylesheet" href="./styles.css">
   <style>
-    body {
-      margin: 0;
-      padding: 0;
-      font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Oxygen, Ubuntu, Cantarell, sans-serif;
-      background: #1a1a1a;
-      color: #e0e0e0;
-      overflow: hidden;
-    }
-
-    /* Ensure content is visible even if JS fails */
-    #studio-container {
-      display: flex !important;
-      visibility: visible !important;
-      opacity: 1 !important;
-    }
-
-    #studio-container {
-      display: flex;
-      flex-direction: column;
-      height: 100vh;
-    }
-
-    #toolbar {
-      background: #161616;
-      padding: 10px 16px;
-      border-bottom: 1px solid rgba(255, 255, 255, 0.06);
-      display: flex;
-      align-items: center;
-      gap: 12px;
-    }
-
-    .toolbar-left {
-      display: flex;
-      align-items: center;
-      gap: 6px;
-    }
-
-
-    .toolbar-right {
-      display: flex;
-      align-items: center;
-      gap: 12px;
-      margin-left: auto;
-    }
-
+    /* Toolbar button styles - used across studio */
     .toolbar-button {
       background: rgba(255, 255, 255, 0.06);
       border: 1px solid rgba(255, 255, 255, 0.08);
@@ -66,28 +20,20 @@
       gap: 6px;
       transition: all 0.15s ease;
     }
-
     .toolbar-button:hover {
       background: rgba(255, 255, 255, 0.1);
       color: #d0d0d0;
       border-color: rgba(255, 255, 255, 0.12);
     }
-
     .toolbar-button:active {
       background: rgba(255, 255, 255, 0.04);
     }
-
     .toolbar-button:disabled {
       opacity: 0.4;
       cursor: not-allowed;
     }
 
-    .playback-controls {
-      display: flex;
-      align-items: center;
-      gap: 8px;
-    }
-
+    /* Playback button styles */
     .playback-button {
       background: transparent;
       border: none;
@@ -100,164 +46,12 @@
       border-radius: 6px;
       transition: all 0.15s ease;
     }
-
     .playback-button:hover {
       background: rgba(255, 255, 255, 0.06);
       color: #a0a0a0;
     }
 
-    .playback-button svg {
-      width: 18px;
-      height: 18px;
-    }
-
-    .play-button {
-      width: 44px;
-      height: 44px;
-      border-radius: 50%;
-      background: #e8e8e8;
-      color: #1a1a1a;
-      border: none;
-      cursor: pointer;
-      display: flex;
-      align-items: center;
-      justify-content: center;
-      padding: 0;
-      transition: all 0.15s ease;
-    }
-
-    .play-button:hover {
-      transform: scale(1.06);
-      background: #fff;
-      box-shadow: 0 2px 12px rgba(255, 255, 255, 0.2);
-    }
-
-    .play-button:active {
-      transform: scale(0.96);
-    }
-
-    .play-button svg {
-      width: 18px;
-      height: 18px;
-      display: block;
-    }
-
-    .play-button .play-icon {
-      margin-left: 2px;
-    }
-
-    .play-button.playing .play-icon {
-      display: none;
-    }
-
-    .play-button.playing .pause-icon {
-      display: block;
-    }
-
-    .play-button:not(.playing) .play-icon {
-      display: block;
-    }
-
-    .play-button:not(.playing) .pause-icon {
-      display: none;
-    }
-
-    #main-content {
-      display: flex;
-      flex: 1;
-      overflow: hidden;
-    }
-
-    #video-preview-container {
-      flex: 1;
-      display: flex;
-      flex-direction: column;
-      background: #000;
-      position: relative;
-    }
-
-    #video-controls {
-      background: #141414;
-      padding: 14px 20px;
-      border-top: 1px solid rgba(255, 255, 255, 0.04);
-      display: flex;
-      justify-content: center;
-      align-items: center;
-      gap: 6px;
-    }
-
-    #video-preview-wrapper {
-      flex: 1;
-      display: flex;
-      align-items: center;
-      justify-content: center;
-      position: relative;
-      overflow: hidden;
-    }
-
-    #video-element {
-      max-width: 100%;
-      max-height: 100%;
-      display: block;
-    }
-
-    #cursor-canvas {
-      position: absolute;
-      top: 0;
-      left: 0;
-      pointer-events: none;
-    }
-
-    #zoom-canvas {
-      position: absolute;
-      top: 0;
-      left: 0;
-      pointer-events: none;
-    }
-
-    .custom-play-pause-button {
-      display: none;
-      /* Hide the overlay button, using toolbar controls instead */
-    }
-
-    #sidebar {
-      width: 280px;
-      background: #161616;
-      border-left: 1px solid rgba(255, 255, 255, 0.06);
-      display: flex;
-      flex-direction: column;
-      overflow-y: auto;
-    }
-
-    .sidebar-section {
-      padding: 16px;
-      border-bottom: 1px solid rgba(255, 255, 255, 0.04);
-    }
-
-    .sidebar-section h3 {
-      margin: 0 0 14px 0;
-      font-size: 11px;
-      font-weight: 600;
-      text-transform: uppercase;
-      letter-spacing: 0.8px;
-      color: #666;
-    }
-
-    .settings-group {
-      margin-bottom: 20px;
-    }
-
-    .settings-group:last-child {
-      margin-bottom: 0;
-    }
-
-    .settings-group h4 {
-      margin: 0 0 12px 0;
-      font-size: 12px;
-      font-weight: 500;
-      color: #888;
-    }
-
+    /* Setting item styles */
     .setting-item {
       margin-bottom: 10px;
       display: flex;
@@ -265,17 +59,14 @@
       gap: 10px;
       font-size: 12px;
     }
-
     .setting-item:last-child {
       margin-bottom: 0;
     }
-
     .setting-item label {
       min-width: 70px;
       color: #777;
       font-size: 11px;
     }
-
     .setting-item input[type="range"] {
       flex: 1;
       height: 3px;
@@ -284,7 +75,6 @@
       outline: none;
       -webkit-appearance: none;
     }
-
     .setting-item input[type="range"]::-webkit-slider-thumb {
       -webkit-appearance: none;
       width: 12px;
@@ -292,529 +82,23 @@
       background: #6aabdf;
       border-radius: 50%;
       cursor: pointer;
-      transition: transform 0.1s ease;
     }
-
-    .setting-item input[type="range"]::-webkit-slider-thumb:hover {
-      transform: scale(1.15);
-    }
-
-    .setting-item input[type="range"]::-moz-range-thumb {
-      width: 12px;
-      height: 12px;
-      background: #6aabdf;
-      border-radius: 50%;
-      cursor: pointer;
-      border: none;
-    }
-
-    .setting-item input[type="color"] {
-      width: 36px;
-      height: 24px;
-      border: 1px solid rgba(255, 255, 255, 0.1);
-      border-radius: 4px;
-      cursor: pointer;
-      background: transparent;
-    }
-
-    .setting-item select {
-      flex: 1;
-      background: rgba(0, 0, 0, 0.2);
-      border: 1px solid rgba(255, 255, 255, 0.08);
-      color: #a0a0a0;
-      padding: 6px 10px;
-      border-radius: 4px;
-      font-size: 11px;
-      cursor: pointer;
-    }
-
     .setting-item input[type="checkbox"] {
       width: 14px;
       height: 14px;
       cursor: pointer;
       accent-color: #6aabdf;
     }
-
     .setting-item span {
       min-width: 36px;
       color: #666;
       font-size: 11px;
       text-align: right;
     }
-
-    #timeline-container {
-      background: #141414;
-      border-top: 1px solid rgba(255, 255, 255, 0.06);
-      height: 200px;
-      display: flex;
-      flex-direction: column;
-    }
-
-    #timeline-header {
-      padding: 12px 20px;
-      border-bottom: 1px solid rgba(255, 255, 255, 0.04);
-      display: flex;
-      align-items: center;
-      justify-content: space-between;
-      background: #161616;
-    }
-
-    #timeline-header > span:first-child {
-      font-size: 11px;
-      font-weight: 600;
-      text-transform: uppercase;
-      letter-spacing: 0.8px;
-      color: #666;
-    }
-
-    #timeline {
-      flex: 1;
-      position: relative;
-      overflow-x: auto;
-      overflow-y: hidden;
-      background: #141414;
-      cursor: pointer;
-    }
-
-    .timeline-ruler {
-      position: absolute;
-      top: 0;
-      left: 0;
-      right: 0;
-      height: 28px;
-      border-bottom: 1px solid rgba(255, 255, 255, 0.04);
-      background: #161616;
-    }
-
-    .timeline-rows {
-      position: absolute;
-      top: 28px;
-      left: 0;
-      right: 0;
-      bottom: 0;
-      display: flex;
-      flex-direction: column;
-    }
-
-    .timeline-row {
-      flex: 1;
-      position: relative;
-      border-bottom: 1px solid rgba(255, 255, 255, 0.04);
-      min-height: 60px;
-      background: #181818;
-    }
-
-    .timeline-row:last-child {
-      border-bottom: none;
-    }
-
-    .timeline-row-label {
-      position: absolute;
-      left: 0;
-      top: 0;
-      bottom: 0;
-      width: 80px;
-      background: #161616;
-      border-right: 1px solid rgba(255, 255, 255, 0.04);
-      display: flex;
-      align-items: center;
-      padding-left: 16px;
-      font-size: 11px;
-      font-weight: 500;
-      color: #666;
-      z-index: 5;
-    }
-
-    .timeline-row-content {
-      position: absolute;
-      left: 80px;
-      top: 0;
-      right: 0;
-      bottom: 0;
-    }
-
-    .zoom-section {
-      position: absolute;
-      height: calc(100% - 16px);
-      top: 8px;
-      background: rgba(180, 120, 110, 0.25);
-      border: none;
-      border-left: 3px solid #c47a6e;
-      border-right: 3px solid #c47a6e;
-      border-radius: 4px;
-      cursor: move;
-      display: flex;
-      align-items: center;
-      justify-content: center;
-      font-size: 11px;
-      font-weight: 500;
-      color: rgba(255, 255, 255, 0.7);
-      user-select: none;
-      transition: all 0.15s ease;
-    }
-
-    .zoom-section:hover {
-      background: rgba(180, 120, 110, 0.35);
-    }
-
-    .zoom-section.dragging {
-      background: rgba(180, 120, 110, 0.45);
-      z-index: 20;
-    }
-
-    .zoom-section.selected {
-      background: rgba(180, 120, 110, 0.4);
-      box-shadow: 0 0 0 2px rgba(196, 122, 110, 0.4);
-    }
-
-    .zoom-section.selected:hover {
-      background: rgba(180, 120, 110, 0.5);
-    }
-
-    .zoom-section-handle {
-      position: absolute;
-      top: 0;
-      bottom: 0;
-      width: 3px;
-      background: #c47a6e;
-      cursor: ew-resize;
-      transition: background 0.15s ease;
-    }
-
-    .zoom-section-handle.left {
-      left: 0;
-      border-radius: 4px 0 0 4px;
-    }
-
-    .zoom-section-handle.right {
-      right: 0;
-      border-radius: 0 4px 4px 0;
-    }
-
-    .zoom-section-handle:hover {
-      background: #d48a7e;
-    }
-
-    .video-section {
-      position: absolute;
-      height: calc(100% - 16px);
-      top: 8px;
-      background: rgba(74, 130, 180, 0.25);
-      border: none;
-      border-left: 3px solid #5a9fd4;
-      border-radius: 4px;
-      display: flex;
-      align-items: center;
-      padding-left: 12px;
-      font-size: 11px;
-      font-weight: 500;
-      color: rgba(255, 255, 255, 0.7);
-      user-select: none;
-      pointer-events: none;
-    }
-
-    .playhead {
-      position: absolute;
-      top: 0;
-      bottom: 0;
-      width: 1px;
-      background: #6aabdf;
-      pointer-events: none;
-      z-index: 10;
-    }
-
-    .playhead::before {
-      content: '';
-      position: absolute;
-      top: 0;
-      left: -5px;
-      width: 11px;
-      height: 11px;
-      background: #6aabdf;
-      border-radius: 0 0 3px 3px;
-      clip-path: polygon(50% 100%, 0 0, 100% 0);
-    }
-
-    #status-bar {
-      background: #161616;
-      padding: 10px 20px;
-      border-top: 1px solid rgba(255, 255, 255, 0.04);
-      font-size: 12px;
-      color: #666;
-    }
-
-    #export-progress-container {
-      margin-top: 8px;
-    }
-
-    #export-progress-bar {
-      height: 3px;
-      background: rgba(255, 255, 255, 0.08);
-      border-radius: 2px;
-      overflow: hidden;
-      margin-bottom: 6px;
-    }
-
-    #export-progress-fill {
-      height: 100%;
-      background: #6aabdf;
-      width: 0%;
-      transition: width 0.3s ease-out;
-    }
-
-    #export-progress-text {
-      font-size: 11px;
-      color: #666;
-    }
-
-    /* Scrollbar styling */
-    #sidebar::-webkit-scrollbar {
-      width: 6px;
-    }
-
-    #sidebar::-webkit-scrollbar-track {
-      background: transparent;
-    }
-
-    #sidebar::-webkit-scrollbar-thumb {
-      background: rgba(255, 255, 255, 0.1);
-      border-radius: 3px;
-    }
-
-    #sidebar::-webkit-scrollbar-thumb:hover {
-      background: rgba(255, 255, 255, 0.15);
-    }
-
-    #timeline::-webkit-scrollbar {
-      height: 6px;
-    }
-
-    #timeline::-webkit-scrollbar-track {
-      background: transparent;
-    }
-
-    #timeline::-webkit-scrollbar-thumb {
-      background: rgba(255, 255, 255, 0.1);
-      border-radius: 3px;
-    }
-
-    #timeline::-webkit-scrollbar-thumb:hover {
-      background: rgba(255, 255, 255, 0.15);
-    }
-
-    /* Toast notification */
-    .toast {
-      position: fixed;
-      bottom: 24px;
-      right: 24px;
-      background: #1a1a1a;
-      border: 1px solid rgba(255, 255, 255, 0.1);
-      color: #d0d0d0;
-      padding: 10px 16px;
-      border-radius: 8px;
-      font-size: 13px;
-      font-weight: 500;
-      box-shadow: 0 4px 12px rgba(0, 0, 0, 0.4);
-      opacity: 0;
-      transform: translateY(10px);
-      transition: opacity 0.2s ease, transform 0.2s ease;
-      pointer-events: none;
-      z-index: 1000;
-    }
-
-    .toast.show {
-      opacity: 1;
-      transform: translateY(0);
-    }
-
-    .toast.success {
-      border-color: rgba(100, 180, 100, 0.3);
-    }
-
-    .toast.error {
-      border-color: rgba(200, 100, 100, 0.3);
-    }
   </style>
 </head>
-
-<body>
-  <noscript>
-    <div style="padding: 20px; color: white; background: red;">
-      JavaScript is required for the Studio interface. Please enable JavaScript.
-    </div>
-  </noscript>
-  <div id="studio-container">
-    <div id="toolbar">
-      <div class="toolbar-left">
-        <button id="save-metadata-btn" class="toolbar-button">Save</button>
-        <button id="load-metadata-btn" class="toolbar-button">Load</button>
-        <button id="export-btn" class="toolbar-button">Export Video</button>
-      </div>
-      <div class="toolbar-right">
-        <span id="time-display" style="font-size: 12px; color: #555; font-variant-numeric: tabular-nums; font-family: 'SF Mono', Monaco, Menlo, monospace;">00:00 / 00:00</span>
-      </div>
-    </div>
-
-    <div id="main-content">
-      <div id="video-preview-container">
-        <div id="video-preview-wrapper">
-          <video id="video-element"></video>
-          <canvas id="cursor-canvas"></canvas>
-          <canvas id="zoom-canvas"></canvas>
-        </div>
-        <div id="video-controls">
-          <button id="skip-backward-btn" class="playback-button" title="Skip backward">
-            <svg viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg">
-              <path d="M11 18V6l-8.5 6 8.5 6zm.5-12l8.5 6-8.5 6V6z" fill="currentColor" />
-            </svg>
-          </button>
-          <button id="play-pause-btn" class="play-button" title="Play/Pause">
-            <svg id="play-icon" class="play-icon" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg">
-              <path d="M8 5v14l11-7z" fill="currentColor" />
-            </svg>
-            <svg id="pause-icon" class="pause-icon" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg"
-              style="display: none;">
-              <rect x="6" y="4" width="4" height="16" fill="currentColor" />
-              <rect x="14" y="4" width="4" height="16" fill="currentColor" />
-            </svg>
-          </button>
-          <button id="skip-forward-btn" class="playback-button" title="Skip forward">
-            <svg viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg">
-              <path d="M4 18l8.5-6L4 6v12zm9-12v12l8.5-6L13 6z" fill="currentColor" />
-            </svg>
-          </button>
-        </div>
-      </div>
-
-      <div id="sidebar">
-        <div class="sidebar-section">
-          <h3>Properties</h3>
-          <div id="properties-panel">
-            <div class="settings-group">
-              <h4>Cursor Settings</h4>
-              <div class="setting-item">
-                <label for="cursor-size-setting">Size:</label>
-                <input type="range" id="cursor-size-setting" min="20" max="400" value="150">
-                <span id="cursor-size-value-setting">150</span>px
-              </div>
-              <div class="setting-item">
-                <label>
-                  <input type="checkbox" id="cursor-motion-blur-enabled-setting">
-                  Motion Blur
-                </label>
-              </div>
-              <div class="setting-item" id="cursor-motion-blur-strength-setting-item" style="display: none;">
-                <label for="cursor-motion-blur-strength-setting">Blur Strength:</label>
-                <input type="range" id="cursor-motion-blur-strength-setting" min="0" max="100" value="50" step="1">
-                <span id="cursor-motion-blur-strength-value-setting">50</span>%
-              </div>
-            </div>
-
-            <div class="settings-group">
-              <h4>Zoom Settings</h4>
-              <div class="setting-item">
-                <label>
-                  <input type="checkbox" id="zoom-enabled-setting">
-                  Enable Zoom
-                </label>
-              </div>
-              <div class="setting-item" id="zoom-level-setting-item">
-                <label for="zoom-level-setting">Level:</label>
-                <input type="range" id="zoom-level-setting" min="1.5" max="3.0" step="0.1" value="2.0">
-                <span id="zoom-level-value-setting">2.0</span>x
-              </div>
-            </div>
-
-          </div>
-        </div>
-        <div class="sidebar-section">
-          <h3>Zoom Sections</h3>
-          <div style="display: flex; gap: 8px; margin-bottom: 10px;">
-            <button id="add-zoom-section-btn" class="toolbar-button" style="flex: 1;">
-              + Add
-            </button>
-            <button id="suggest-zoom-btn" class="toolbar-button" style="flex: 1;">
-              <svg width="14" height="14" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg" style="margin-right: 4px;">
-                <path d="M12 2L13.09 8.26L19 7L14.74 11.27L21 12L14.74 12.73L19 17L13.09 15.74L12 22L10.91 15.74L5 17L9.26 12.73L3 12L9.26 11.27L5 7L10.91 8.26L12 2Z" fill="currentColor"/>
-              </svg>
-              Suggest
-            </button>
-          </div>
-          <div id="zoom-keyframes-list"></div>
-        </div>
-      </div>
-    </div>
-
-    <div id="timeline-container">
-      <div id="timeline-header">
-        <span>Timeline</span>
-        <span id="zoom-controls" style="display: flex; gap: 4px;">
-          <button id="zoom-out" class="toolbar-button" style="padding: 4px 10px; font-size: 14px; line-height: 1;">-</button>
-          <button id="zoom-in" class="toolbar-button" style="padding: 4px 10px; font-size: 14px; line-height: 1;">+</button>
-        </span>
-      </div>
-      <div id="timeline">
-        <div class="timeline-ruler"></div>
-        <div class="timeline-rows">
-          <div class="timeline-row" id="video-row">
-            <div class="timeline-row-label">Video</div>
-            <div class="timeline-row-content"></div>
-          </div>
-          <div class="timeline-row" id="zoom-row">
-            <div class="timeline-row-label">Zoom</div>
-            <div class="timeline-row-content"></div>
-          </div>
-        </div>
-        <div class="playhead"></div>
-      </div>
-    </div>
-
-    <div id="status-bar">
-      <span id="status-text">Ready</span>
-      <div id="export-progress-container">
-        <div id="export-progress-bar">
-          <div id="export-progress-fill"></div>
-        </div>
-        <div id="export-progress-text"></div>
-      </div>
-    </div>
-  </div>
-
-  <script>
-    // Immediate inline check - runs before module script
-    (function () {
-      console.log('Studio HTML script tag executing');
-      console.log('Document ready state:', document.readyState);
-      console.log('Body exists:', !!document.body);
-
-      // Check if container exists immediately
-      setTimeout(() => {
-        const container = document.getElementById('studio-container');
-        console.log('Container check (100ms delay):', container);
-        if (!container) {
-          console.error('CRITICAL: studio-container not found!');
-          document.body.innerHTML = '<div style="padding: 20px; color: white; background: red;">ERROR: Studio container element not found. Check console.</div>';
-        }
-      }, 100);
-
-      // Log errors
-      window.addEventListener('error', (e) => {
-        console.error('Window error:', e.error, e.message, e.filename, e.lineno);
-      });
-
-      // Log when page fully loads
-      window.addEventListener('load', () => {
-        console.log('Page fully loaded');
-        const container = document.getElementById('studio-container');
-        console.log('Container on load:', container);
-        if (container) {
-          console.log('Container is visible:', container.offsetWidth, container.offsetHeight);
-        }
-      });
-    })();
-  </script>
-  <script type="module" src="/studio.ts"></script>
-  <div id="toast" class="toast"></div>
+<body class="m-0 p-0 overflow-hidden bg-[#1a1a1a] text-[#e0e0e0] font-sans">
+  <div id="root"></div>
+  <script type="module" src="./studio/main.tsx"></script>
 </body>
-
 </html>

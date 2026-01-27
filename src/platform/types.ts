@@ -69,6 +69,12 @@ export interface Telemetry {
   isActive(): boolean;
 }
 
+import type {
+  DetailedPermissionStatus,
+  PermissionRequestResult,
+  SystemPreferencesPanel,
+} from '../types';
+
 /**
  * Permissions interface
  * Handles checking and requesting system permissions
@@ -118,6 +124,35 @@ export interface Permissions {
    * Request all missing permissions
    */
   requestMissing(): Promise<void>;
+
+  /**
+   * Get detailed permission status for all permissions
+   * Returns granular state (granted/denied/not-determined/restricted) and whether request is possible
+   */
+  getDetailedStatus(): DetailedPermissionStatus;
+
+  /**
+   * Request screen recording permission with detailed result
+   * Returns action taken (dialog-shown, opened-preferences, already-granted, error)
+   */
+  requestScreenRecordingWithResult(): Promise<PermissionRequestResult>;
+
+  /**
+   * Request accessibility permission with detailed result
+   * Returns action taken (dialog-shown, opened-preferences, already-granted, error)
+   */
+  requestAccessibilityWithResult(): Promise<PermissionRequestResult>;
+
+  /**
+   * Request microphone permission with detailed result
+   * Returns action taken (dialog-shown, opened-preferences, already-granted, error)
+   */
+  requestMicrophoneWithResult(): Promise<PermissionRequestResult>;
+
+  /**
+   * Open System Preferences/Settings to a specific permission panel
+   */
+  openSystemPreferences(panel: SystemPreferencesPanel): Promise<void>;
 }
 
 /**

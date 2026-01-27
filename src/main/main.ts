@@ -1,11 +1,12 @@
 import { app, BrowserWindow, ipcMain, dialog } from 'electron';
 import { join, dirname } from 'path';
-import { existsSync, mkdirSync, copyFileSync } from 'fs';
+import { existsSync, mkdirSync, copyFileSync, unlinkSync } from 'fs';
 import { ScreenCapture } from './screen-capture';
 import { MouseTracker } from './mouse-tracker';
 import { VideoProcessor } from '../processing/video-processor';
 import { MetadataExporter } from '../processing/metadata-exporter';
 import { createStudioWindow, getStudioWindow } from './studio-window';
+import { showRecordingBar, hideRecordingBar, destroyRecordingBar, stopRecordingBarTimer } from './recording-bar-window';
 import { getPlatform } from '../platform';
 import type { Platform } from '../platform';
 import type { RecordingConfig, CursorConfig, RecordingState, ZoomConfig, MouseEffectsConfig } from '../types';
@@ -104,40 +105,19 @@ app.on('window-all-closed', () => {
 });
 
 // Ensure cursor is visible when app quits (in case recording was interrupted)
-app.on('before-quit', async () => {
+// Use fire-and-forget with timeout to prevent blocking quit
+app.on('before-quit', () => {
   logger.info('App quitting, ensuring cursor is visible...');
-  const platform = await initPlatform();
-  await platform.cursor.ensureVisible();
-});
-
-// Additional handlers to ensure cursor is restored on crashes/termination
-// This is especially important on Windows where ShowCursor uses reference counting
-const handleExit = async () => {
-  logger.info('Process exiting, ensuring cursor is visible...');
-  const platform = await initPlatform();
-  await platform.cursor.ensureVisible();
-};
-
-process.on('SIGINT', async () => {
-  await handleExit();
-  process.exit(0);
-});
-
-process.on('SIGTERM', async () => {
-  await handleExit();
-  process.exit(0);
-});
-
-process.on('uncaughtException', async (error) => {
-  logger.error('Uncaught exception:', error);
-  await handleExit();
-  process.exit(1);
-});
-
-process.on('unhandledRejection', async (reason) => {
-  logger.error('Unhandled rejection:', reason);
-  await handleExit();
-  process.exit(1);
+  // Only restore cursor if platform was already initialized (don't block on init during quit)
+  if (platformInstance) {
+    // Fire and forget - don't await, let the app quit
+    Promise.race([
+      platformInstance.cursor.ensureVisible(),
+      new Promise(resolve => setTimeout(resolve, 500)), // 500ms timeout
+    ]).catch(() => {
+      // Ignore errors during quit
+    });
+  }
 });
 
 // IPC Handlers
@@ -157,6 +137,44 @@ ipcMain.handle('request-permissions', async () => {
   logger.debug('Request permissions completed');
 });
 
+ipcMain.handle('get-detailed-permissions', async () => {
+  logger.debug('IPC: get-detailed-permissions called');
+  const platform = await initPlatform();
+  const detailedStatus = platform.permissions.getDetailedStatus();
+  logger.debug('Detailed permissions result:', detailedStatus);
+  return detailedStatus;
+});
+
+ipcMain.handle('request-permission', async (_, type: 'screen-recording' | 'accessibility' | 'microphone') => {
+  logger.debug(`IPC: request-permission called for: ${type}`);
+  const platform = await initPlatform();
+
+  let result;
+  switch (type) {
+    case 'screen-recording':
+      result = await platform.permissions.requestScreenRecordingWithResult();
+      break;
+    case 'accessibility':
+      result = await platform.permissions.requestAccessibilityWithResult();
+      break;
+    case 'microphone':
+      result = await platform.permissions.requestMicrophoneWithResult();
+      break;
+    default:
+      throw new Error(`Unknown permission type: ${type}`);
+  }
+
+  logger.debug(`Request permission result for ${type}:`, result);
+  return result;
+});
+
+ipcMain.handle('open-system-preferences', async (_, panel: 'screen-recording' | 'accessibility' | 'microphone') => {
+  logger.debug(`IPC: open-system-preferences called for: ${panel}`);
+  const platform = await initPlatform();
+  await platform.permissions.openSystemPreferences(panel);
+  logger.debug('System preferences opened');
+});
+
 ipcMain.handle('start-recording', async (_, config: RecordingConfig) => {
   logger.info('IPC: start-recording called with config:', config);
   if (recordingState.isRecording) {
@@ -167,13 +185,13 @@ ipcMain.handle('start-recording', async (_, config: RecordingConfig) => {
   // Initialize platform
   const platform = await initPlatform();
 
-  // Check permissions first
+  // Check permissions first (microphone is optional - only needed for audio recording)
   logger.debug('Checking permissions...');
-  const permissions = platform.permissions.checkAll();
+  const permissions = platform.permissions.getDetailedStatus();
   logger.debug('Permissions check result:', permissions);
-  if (!permissions.screenRecording || !permissions.accessibility || !permissions.microphone) {
+  if (permissions.screenRecording.state !== 'granted' || permissions.accessibility.state !== 'granted') {
     logger.error('Required permissions not granted');
-    throw new Error('Required permissions not granted. Please grant Screen Recording, Accessibility, and Microphone permissions.');
+    throw new Error('Required permissions not granted. Please grant Screen Recording and Accessibility permissions.');
   }
 
   // Initialize components
@@ -237,6 +255,12 @@ ipcMain.handle('start-recording', async (_, config: RecordingConfig) => {
     recordingState.mouseToVideoOffset = mouseToVideoOffset;
     logger.info(`Screen recording started successfully. Mouse-to-video offset: ${mouseToVideoOffset}ms`);
 
+    // Hide main window and show recording bar
+    if (mainWindow && !mainWindow.isDestroyed()) {
+      mainWindow.hide();
+    }
+    showRecordingBar(recordingState.startTime || Date.now());
+
     return { success: true };
   } catch (error) {
     logger.error('Error starting recording:', error);
@@ -284,6 +308,9 @@ ipcMain.handle('stop-recording', async (_, config: {
     throw new Error('No recording in progress');
   }
 
+  // Stop the timer immediately so UI shows recording has ended
+  stopRecordingBarTimer();
+
   try {
     // Initialize platform
     const platform = await initPlatform();
@@ -296,6 +323,12 @@ ipcMain.handle('stop-recording', async (_, config: {
     // Show system cursor again
     logger.info('Showing system cursor...');
     await platform.cursor.ensureVisible();
+
+    // Hide recording bar and show main window
+    hideRecordingBar();
+    if (mainWindow && !mainWindow.isDestroyed()) {
+      mainWindow.show();
+    }
 
     // Disable content protection so window is visible again
     if (mainWindow) {
@@ -582,6 +615,239 @@ ipcMain.handle('reload-metadata', async (_event, filePath: string) => {
   } catch (error) {
     logger.error('Failed to reload metadata:', error);
     throw error;
+  }
+});
+
+// Recording Bar IPC Handlers
+
+// Helper function to cleanup recording state without saving
+async function cleanupRecording(saveFiles: boolean = false): Promise<void> {
+  const platform = await initPlatform();
+
+  // Stop screen recording if active
+  if (screenCapture) {
+    try {
+      await screenCapture.stopRecording();
+    } catch (error) {
+      logger.error('Error stopping screen capture during cleanup:', error);
+    }
+  }
+
+  // Stop mouse tracking
+  if (mouseTracker) {
+    mouseTracker.stopTracking();
+  }
+
+  // Show system cursor
+  await platform.cursor.ensureVisible();
+
+  // Hide recording bar and show main window
+  hideRecordingBar();
+  if (mainWindow && !mainWindow.isDestroyed()) {
+    mainWindow.show();
+    mainWindow.setContentProtection(false);
+  }
+
+  // Delete temp files if not saving
+  if (!saveFiles) {
+    if (recordingState.tempVideoPath && existsSync(recordingState.tempVideoPath)) {
+      try {
+        unlinkSync(recordingState.tempVideoPath);
+        logger.info('Deleted temp video file');
+      } catch (error) {
+        logger.error('Error deleting temp video:', error);
+      }
+    }
+    if (recordingState.tempMouseDataPath && existsSync(recordingState.tempMouseDataPath)) {
+      try {
+        unlinkSync(recordingState.tempMouseDataPath);
+        logger.info('Deleted temp mouse data file');
+      } catch (error) {
+        logger.error('Error deleting temp mouse data:', error);
+      }
+    }
+  }
+
+  // Reset state
+  recordingState = { isRecording: false };
+  screenCapture = null;
+  mouseTracker = null;
+}
+
+// Stop recording from recording bar (same as normal stop)
+ipcMain.handle('recording-bar-stop', async () => {
+  logger.info('IPC: recording-bar-stop called');
+
+  if (!recordingState.isRecording) {
+    logger.warn('No recording in progress');
+    return;
+  }
+
+  // Stop the timer immediately so UI shows recording has ended
+  stopRecordingBarTimer();
+
+  // Use default configs for stop
+  const cursorConfig: CursorConfig = {
+    size: DEFAULT_CURSOR_SIZE,
+    shape: 'arrow',
+  };
+
+  const zoomConfig: ZoomConfig = {
+    enabled: true,
+    level: 2.0,
+    transitionSpeed: 300,
+    padding: 0,
+    followSpeed: 1.0,
+  };
+
+  try {
+    const platform = await initPlatform();
+
+    // Stop screen recording
+    logger.info('Stopping screen recording...');
+    const videoPath = await screenCapture?.stopRecording();
+    logger.info('Screen recording stopped, video path:', videoPath);
+
+    // Show system cursor again
+    logger.info('Showing system cursor...');
+    await platform.cursor.ensureVisible();
+
+    // Hide recording bar and show main window
+    hideRecordingBar();
+    if (mainWindow && !mainWindow.isDestroyed()) {
+      mainWindow.show();
+      mainWindow.setContentProtection(false);
+    }
+
+    if (!videoPath) {
+      throw new Error('Failed to stop recording');
+    }
+
+    // Stop mouse tracking
+    logger.info('Stopping mouse tracking...');
+    mouseTracker?.stopTracking();
+
+    // Save mouse data
+    if (mouseTracker && recordingState.tempMouseDataPath) {
+      mouseTracker.saveToFile(recordingState.tempMouseDataPath);
+    }
+
+    // Get mouse events
+    const mouseEvents = mouseTracker?.getEvents() || [];
+    const recordingDuration = Date.now() - (recordingState.startTime || 0);
+
+    // Determine final output path
+    const finalOutputPath =
+      recordingState.outputPath ||
+      join(app.getPath('downloads'), `recording_${Date.now()}.mp4`);
+
+    // Ensure output directory exists
+    const outputDir = dirname(finalOutputPath);
+    if (!existsSync(outputDir)) {
+      mkdirSync(outputDir, { recursive: true });
+    }
+
+    // Copy video to final location
+    const videoExtension = videoPath.split('.').pop() || 'mkv';
+    const finalVideoPath = finalOutputPath.replace(/\.(mp4|mov|mkv|avi|webm)$/i, `.${videoExtension}`);
+
+    logger.info('Copying video to final location:', finalVideoPath);
+    copyFileSync(videoPath, finalVideoPath);
+
+    // Export metadata
+    let screenDimensions: { width: number; height: number } | undefined;
+    try {
+      const { getScreenDimensions } = await import('../processing/video-utils');
+      screenDimensions = await getScreenDimensions();
+    } catch (error) {
+      logger.warn('Could not get screen dimensions:', error);
+    }
+
+    const exporter = new MetadataExporter();
+    const mouseToVideoOffset = recordingState.mouseToVideoOffset || 0;
+    const adjustedMouseEvents = mouseEvents.map(event => ({
+      ...event,
+      timestamp: Math.max(0, event.timestamp - mouseToVideoOffset),
+    }));
+
+    const metadataPath = await exporter.exportMetadata({
+      videoPath: finalVideoPath,
+      mouseEvents: adjustedMouseEvents,
+      cursorConfig,
+      zoomConfig,
+      frameRate: DEFAULT_FRAME_RATE,
+      videoDuration: recordingDuration,
+      screenDimensions,
+      recordingRegion: currentRecordingConfig?.region,
+    });
+
+    logger.info('Recording completed successfully');
+
+    recordingState = {
+      isRecording: false,
+      tempVideoPath: videoPath,
+      metadataPath,
+    };
+
+    // Notify main window
+    if (mainWindow && !mainWindow.isDestroyed()) {
+      mainWindow.webContents.send('recording-completed', {
+        success: true,
+        outputPath: finalVideoPath,
+        metadataPath,
+      });
+    }
+
+    return { success: true, outputPath: finalVideoPath, metadataPath };
+  } catch (error) {
+    logger.error('Error stopping recording:', error);
+    await cleanupRecording(false);
+    throw error;
+  }
+});
+
+// Restart recording from recording bar (cancel current and start new)
+ipcMain.handle('recording-bar-restart', async () => {
+  logger.info('IPC: recording-bar-restart called');
+
+  if (!recordingState.isRecording) {
+    logger.warn('No recording in progress to restart');
+    return;
+  }
+
+  // Store the config for restarting
+  const configToRestart = currentRecordingConfig;
+
+  // Cleanup without saving
+  await cleanupRecording(false);
+
+  // Start new recording if we have the config
+  if (configToRestart) {
+    // Short delay to ensure cleanup is complete
+    await new Promise(resolve => setTimeout(resolve, 200));
+
+    // Trigger new recording through main window
+    if (mainWindow && !mainWindow.isDestroyed()) {
+      mainWindow.webContents.send('restart-recording', configToRestart);
+    }
+  }
+});
+
+// Cancel recording from recording bar (discard without saving)
+ipcMain.handle('recording-bar-cancel', async () => {
+  logger.info('IPC: recording-bar-cancel called');
+
+  if (!recordingState.isRecording) {
+    logger.warn('No recording in progress to cancel');
+    return;
+  }
+
+  await cleanupRecording(false);
+  logger.info('Recording cancelled and discarded');
+
+  // Notify main window
+  if (mainWindow && !mainWindow.isDestroyed()) {
+    mainWindow.webContents.send('recording-cancelled');
   }
 });
 

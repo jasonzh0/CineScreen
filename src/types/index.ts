@@ -77,6 +77,34 @@ export interface PermissionStatus {
   microphone: boolean;
 }
 
+// Granular permission state types
+export type PermissionState =
+  | 'granted'
+  | 'denied'
+  | 'not-determined'
+  | 'restricted'
+  | 'unavailable';
+
+export interface DetailedPermissionItem {
+  state: PermissionState;
+  canRequest: boolean;
+}
+
+export interface DetailedPermissionStatus {
+  screenRecording: DetailedPermissionItem;
+  accessibility: DetailedPermissionItem;
+  microphone: DetailedPermissionItem;
+}
+
+export interface PermissionRequestResult {
+  success: boolean;
+  newState: PermissionState;
+  action: 'dialog-shown' | 'opened-preferences' | 'already-granted' | 'error';
+  errorMessage?: string;
+}
+
+export type SystemPreferencesPanel = 'screen-recording' | 'accessibility' | 'microphone';
+
 export interface ZoomConfig {
   enabled: boolean;
   level: number; // 1.5-3.0
