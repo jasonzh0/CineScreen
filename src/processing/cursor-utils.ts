@@ -224,6 +224,18 @@ export function interpolateCursorPosition(
     return { x: kf.x, y: kf.y, size: kf.size, shape: kf.shape };
   }
 
+  // Handle timestamp before first keyframe - return first keyframe position
+  if (timestamp < keyframes[0].timestamp) {
+    const kf = keyframes[0];
+    return { x: kf.x, y: kf.y, size: kf.size, shape: kf.shape };
+  }
+
+  // Handle timestamp after last keyframe - return last keyframe position
+  if (timestamp >= keyframes[keyframes.length - 1].timestamp) {
+    const kf = keyframes[keyframes.length - 1];
+    return { x: kf.x, y: kf.y, size: kf.size, shape: kf.shape };
+  }
+
   // Find the index of the keyframe just before or at this timestamp
   let prevIndex = 0;
   for (let i = 0; i < keyframes.length; i++) {
@@ -253,7 +265,9 @@ export function interpolateCursorPosition(
 
   // Calculate raw progress (0 to 1)
   const timeDiff = nextKeyframe.timestamp - prevKeyframe.timestamp;
-  const t = timeDiff > 0 ? (timestamp - prevKeyframe.timestamp) / timeDiff : 0;
+  const rawT = timeDiff > 0 ? (timestamp - prevKeyframe.timestamp) / timeDiff : 0;
+  // Clamp t to [0, 1] as a safety measure
+  const t = Math.max(0, Math.min(1, rawT));
 
   // Use easing from start keyframe, or default to linear for smooth motion
   const easingType: EasingType = prevKeyframe.easing || 'linear';

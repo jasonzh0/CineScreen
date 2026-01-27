@@ -2,6 +2,7 @@ import React, { useRef, useCallback, useEffect, useState } from 'react';
 import { useStudio } from '../../context/StudioContext';
 import { TimelineRuler } from './TimelineRuler';
 import { Playhead } from './Playhead';
+import { resetCursorSmoothing } from '../../../utils/cursor-renderer';
 
 export function Timeline() {
   const {
@@ -9,6 +10,7 @@ export function Timeline() {
     currentTime,
     duration,
     seekTo,
+    videoRef,
     selectedZoomSection,
     setSelectedZoomSection,
     updateZoomSection,
@@ -16,18 +18,67 @@ export function Timeline() {
 
   const timelineRef = useRef<HTMLDivElement>(null);
   const [scale, setScale] = useState(100); // pixels per second
+  const [isScrubbing, setIsScrubbing] = useState(false);
 
   const durationMs = duration * 1000;
   const zoomSections = metadata?.zoom.sections || [];
 
-  const handleTimelineClick = useCallback((e: React.MouseEvent) => {
-    if (!timelineRef.current || !duration) return;
+  // Convert mouse position to time and seek
+  const seekToMousePosition = useCallback((clientX: number) => {
+    if (!timelineRef.current) return;
+    const effectiveDuration = duration || videoRef.current?.duration || 0;
+    if (!effectiveDuration) return;
 
     const rect = timelineRef.current.getBoundingClientRect();
-    const x = e.clientX - rect.left + timelineRef.current.scrollLeft;
-    const time = (x / scale); // seconds
-    seekTo(Math.max(0, Math.min(time, duration)));
-  }, [duration, scale, seekTo]);
+    // Account for the 80px label column offset
+    const x = clientX - rect.left + timelineRef.current.scrollLeft - 80;
+    if (x < 0) return; // In label column, ignore
+    const time = x / scale; // seconds
+    resetCursorSmoothing();
+    seekTo(Math.max(0, Math.min(time, effectiveDuration)));
+  }, [duration, scale, seekTo, videoRef]);
+
+  // Start scrubbing on mouse down
+  const handleMouseDown = useCallback((e: React.MouseEvent) => {
+    // Only handle left mouse button
+    if (e.button !== 0) return;
+    setIsScrubbing(true);
+    seekToMousePosition(e.clientX);
+  }, [seekToMousePosition]);
+
+  // Continue scrubbing on mouse move
+  const handleMouseMove = useCallback((e: React.MouseEvent) => {
+    if (!isScrubbing) return;
+    seekToMousePosition(e.clientX);
+  }, [isScrubbing, seekToMousePosition]);
+
+  // Stop scrubbing on mouse up
+  const handleMouseUp = useCallback(() => {
+    setIsScrubbing(false);
+  }, []);
+
+  // Global mouse up listener to handle mouse release outside timeline
+  useEffect(() => {
+    if (!isScrubbing) return;
+
+    const handleGlobalMouseUp = () => {
+      setIsScrubbing(false);
+    };
+
+    // Also handle mouse move globally while scrubbing
+    const handleGlobalMouseMove = (e: MouseEvent) => {
+      if (!timelineRef.current) return;
+      seekToMousePosition(e.clientX);
+    };
+
+    window.addEventListener('mouseup', handleGlobalMouseUp);
+    window.addEventListener('mousemove', handleGlobalMouseMove);
+
+    return () => {
+      window.removeEventListener('mouseup', handleGlobalMouseUp);
+      window.removeEventListener('mousemove', handleGlobalMouseMove);
+    };
+  }, [isScrubbing, seekToMousePosition]);
 
   const handleZoomIn = () => setScale(s => Math.min(s * 1.5, 500));
   const handleZoomOut = () => setScale(s => Math.max(s / 1.5, 20));
@@ -55,10 +106,12 @@ export function Timeline() {
       {/* Timeline content */}
       <div
         ref={timelineRef}
-        className="flex-1 relative overflow-x-auto overflow-y-hidden cursor-pointer"
-        onClick={handleTimelineClick}
+        className="flex-1 relative overflow-x-auto overflow-y-hidden cursor-pointer select-none"
+        onMouseDown={handleMouseDown}
+        onMouseMove={handleMouseMove}
+        onMouseUp={handleMouseUp}
       >
-        <div style={{ width: `${Math.max(duration * scale, 100)}px`, position: 'relative', height: '100%' }}>
+        <div style={{ width: `${Math.max(duration * scale + 80, 500)}px`, position: 'relative', height: '100%' }}>
           <TimelineRuler scale={scale} duration={duration} />
 
           {/* Track rows */}
@@ -71,7 +124,7 @@ export function Timeline() {
               </div>
               <div
                 className="absolute top-2 bottom-2 ml-20 bg-video-bg border-l-[3px] border-video-border rounded"
-                style={{ left: 0, width: `${duration * scale}px` }}
+                style={{ left: 0, width: `${Math.max(duration * scale, 100)}px` }}
               >
                 <span className="ml-3 text-xs font-medium text-white/70">Recording</span>
               </div>
@@ -121,6 +174,7 @@ function ZoomSectionElement({ section, scale, isSelected, onClick, onUpdate }: Z
   return (
     <div
       onClick={(e) => { e.stopPropagation(); onClick(); }}
+      onMouseDown={(e) => e.stopPropagation()} // Prevent scrubbing when clicking zoom sections
       className={`absolute top-2 bottom-2 cursor-move flex items-center justify-center
                  text-xs font-medium text-white/70 select-none transition-all duration-150
                  bg-zoom-bg border-l-[3px] border-r-[3px] border-zoom-border rounded

@@ -38,6 +38,9 @@ export function createRecordingBarWindow(): BrowserWindow {
     }),
   });
 
+  // Hide recording bar from screen capture
+  recordingBarWindow.setContentProtection(true);
+
   // Position at bottom center of primary display
   positionBarAtBottomCenter();
 

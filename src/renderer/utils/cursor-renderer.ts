@@ -8,6 +8,7 @@ import {
   calculateClickAnimationScale,
   CursorTypeStabilizer,
 } from '../../processing/cursor-utils';
+import { DEFAULT_CURSOR_SIZE } from '../../utils/constants';
 
 /**
  * Cursor position smoother for glide effect
@@ -192,7 +193,7 @@ export function renderCursor(
 
   // Get cursor config
   const config = metadata.cursor.config;
-  const size = cursorPos.size || config.size || 60;
+  const size = cursorPos.size || config.size || DEFAULT_CURSOR_SIZE;
   const rawShape = cursorPos.shape || config.shape || 'arrow';
 
   // Initialize cursor type stabilizer if needed

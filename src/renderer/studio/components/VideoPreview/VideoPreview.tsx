@@ -17,7 +17,6 @@ export function VideoPreview() {
   const cursorCanvasRef = useRef<HTMLCanvasElement>(null);
   const zoomCanvasRef = useRef<HTMLCanvasElement>(null);
   const wrapperRef = useRef<HTMLDivElement>(null);
-  const animationFrameRef = useRef<number | null>(null);
 
   const renderPreview = useCallback(() => {
     if (!metadata || !videoRef.current || !cursorCanvasRef.current || !zoomCanvasRef.current || !wrapperRef.current) return;
@@ -61,7 +60,8 @@ export function VideoPreview() {
       canvas.style.position = 'absolute';
     });
 
-    const videoCurrentTime = videoEl.currentTime * 1000;
+    // Use React state directly - this is now the source of truth
+    const videoCurrentTime = currentTime;
     const videoContentOffsetX = (videoRect.width - actualVideoDisplayWidth) / 2;
     const videoContentOffsetY = (videoRect.height - actualVideoDisplayHeight) / 2;
 
@@ -100,34 +100,15 @@ export function VideoPreview() {
       );
       zoomCtx.restore();
     }
-  }, [metadata, videoRef]);
+  }, [metadata, videoRef, currentTime]);
 
-  // Animation frame loop for smooth rendering during playback
+  // Single effect handles both seeks and playback
+  // currentTime is now updated by usePlayback (RAF during playback, immediate on seeks)
   useEffect(() => {
     if (!isPlaying) {
-      renderPreview();
-      return;
+      resetCursorSmoothing();
     }
-
-    const animate = () => {
-      renderPreview();
-      animationFrameRef.current = requestAnimationFrame(animate);
-    };
-
-    animationFrameRef.current = requestAnimationFrame(animate);
-
-    return () => {
-      if (animationFrameRef.current) {
-        cancelAnimationFrame(animationFrameRef.current);
-      }
-    };
-  }, [isPlaying, renderPreview]);
-
-  // Render when current time changes (for seeks)
-  useEffect(() => {
-    if (!isPlaying) {
-      renderPreview();
-    }
+    renderPreview();
   }, [currentTime, isPlaying, renderPreview]);
 
   // Reset smoothing on video load
