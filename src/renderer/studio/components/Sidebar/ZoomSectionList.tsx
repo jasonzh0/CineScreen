@@ -1,5 +1,6 @@
 import React from 'react';
 import { useStudio } from '../../context/StudioContext';
+import { detectZoomSections } from '../../../../processing/zoom-tracker';
 
 function formatTime(ms: number): string {
   const seconds = ms / 1000;
@@ -19,6 +20,7 @@ export function ZoomSectionList() {
     selectedZoomSection,
     setSelectedZoomSection,
     showToast,
+    updateMetadata,
   } = useStudio();
 
   const zoomSections = metadata?.zoom.sections || [];
@@ -42,8 +44,58 @@ export function ZoomSectionList() {
   };
 
   const handleSuggest = () => {
-    // Simplified suggestion - just add a section at current position
-    showToast('Suggest feature coming soon', 'error');
+    if (!metadata) return;
+
+    const cursorKeyframes = metadata.cursor.keyframes;
+    if (!cursorKeyframes || cursorKeyframes.length === 0) {
+      showToast('No cursor data available', 'error');
+      return;
+    }
+
+    const videoDimensions = {
+      width: metadata.video.width,
+      height: metadata.video.height,
+    };
+
+    const zoomConfig = metadata.zoom.config;
+
+    // Use the detectZoomSections algorithm to find static regions
+    const detectedSections = detectZoomSections(
+      cursorKeyframes,
+      videoDimensions,
+      zoomConfig
+    );
+
+    const videoDurationMs = duration * 1000;
+    const minSectionDuration = 2000; // 2 seconds minimum
+
+    // Filter to only include zoomed sections (scale > 1) that are:
+    // - At least 2 seconds long
+    // - Within the video duration
+    const zoomedSections = detectedSections
+      .filter(s => s.scale > 1)
+      .filter(s => s.startTime < videoDurationMs) // Must start before video ends
+      .map(s => ({
+        ...s,
+        endTime: Math.min(s.endTime, videoDurationMs), // Clamp to video duration
+      }))
+      .filter(s => (s.endTime - s.startTime) >= minSectionDuration); // At least 2 seconds
+
+    if (zoomedSections.length === 0) {
+      showToast('No zoom regions detected', 'error');
+      return;
+    }
+
+    // Replace existing sections with suggested ones
+    updateMetadata(prev => ({
+      ...prev,
+      zoom: {
+        ...prev.zoom,
+        sections: zoomedSections.sort((a, b) => a.startTime - b.startTime),
+      },
+    }));
+
+    showToast(`Added ${zoomedSections.length} zoom section${zoomedSections.length === 1 ? '' : 's'}`);
   };
 
   const handleSectionClick = (startTime: number) => {
