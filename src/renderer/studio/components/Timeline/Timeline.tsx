@@ -124,7 +124,7 @@ export function Timeline() {
               </div>
               <div
                 className="absolute top-2 bottom-2 ml-20 bg-video-bg border-l-[3px] border-video-border rounded"
-                style={{ left: 0, width: `${Math.max(duration * scale, 100)}px` }}
+                style={{ left: 0, width: `${duration * scale}px` }}
               >
                 <span className="ml-3 text-xs font-medium text-white/70">Recording</span>
               </div>
