@@ -42,7 +42,7 @@ interface SpringConfig {
 /**
  * Preset spring configurations for different use cases
  */
-export const SPRING_PRESETS = {
+const SPRING_PRESETS = {
   // Smooth and gentle - great for zoom following
   gentle: { stiffness: 120, damping: 20, mass: 1 },
   // Balanced smoothness with good responsiveness
@@ -60,7 +60,7 @@ export const SPRING_PRESETS = {
  * Maps to smooth time values for SmoothDamp algorithm
  * Higher smoothTime = smoother/slower cursor following
  */
-export const ANIMATION_STYLES = {
+const ANIMATION_STYLES = {
   slow: {
     smoothTime: 0.45, // Very slow, dramatic
     minSmoothTime: 0.15,
@@ -114,7 +114,7 @@ function simulateSpring(
 /**
  * Create a new 2D spring state
  */
-export function createSpring2D(x: number, y: number): Spring2D {
+function createSpring2D(x: number, y: number): Spring2D {
   return {
     x: { position: x, velocity: 0 },
     y: { position: y, velocity: 0 },
@@ -124,7 +124,7 @@ export function createSpring2D(x: number, y: number): Spring2D {
 /**
  * Update a 2D spring towards a target position
  */
-export function updateSpring2D(
+function updateSpring2D(
   spring: Spring2D,
   targetX: number,
   targetY: number,
@@ -140,7 +140,7 @@ export function updateSpring2D(
 /**
  * Bezier easing functions for smooth transitions
  */
-export const EASING = {
+const EASING = {
   // Smooth start and end
   easeInOutCubic: (t: number): number => {
     return t < 0.5 ? 4 * t * t * t : 1 - Math.pow(-2 * t + 2, 3) / 2;
@@ -295,7 +295,7 @@ export class SmoothPosition2D {
 /**
  * Dead zone to prevent micro-movements when cursor is nearly stationary
  */
-export function applyDeadZone(
+function applyDeadZone(
   current: { x: number; y: number },
   target: { x: number; y: number },
   deadZoneRadius: number
@@ -321,7 +321,7 @@ export function applyDeadZone(
  * Faster movements = less smoothing (more responsive)
  * Slower movements = more smoothing (more cinematic)
  */
-export function getAdaptiveSmoothTime(
+function getAdaptiveSmoothTime(
   velocityX: number,
   velocityY: number,
   baseSmoothTime: number,

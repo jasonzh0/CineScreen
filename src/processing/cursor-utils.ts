@@ -26,13 +26,13 @@ export const CURSOR_SMOOTH_TIME = 0.25;
  * Look-ahead window (ms) to check if cursor type change is sustained
  * If cursor type flickers back within this window, don't change
  */
-export const CURSOR_TYPE_LOOKAHEAD_MS = 100;
+const CURSOR_TYPE_LOOKAHEAD_MS = 100;
 
 /**
  * Get stabilized cursor type by looking ahead in keyframes
  * Returns the current type if the change is just a brief flicker
  */
-export function getStabilizedCursorType(
+function getStabilizedCursorType(
   keyframes: CursorKeyframe[],
   currentIndex: number,
   timestamp: number,

@@ -195,7 +195,7 @@ export function createStudioWindow(videoPath: string, metadataPath: string): voi
 /**
  * Check if studio window is open
  */
-export function isStudioWindowOpen(): boolean {
+function isStudioWindowOpen(): boolean {
   return studioWindow !== null && !studioWindow.isDestroyed();
 }
 

@@ -3,10 +3,9 @@
  * Provides platform-specific implementations with lazy loading
  */
 
-import type { Platform, CursorControl, Telemetry, Permissions, MouseTelemetryData } from './types';
+import type { Platform } from './types';
 
-// Re-export types for convenience
-export type { Platform, CursorControl, Telemetry, Permissions, MouseTelemetryData };
+export type { Platform };
 
 let platform: Platform | null = null;
 
@@ -34,21 +33,21 @@ export async function getPlatform(): Promise<Platform> {
  * Synchronously get the platform if already loaded
  * Returns null if not yet loaded
  */
-export function getPlatformSync(): Platform | null {
+function getPlatformSync(): Platform | null {
   return platform;
 }
 
 /**
  * Check if the current platform is supported
  */
-export function isPlatformSupported(): boolean {
+function isPlatformSupported(): boolean {
   return process.platform === 'darwin' || process.platform === 'win32';
 }
 
 /**
  * Get the current platform name
  */
-export function getPlatformName(): 'mac' | 'win' | 'unsupported' {
+function getPlatformName(): 'mac' | 'win' | 'unsupported' {
   if (process.platform === 'darwin') return 'mac';
   if (process.platform === 'win32') return 'win';
   return 'unsupported';

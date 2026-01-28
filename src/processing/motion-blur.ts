@@ -58,7 +58,7 @@ function createMotionBlurKernel(
  * Apply motion blur to an image based on velocity
  * This simulates the cinematic motion blur effect using directional convolution
  */
-export async function applyMotionBlur(
+async function applyMotionBlur(
   imageBuffer: Buffer,
   velocityX: number,
   velocityY: number,
@@ -120,7 +120,7 @@ export async function applyCursorMotionBlur(
 /**
  * Calculate velocity between two positions
  */
-export function calculateVelocity(
+function calculateVelocity(
   x1: number,
   y1: number,
   x2: number,

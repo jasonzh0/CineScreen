@@ -101,7 +101,7 @@ export function getPermissionStatusText(state: PermissionState): string {
   }
 }
 
-export function getPermissionStatusClass(state: PermissionState): string {
+function getPermissionStatusClass(state: PermissionState): string {
   switch (state) {
     case 'granted':
       return 'granted';

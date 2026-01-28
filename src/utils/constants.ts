@@ -38,12 +38,12 @@ export const DEFAULT_CURSOR_SIZE = 150;
 /**
  * Minimum cursor size in pixels
  */
-export const MIN_CURSOR_SIZE = 20;
+const MIN_CURSOR_SIZE = 20;
 
 /**
  * Maximum cursor size in pixels
  */
-export const MAX_CURSOR_SIZE = 400;
+const MAX_CURSOR_SIZE = 400;
 
 /**
  * Default cursor color (black)
@@ -91,38 +91,38 @@ export const CURSOR_CLICK_ANIMATION_SCALE = 0.7;
 /**
  * Default dead zone radius for zoom (prevents micro-movements)
  */
-export const DEFAULT_ZOOM_DEAD_ZONE = 15;
+const DEFAULT_ZOOM_DEAD_ZONE = 15;
 
 /**
  * Focus required duration in milliseconds before zoom activates
  */
-export const ZOOM_FOCUS_REQUIRED_MS = 2000;
+const ZOOM_FOCUS_REQUIRED_MS = 2000;
 
 /**
  * Max movement in logical pixels to be considered "focused"
  */
-export const ZOOM_FOCUS_THRESHOLD = 80;
+const ZOOM_FOCUS_THRESHOLD = 80;
 
 /**
  * Must stay within this radius to maintain focus
  */
-export const ZOOM_FOCUS_AREA_RADIUS = 150;
+const ZOOM_FOCUS_AREA_RADIUS = 150;
 
 /**
  * Zoom transition speed (how fast to transition zoom in/out)
  * Lower values = slower, smoother transitions
  */
-export const ZOOM_TRANSITION_SPEED = 0.03;
+const ZOOM_TRANSITION_SPEED = 0.03;
 
 /**
  * Zoom out speed multiplier (zoom out faster than zoom in)
  */
-export const ZOOM_OUT_SPEED_MULTIPLIER = 3;
+const ZOOM_OUT_SPEED_MULTIPLIER = 3;
 
 /**
  * Velocity threshold in pixels per second for adaptive smooth time calculation
  */
-export const ZOOM_VELOCITY_THRESHOLD = 800;
+const ZOOM_VELOCITY_THRESHOLD = 800;
 
 // ========================================
 // Motion Blur Constants
@@ -131,17 +131,17 @@ export const ZOOM_VELOCITY_THRESHOLD = 800;
 /**
  * Minimum velocity speed threshold to apply motion blur
  */
-export const MOTION_BLUR_MIN_VELOCITY = 10;
+const MOTION_BLUR_MIN_VELOCITY = 10;
 
 /**
  * Maximum blur sigma value for cursor motion blur
  */
-export const MOTION_BLUR_MAX_SIGMA = 2;
+const MOTION_BLUR_MAX_SIGMA = 2;
 
 /**
  * Motion blur strength multiplier
  */
-export const MOTION_BLUR_STRENGTH_MULTIPLIER = 0.1;
+const MOTION_BLUR_STRENGTH_MULTIPLIER = 0.1;
 
 /**
  * Motion blur base multiplier for blur length calculation
@@ -161,7 +161,7 @@ export const MOTION_BLUR_MIN_LENGTH = 0.5;
 /**
  * Motion blur sigma conversion factor (blur length to sigma)
  */
-export const MOTION_BLUR_SIGMA_FACTOR = 0.1;
+const MOTION_BLUR_SIGMA_FACTOR = 0.1;
 
 /**
  * Minimum velocity threshold for motion blur (very small movements ignored)
@@ -218,17 +218,17 @@ export const PROGRESS_COMPLETE = 100;
 /**
  * Cache duration for mouse button states (milliseconds)
  */
-export const CLICK_DETECTION_CACHE_DURATION_MS = 5;
+const CLICK_DETECTION_CACHE_DURATION_MS = 5;
 
 /**
  * Timeout for click detection binary execution (milliseconds)
  */
-export const CLICK_DETECTION_TIMEOUT_MS = 50;
+const CLICK_DETECTION_TIMEOUT_MS = 50;
 
 /**
  * Click threshold for fallback click detection (milliseconds)
  */
-export const CLICK_DETECTION_THRESHOLD_MS = 200;
+const CLICK_DETECTION_THRESHOLD_MS = 200;
 
 // ========================================
 // Mouse Effects Constants
@@ -237,22 +237,22 @@ export const CLICK_DETECTION_THRESHOLD_MS = 200;
 /**
  * Default time difference for velocity calculation (milliseconds)
  */
-export const DEFAULT_TIME_DIFF_MS = 16;
+const DEFAULT_TIME_DIFF_MS = 16;
 
 /**
  * Speed threshold for adaptive smoothing
  */
-export const ADAPTIVE_SMOOTHING_SPEED_THRESHOLD = 10;
+const ADAPTIVE_SMOOTHING_SPEED_THRESHOLD = 10;
 
 /**
  * Adaptive smoothing factor reduction (0-1)
  */
-export const ADAPTIVE_SMOOTHING_FACTOR = 0.5;
+const ADAPTIVE_SMOOTHING_FACTOR = 0.5;
 
 /**
  * Duplicate position threshold in pixels
  */
-export const DUPLICATE_POSITION_THRESHOLD = 1;
+const DUPLICATE_POSITION_THRESHOLD = 1;
 
 // ========================================
 // Smooth Motion Constants
@@ -286,42 +286,42 @@ export const SMOOTHDAMP_CONVERGENCE_THRESHOLD = 0.0001;
 /**
  * Maximum log entries to prevent memory issues
  */
-export const MAX_LOG_ENTRIES = 500;
+const MAX_LOG_ENTRIES = 500;
 
 /**
  * Timeline pixels per second for rendering
  */
-export const TIMELINE_PIXELS_PER_SECOND = 100;
+const TIMELINE_PIXELS_PER_SECOND = 100;
 
 /**
  * Keyframe detection tolerance in milliseconds
  */
-export const KEYFRAME_DETECTION_TOLERANCE_MS = 100;
+const KEYFRAME_DETECTION_TOLERANCE_MS = 100;
 
 /**
  * Canvas line width for drawing overlays
  */
-export const CANVAS_LINE_WIDTH = 2;
+const CANVAS_LINE_WIDTH = 2;
 
 /**
  * Timeout for UI operations (milliseconds)
  */
-export const UI_TIMEOUT_SHORT_MS = 100;
-export const UI_TIMEOUT_MEDIUM_MS = 1000;
-export const UI_TIMEOUT_LONG_MS = 2000;
-export const UI_TIMEOUT_VERY_LONG_MS = 10000;
+const UI_TIMEOUT_SHORT_MS = 100;
+const UI_TIMEOUT_MEDIUM_MS = 1000;
+const UI_TIMEOUT_LONG_MS = 2000;
+const UI_TIMEOUT_VERY_LONG_MS = 10000;
 
 /**
  * Timeline tick intervals based on duration (milliseconds)
  */
-export const TIMELINE_TICK_INTERVAL_SHORT = 1000; // 1 second
-export const TIMELINE_TICK_INTERVAL_MEDIUM = 5000; // 5 seconds
-export const TIMELINE_TICK_INTERVAL_LONG = 10000; // 10 seconds
+const TIMELINE_TICK_INTERVAL_SHORT = 1000; // 1 second
+const TIMELINE_TICK_INTERVAL_MEDIUM = 5000; // 5 seconds
+const TIMELINE_TICK_INTERVAL_LONG = 10000; // 10 seconds
 
 /**
  * Timeline duration thresholds for tick interval selection (milliseconds)
  */
-export const TIMELINE_DURATION_THRESHOLD_SHORT = 10000;
-export const TIMELINE_DURATION_THRESHOLD_MEDIUM = 60000;
-export const TIMELINE_DURATION_THRESHOLD_LONG = 300000;
+const TIMELINE_DURATION_THRESHOLD_SHORT = 10000;
+const TIMELINE_DURATION_THRESHOLD_MEDIUM = 60000;
+const TIMELINE_DURATION_THRESHOLD_LONG = 300000;
 

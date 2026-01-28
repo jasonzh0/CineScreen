@@ -154,8 +154,6 @@ function preloadCursorImages(): void {
 // Start preloading immediately
 preloadCursorImages();
 
-// Re-export interpolateCursorPosition for backwards compatibility
-export { interpolateCursorPosition } from '../../processing/cursor-utils';
 
 /**
  * Render cursor on canvas

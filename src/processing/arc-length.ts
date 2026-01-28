@@ -39,7 +39,7 @@ const ARC_LENGTH_TOLERANCE = 0.0001;
  * Evaluate a cubic Bezier curve at parameter t
  * B(t) = (1-t)³P₀ + 3(1-t)²tP₁ + 3(1-t)t²P₂ + t³P₃
  */
-export function evaluateCubicBezier(
+function evaluateCubicBezier(
   p0: Point2D,
   p1: Point2D,
   p2: Point2D,
@@ -62,7 +62,7 @@ export function evaluateCubicBezier(
  * Evaluate the derivative of a cubic Bezier curve at parameter t
  * B'(t) = 3(1-t)²(P₁-P₀) + 6(1-t)t(P₂-P₁) + 3t²(P₃-P₂)
  */
-export function evaluateCubicBezierDerivative(
+function evaluateCubicBezierDerivative(
   p0: Point2D,
   p1: Point2D,
   p2: Point2D,
@@ -82,14 +82,14 @@ export function evaluateCubicBezierDerivative(
 /**
  * Calculate the magnitude (length) of a 2D vector
  */
-export function magnitude(p: Point2D): number {
+function magnitude(p: Point2D): number {
   return Math.sqrt(p.x * p.x + p.y * p.y);
 }
 
 /**
  * Calculate Euclidean distance between two points
  */
-export function distance(p1: Point2D, p2: Point2D): number {
+function distance(p1: Point2D, p2: Point2D): number {
   const dx = p2.x - p1.x;
   const dy = p2.y - p1.y;
   return Math.sqrt(dx * dx + dy * dy);
@@ -107,7 +107,7 @@ interface ArcLengthEntry {
  * Build an arc-length lookup table for a cubic Bezier curve
  * Uses numerical integration (trapezoidal rule with many samples)
  */
-export function buildArcLengthTable(
+function buildArcLengthTable(
   p0: Point2D,
   p1: Point2D,
   p2: Point2D,
@@ -138,7 +138,7 @@ export function buildArcLengthTable(
  * Find the parameter t for a given arc length using binary search
  * Returns the t value such that the arc length from 0 to t equals targetLength
  */
-export function getParameterAtArcLength(
+function getParameterAtArcLength(
   table: ArcLengthEntry[],
   targetLength: number
 ): number {
@@ -177,7 +177,7 @@ export function getParameterAtArcLength(
 /**
  * Get the total arc length of a cubic Bezier curve
  */
-export function getTotalArcLength(table: ArcLengthEntry[]): number {
+function getTotalArcLength(table: ArcLengthEntry[]): number {
   return table[table.length - 1].arcLength;
 }
 
@@ -185,7 +185,7 @@ export function getTotalArcLength(table: ArcLengthEntry[]): number {
  * Cubic Bezier curve with arc-length parameterization
  * Provides uniform-speed traversal along the curve
  */
-export class ArcLengthBezier {
+class ArcLengthBezier {
   private p0: Point2D;
   private p1: Point2D;
   private p2: Point2D;
@@ -247,7 +247,7 @@ export class ArcLengthBezier {
 /**
  * Apply easing function to a value
  */
-export function applyEasingFunction(t: number, easing: EasingType): number {
+function applyEasingFunction(t: number, easing: EasingType): number {
   switch (easing) {
     case 'linear':
       return t;
@@ -277,7 +277,7 @@ export function applyEasingFunction(t: number, easing: EasingType): number {
  * @param easing - Easing function to apply
  * @returns Interpolated point
  */
-export function interpolateLinearArcLength(
+function interpolateLinearArcLength(
   start: Point2D,
   end: Point2D,
   progress: number,
@@ -308,7 +308,7 @@ export function interpolateLinearArcLength(
  * @param tension - Controls how curved the path is (0 = straight line, 1 = maximum curve)
  * @returns Control points [p0, p1, p2, p3] for a cubic Bezier
  */
-export function createSmoothBezier(
+function createSmoothBezier(
   start: Point2D,
   end: Point2D,
   tension: number = 0.5
@@ -350,7 +350,7 @@ export function createSmoothBezier(
  * @param arcLengthTable - Pre-computed arc-length table (optional, will be computed if not provided)
  * @returns Interpolated point
  */
-export function interpolateBezierArcLength(
+function interpolateBezierArcLength(
   p0: Point2D,
   p1: Point2D,
   p2: Point2D,
@@ -465,7 +465,7 @@ export function interpolateCatmullRomArcLength(
  * @param easing - Easing function to apply to overall progress
  * @returns Interpolated point
  */
-export function interpolatePathArcLength(
+function interpolatePathArcLength(
   points: Point2D[],
   progress: number,
   easing: EasingType = 'linear'

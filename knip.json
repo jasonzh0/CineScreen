@@ -1,0 +1,23 @@
+{
+  "$schema": "https://unpkg.com/knip@5/schema.json",
+  "entry": [
+    "src/main/main.ts",
+    "src/renderer/main/main.tsx",
+    "src/renderer/studio/main.tsx",
+    "src/renderer/recording-bar/main.tsx",
+    "src/renderer/preload.ts",
+    "src/renderer/recording-bar-preload.ts",
+    "build/notarize.js"
+  ],
+  "project": [
+    "src/**/*.{ts,tsx}",
+    "build/**/*.js"
+  ],
+  "ignore": [
+    "website/**"
+  ],
+  "ignoreDependencies": [
+    "electron",
+    "tailwindcss"
+  ]
+}

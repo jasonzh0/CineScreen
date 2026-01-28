@@ -17,7 +17,7 @@ const typeStyles = {
   info: 'bg-blue-500/95 border-blue-500',
 };
 
-export function Toast({ message, type = 'info', duration = 4000, onClose }: ToastProps) {
+function Toast({ message, type = 'info', duration = 4000, onClose }: ToastProps) {
   const [isVisible, setIsVisible] = useState(false);
   const [isLeaving, setIsLeaving] = useState(false);
 

@@ -83,5 +83,5 @@ export function createLogger(prefix: string): Logger {
 /**
  * Default logger (no prefix)
  */
-export const logger = createLogger('App');
+const logger = createLogger('App');
 

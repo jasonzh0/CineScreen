@@ -7,7 +7,7 @@ let recordingStartTime: number = 0;
 
 const isDev = process.env.NODE_ENV === 'development' || !require('electron').app.isPackaged;
 
-export function createRecordingBarWindow(): BrowserWindow {
+function createRecordingBarWindow(): BrowserWindow {
   if (recordingBarWindow && !recordingBarWindow.isDestroyed()) {
     return recordingBarWindow;
   }
@@ -102,7 +102,7 @@ export function destroyRecordingBar(): void {
   }
 }
 
-export function getRecordingBarWindow(): BrowserWindow | null {
+function getRecordingBarWindow(): BrowserWindow | null {
   return recordingBarWindow;
 }
 
@@ -138,7 +138,7 @@ function sendStateUpdate(state: { isRecording: boolean; elapsedMs: number }): vo
   }
 }
 
-export function sendTimerUpdate(elapsedMs: number): void {
+function sendTimerUpdate(elapsedMs: number): void {
   if (recordingBarWindow && !recordingBarWindow.isDestroyed()) {
     recordingBarWindow.webContents.send('recording-timer-update', elapsedMs);
   }

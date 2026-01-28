@@ -27,7 +27,7 @@ export interface ZoomSection {
 /**
  * Calculate zoom region based on mouse position and zoom config
  */
-export function calculateZoomRegion(
+function calculateZoomRegion(
   mouseX: number,
   mouseY: number,
   videoDimensions: VideoDimensions,
@@ -225,7 +225,7 @@ export function generateSmoothedZoom(
  * Arc-length parameterization ensures the zoom center moves at uniform perceived
  * speed regardless of the X/Y distance ratio between regions.
  */
-export function getZoomRegionAtTimestamp(
+function getZoomRegionAtTimestamp(
   regions: ZoomRegion[],
   timestamp: number,
   tolerance: number = 16

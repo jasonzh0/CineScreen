@@ -35,7 +35,7 @@ const cursorCache: Map<string, Buffer> = new Map();
 /**
  * Clear the cursor cache (call between exports to free memory)
  */
-export function clearCursorCache(): void {
+function clearCursorCache(): void {
   cursorCache.clear();
 }
 

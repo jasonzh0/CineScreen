@@ -185,14 +185,4 @@ export async function validateVideoFile(
   }
 }
 
-/**
- * @deprecated Use validateVideoFile instead. This function is kept for backwards compatibility.
- */
-export async function validateMp4File(
-  filePath: string,
-  maxRetries: number = 5,
-  retryDelayMs: number = 500
-): Promise<void> {
-  return validateVideoFile(filePath, maxRetries, retryDelayMs);
-}
 

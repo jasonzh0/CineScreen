@@ -155,7 +155,7 @@ const CURSOR_SHAPE_MAP: Record<string, string> = {
 /**
  * Get cursor asset path for a given shape
  */
-export function getCursorAssetPath(shape: string): string | null {
+function getCursorAssetPath(shape: string): string | null {
   const assetFileName = CURSOR_SHAPE_MAP[shape] || CURSOR_SHAPE_MAP.arrow;
   const assetsDir = getAssetsDir();
   const assetPath = join(assetsDir, assetFileName);
@@ -233,7 +233,7 @@ function loadAndScaleSVGCursor(assetPath: string, targetSize: number): string {
  * Generate SVG cursor based on shape and size
  * Loads from local assets if available, otherwise generates SVG
  */
-export function generateCursorSVG(config: CursorConfig | undefined): string {
+function generateCursorSVG(config: CursorConfig | undefined): string {
   // Provide default config if undefined
   if (!config) {
     config = {

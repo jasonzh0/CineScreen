@@ -34,8 +34,6 @@
     "@types/node": "^20.10.0",
     "@types/react": "^19.2.10",
     "@types/react-dom": "^19.2.3",
-    "@typescript-eslint/eslint-plugin": "^6.13.0",
-    "@typescript-eslint/parser": "^6.13.0",
     "@vitejs/plugin-react": "^5.1.2",
     "concurrently": "^8.2.2",
     "electron": "^39.2.7",
@@ -46,8 +44,6 @@
     "vite": "^7.2.7"
   },
   "dependencies": {
-    "@ffmpeg/ffmpeg": "^0.12.6",
-    "@ffmpeg/util": "^0.12.1",
     "ffmpeg-static": "^5.2.0",
     "koffi": "^2.9.0",
     "react": "^19.2.4",
