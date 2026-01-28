@@ -14,6 +14,8 @@ import {
   CURSOR_CLICK_ANIMATION_DURATION_MS,
   CURSOR_CLICK_ANIMATION_SCALE,
 } from '../utils/constants';
+// Re-export cursor constants from shared module
+export { CURSOR_HOTSPOT_MAP, getCursorHotspot } from '../cursor/constants';
 
 /**
  * Cursor smooth time for glide effect
@@ -136,56 +138,6 @@ export class CursorTypeStabilizer {
   }
 }
 
-/**
- * Cursor hotspot offsets (x, y) within the 32x32 viewBox
- * These represent the click point within the cursor image
- */
-export const CURSOR_HOTSPOT_MAP: Record<string, { x: number; y: number }> = {
-  // Standard cursors
-  arrow: { x: 10, y: 7 },
-  pointer: { x: 9, y: 8 },
-  hand: { x: 10, y: 10 },
-  openhand: { x: 10, y: 10 },
-  closedhand: { x: 10, y: 10 },
-  crosshair: { x: 16, y: 16 },
-  ibeam: { x: 13, y: 8 },
-  ibeamvertical: { x: 8, y: 16 },
-
-  // Resize cursors - centered
-  move: { x: 16, y: 16 },
-  resizeleft: { x: 16, y: 16 },
-  resizeright: { x: 16, y: 16 },
-  resizeleftright: { x: 16, y: 16 },
-  resizeup: { x: 16, y: 16 },
-  resizedown: { x: 16, y: 16 },
-  resizeupdown: { x: 16, y: 16 },
-  resize: { x: 16, y: 16 },
-  resizenortheast: { x: 16, y: 16 },
-  resizesouthwest: { x: 16, y: 16 },
-  resizenorthwest: { x: 16, y: 16 },
-  resizesoutheast: { x: 16, y: 16 },
-
-  // Action cursors
-  copy: { x: 10, y: 7 },
-  dragcopy: { x: 10, y: 7 },
-  draglink: { x: 10, y: 7 },
-  help: { x: 10, y: 7 },
-  notallowed: { x: 16, y: 16 },
-  contextmenu: { x: 10, y: 7 },
-  poof: { x: 16, y: 16 },
-
-  // Zoom/screenshot cursors
-  zoomin: { x: 10, y: 10 },
-  zoomout: { x: 10, y: 10 },
-  screenshot: { x: 16, y: 16 },
-};
-
-/**
- * Get cursor hotspot offset for a given shape
- */
-export function getCursorHotspot(shape: string): { x: number; y: number } {
-  return CURSOR_HOTSPOT_MAP[shape] || CURSOR_HOTSPOT_MAP.arrow || { x: 10, y: 7 };
-}
 
 /**
  * Apply easing function based on type

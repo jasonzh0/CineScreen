@@ -126,7 +126,7 @@ export function hideRecordingBar(): void {
   }
 }
 
-export function destroyRecordingBar(): void {
+function destroyRecordingBar(): void {
   stopTimerUpdates();
 
   if (recordingBarWindow && !recordingBarWindow.isDestroyed()) {
