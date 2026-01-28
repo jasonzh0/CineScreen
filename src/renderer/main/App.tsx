@@ -1,4 +1,4 @@
-import React, { useState, useCallback } from 'react';
+import React, { useState, useCallback, useEffect } from 'react';
 import { Header } from './components/Header';
 import { TabNav, RecordingIcon, EditingIcon, PermissionsIcon, LogsIcon } from './components/TabNav';
 import { RecordingTab } from './components/tabs/RecordingTab';
@@ -10,6 +10,7 @@ import { ToastContainer } from '../shared/components';
 import { usePermissions, getPermissionName } from './hooks/usePermissions';
 import { useDebugLogs } from './hooks/useDebugLogs';
 import { useToast } from './hooks/useToast';
+import { useElectronAPI } from '../shared/hooks/useElectronAPI';
 
 const tabs = [
   { id: 'recording', label: 'Recording', icon: <RecordingIcon /> },
@@ -31,6 +32,20 @@ export function App() {
 
   const debugLogs = useDebugLogs();
   const { toasts, showToast, removeToast } = useToast();
+  const api = useElectronAPI();
+
+  // Listen for toast messages from main process
+  useEffect(() => {
+    if (!api?.onShowToast) return;
+
+    api.onShowToast((data) => {
+      showToast(data.message, data.type);
+    });
+
+    return () => {
+      api.removeRecordingBarListeners?.();
+    };
+  }, [api, showToast]);
 
   const handleRequestPermission = useCallback(async (type: 'screen-recording' | 'accessibility' | 'microphone') => {
     const result = await requestPermission(type);
@@ -66,6 +81,8 @@ export function App() {
       <div className="max-w-[600px] mx-auto p-8">
         <Header />
 
+        <RecordingControls showToast={showToast} />
+
         <TabNav
           tabs={tabs}
           activeTab={activeTab}
@@ -94,8 +111,6 @@ export function App() {
             />
           )}
         </div>
-
-        <RecordingControls showToast={showToast} />
 
         <ToastContainer toasts={toasts} onRemove={removeToast} />
       </div>

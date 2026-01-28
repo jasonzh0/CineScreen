@@ -1,4 +1,4 @@
-import React, { useState, useCallback } from 'react';
+import React, { useState, useCallback, useEffect } from 'react';
 import { Button, Select } from '../../../shared/components';
 import { SettingsGroup } from '../settings/SettingsGroup';
 import { useElectronAPI } from '../../../shared/hooks/useElectronAPI';
@@ -12,6 +12,14 @@ export function RecordingTab() {
   const api = useElectronAPI();
   const [outputPath, setOutputPath] = useState<string | null>(null);
   const [frameRate, setFrameRate] = useState('60');
+
+  // Load saved output path on mount
+  useEffect(() => {
+    if (!api?.getOutputPath) return;
+    api.getOutputPath().then((path) => {
+      if (path) setOutputPath(path);
+    });
+  }, [api]);
 
   const handleSelectPath = useCallback(async () => {
     if (!api?.selectOutputPath) return;

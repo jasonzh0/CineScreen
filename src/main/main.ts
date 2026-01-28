@@ -25,6 +25,7 @@ let recordingState: RecordingState = {
 };
 let currentRecordingConfig: RecordingConfig | null = null;
 let platformInstance: Platform | null = null;
+let configuredOutputPath: string | null = null;
 
 const isDev = !app.isPackaged;
 
@@ -46,8 +47,8 @@ function createWindow(): void {
     : join(process.resourcesPath, 'assets/icon.png');
 
   mainWindow = new BrowserWindow({
-    width: 1600,
-    height: 900,
+    width: 1400,
+    height: 800,
     icon: iconPath,
     show: false,
     backgroundColor: '#1a1a1a',
@@ -95,9 +96,17 @@ app.whenReady().then(() => {
     const recordingBar = getRecordingBarWindow();
     if (!recordingBar || recordingBar.isDestroyed()) {
       logger.info('App activated, showing recording bar');
-      showRecordingBarIdle();
+      if (recordingState.isRecording) {
+        showRecordingBar(recordingState.startTime || Date.now());
+      } else {
+        showRecordingBarIdle();
+      }
     } else if (!recordingBar.isVisible()) {
-      recordingBar.show();
+      if (recordingState.isRecording) {
+        showRecordingBar(recordingState.startTime || Date.now());
+      } else {
+        showRecordingBarIdle();
+      }
     }
   });
 });
@@ -458,7 +467,18 @@ ipcMain.handle('select-output-path', async () => {
     return null;
   }
 
+  // Store the configured output path
+  configuredOutputPath = result.filePath || null;
   return result.filePath;
+});
+
+ipcMain.handle('set-output-path', async (_, path: string | null) => {
+  configuredOutputPath = path;
+  return { success: true };
+});
+
+ipcMain.handle('get-output-path', async () => {
+  return configuredOutputPath;
 });
 
 ipcMain.handle('select-video-file', async () => {
@@ -887,7 +907,54 @@ ipcMain.handle('recording-bar-start', async () => {
   logger.debug('Permissions check result:', permissions);
   if (permissions.screenRecording.state !== 'granted' || permissions.accessibility.state !== 'granted') {
     logger.error('Required permissions not granted');
-    throw new Error('Required permissions not granted. Please grant Screen Recording and Accessibility permissions.');
+    // Open main window and show toast
+    if (!mainWindow || mainWindow.isDestroyed()) {
+      createWindow();
+    } else {
+      mainWindow.show();
+      mainWindow.focus();
+    }
+    // Wait for window to be ready then send toast
+    const sendToast = () => {
+      if (mainWindow && !mainWindow.isDestroyed()) {
+        mainWindow.webContents.send('show-toast', {
+          message: 'Please grant Screen Recording and Accessibility permissions before recording',
+          type: 'warning',
+        });
+      }
+    };
+    if (mainWindow?.webContents.isLoading()) {
+      mainWindow.webContents.once('did-finish-load', sendToast);
+    } else {
+      sendToast();
+    }
+    return { success: false, reason: 'permissions' };
+  }
+
+  // Check for output path
+  if (!configuredOutputPath) {
+    logger.error('Output path not configured');
+    // Open main window and show toast
+    if (!mainWindow || mainWindow.isDestroyed()) {
+      createWindow();
+    } else {
+      mainWindow.show();
+      mainWindow.focus();
+    }
+    const sendToast = () => {
+      if (mainWindow && !mainWindow.isDestroyed()) {
+        mainWindow.webContents.send('show-toast', {
+          message: 'Please set an output path before recording',
+          type: 'warning',
+        });
+      }
+    };
+    if (mainWindow?.webContents.isLoading()) {
+      mainWindow.webContents.once('did-finish-load', sendToast);
+    } else {
+      sendToast();
+    }
+    return { success: false, reason: 'output-path' };
   }
 
   // Initialize components
@@ -906,19 +973,18 @@ ipcMain.handle('recording-bar-start', async () => {
   const timestamp = Date.now();
   const tempVideoPath = join(tempDir, `recording_${timestamp}.mkv`);
   const tempMouseDataPath = join(tempDir, `mouse_${timestamp}.json`);
-  const outputPath = join(app.getPath('downloads'), `recording_${timestamp}.mp4`);
 
   recordingState = {
     isRecording: true,
     startTime: Date.now(),
     tempVideoPath,
     tempMouseDataPath,
-    outputPath,
+    outputPath: configuredOutputPath!,
   };
 
   // Create a default recording config
   currentRecordingConfig = {
-    outputPath,
+    outputPath: configuredOutputPath!,
     frameRate: DEFAULT_FRAME_RATE,
   };
 

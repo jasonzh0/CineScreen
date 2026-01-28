@@ -44,6 +44,12 @@ const electronAPI = {
   selectOutputPath: (): Promise<string | null> =>
     ipcRenderer.invoke('select-output-path'),
 
+  setOutputPath: (path: string | null): Promise<{ success: boolean }> =>
+    ipcRenderer.invoke('set-output-path', path),
+
+  getOutputPath: (): Promise<string | null> =>
+    ipcRenderer.invoke('get-output-path'),
+
   onDebugLog: (callback: (message: string) => void) => {
     ipcRenderer.on('debug-log', (_event, message: string) => callback(message));
   },
@@ -103,10 +109,15 @@ const electronAPI = {
     ipcRenderer.on('recording-cancelled', () => callback());
   },
 
+  onShowToast: (callback: (data: { message: string; type: 'success' | 'error' | 'info' | 'warning' }) => void) => {
+    ipcRenderer.on('show-toast', (_event, data) => callback(data));
+  },
+
   removeRecordingBarListeners: () => {
     ipcRenderer.removeAllListeners('recording-completed');
     ipcRenderer.removeAllListeners('restart-recording');
     ipcRenderer.removeAllListeners('recording-cancelled');
+    ipcRenderer.removeAllListeners('show-toast');
   },
 };
 

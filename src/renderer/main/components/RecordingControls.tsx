@@ -27,7 +27,7 @@ export function RecordingControls({ showToast }: RecordingControlsProps) {
   }, [api, showToast]);
 
   return (
-    <div className="mt-5 pt-4 border-t border-white/[0.04]">
+    <div className="mb-5">
       <Button
         variant="primary"
         className="w-full"

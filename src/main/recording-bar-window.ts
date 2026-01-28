@@ -10,9 +10,8 @@ let currentMode: RecordingBarMode = 'idle';
 
 const isDev = process.env.NODE_ENV === 'development' || !require('electron').app.isPackaged;
 
-const IDLE_WIDTH = 160;
-const RECORDING_WIDTH = 280;
-const BAR_HEIGHT = 56;
+const BAR_WIDTH = 208;
+const BAR_HEIGHT = 48;
 
 function createRecordingBarWindow(): BrowserWindow {
   if (recordingBarWindow && !recordingBarWindow.isDestroyed()) {
@@ -23,10 +22,8 @@ function createRecordingBarWindow(): BrowserWindow {
     ? join(__dirname, '../renderer/recording-bar-preload.js')
     : join(__dirname, '../renderer/recording-bar-preload.js');
 
-  const width = currentMode === 'idle' ? IDLE_WIDTH : RECORDING_WIDTH;
-
   recordingBarWindow = new BrowserWindow({
-    width,
+    width: BAR_WIDTH,
     height: BAR_HEIGHT,
     frame: false,
     transparent: true,
@@ -83,8 +80,7 @@ function positionBarAtBottomCenter(): void {
 function updateBarSize(): void {
   if (!recordingBarWindow || recordingBarWindow.isDestroyed()) return;
 
-  const width = currentMode === 'idle' ? IDLE_WIDTH : RECORDING_WIDTH;
-  recordingBarWindow.setSize(width, BAR_HEIGHT);
+  recordingBarWindow.setSize(BAR_WIDTH, BAR_HEIGHT);
   positionBarAtBottomCenter();
 }
 

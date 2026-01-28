@@ -19,20 +19,21 @@ export function App() {
     openMainWindow,
   } = useRecordingState();
 
+  const barClasses = `flex items-center gap-1.5 px-2 py-1.5 h-12 w-[208px]
+                      bg-neutral-900/85 backdrop-blur-xl
+                      shadow-[0_4px_24px_rgba(0,0,0,0.4)]
+                      select-none font-sans
+                      [-webkit-app-region:drag]`;
+
   // Idle mode: Record button + Menu
   if (mode === 'idle') {
     return (
-      <div
-        className="flex items-center gap-2 px-3 py-2 h-14 w-[160px]
-                   bg-neutral-900/85 backdrop-blur-xl
-                   rounded-[28px] border border-white/10
-                   shadow-[0_4px_24px_rgba(0,0,0,0.4),0_0_0_1px_rgba(0,0,0,0.2)]
-                   select-none font-sans
-                   [-webkit-app-region:drag]"
-      >
+      <div className={barClasses}>
         <RecordButton onClick={startRecording} disabled={isLoading} />
 
         <Divider />
+
+        <div className="flex-1" />
 
         <MenuButton onOpenSettings={openMainWindow} />
       </div>
@@ -41,14 +42,7 @@ export function App() {
 
   // Recording mode: Stop, timer, restart, cancel
   return (
-    <div
-      className="flex items-center gap-2 px-3 py-2 h-14 w-[280px]
-                 bg-neutral-900/85 backdrop-blur-xl
-                 rounded-[28px] border border-white/10
-                 shadow-[0_4px_24px_rgba(0,0,0,0.4),0_0_0_1px_rgba(0,0,0,0.2)]
-                 select-none font-sans
-                 [-webkit-app-region:drag]"
-    >
+    <div className={barClasses}>
       <StopButton onClick={stop} disabled={isLoading} />
 
       <Divider />

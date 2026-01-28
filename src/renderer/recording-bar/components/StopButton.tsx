@@ -11,7 +11,7 @@ export function StopButton({ onClick, disabled }: StopButtonProps) {
       onClick={onClick}
       disabled={disabled}
       title="Stop Recording"
-      className="relative w-10 h-10 rounded-full flex items-center justify-center
+      className="relative w-9 h-9 rounded-full flex items-center justify-center
                  bg-gradient-to-b from-red-500 to-red-600 text-white
                  shadow-[0_2px_8px_rgba(230,57,57,0.4)]
                  hover:from-red-400 hover:to-red-500

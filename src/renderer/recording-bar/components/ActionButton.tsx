@@ -27,7 +27,7 @@ const titles = {
 
 export function ActionButton({ icon, onClick, disabled, variant = 'default' }: ActionButtonProps) {
   const baseClasses = `
-    w-8 h-8 rounded-lg flex items-center justify-center
+    w-7 h-7 rounded-lg flex items-center justify-center
     transition-all duration-150 ease-out
     active:scale-95
     disabled:opacity-50 disabled:cursor-not-allowed

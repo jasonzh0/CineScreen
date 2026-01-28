@@ -72,7 +72,6 @@ export class MouseTracker {
 
         // Track cursor type changes
         if (cursorType !== this.lastCursorType) {
-          logger.debug(`[CURSOR] Type changed from ${this.lastCursorType} to ${cursorType} at ${timestamp}ms`);
           this.lastCursorType = cursorType;
         }
 
