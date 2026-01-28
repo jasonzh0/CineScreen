@@ -6,7 +6,7 @@ import { MouseTracker } from './mouse-tracker';
 import { VideoProcessor } from '../processing/video-processor';
 import { MetadataExporter } from '../processing/metadata-exporter';
 import { createStudioWindow, getStudioWindow } from './studio-window';
-import { showRecordingBar, hideRecordingBar, destroyRecordingBar, stopRecordingBarTimer } from './recording-bar-window';
+import { showRecordingBar, hideRecordingBar, destroyRecordingBar, stopRecordingBarTimer, showRecordingBarIdle, getRecordingBarWindow } from './recording-bar-window';
 import { getPlatform } from '../platform';
 import type { Platform } from '../platform';
 import type { RecordingConfig, CursorConfig, RecordingState, ZoomConfig, MouseEffectsConfig } from '../types';
@@ -46,8 +46,8 @@ function createWindow(): void {
     : join(process.resourcesPath, 'assets/icon.png');
 
   mainWindow = new BrowserWindow({
-    width: 500,
-    height: 800,
+    width: 1600,
+    height: 900,
     icon: iconPath,
     show: false,
     backgroundColor: '#1a1a1a',
@@ -87,13 +87,17 @@ function createWindow(): void {
 }
 
 app.whenReady().then(() => {
-  logger.info('App ready, creating window');
-  createWindow();
+  logger.info('App ready, showing recording bar in idle mode');
+  showRecordingBarIdle();
 
   app.on('activate', () => {
-    if (BrowserWindow.getAllWindows().length === 0) {
-      logger.info('App activated, creating new window');
-      createWindow();
+    // Show recording bar if no windows are visible
+    const recordingBar = getRecordingBarWindow();
+    if (!recordingBar || recordingBar.isDestroyed()) {
+      logger.info('App activated, showing recording bar');
+      showRecordingBarIdle();
+    } else if (!recordingBar.isVisible()) {
+      recordingBar.show();
     }
   });
 });
@@ -641,12 +645,13 @@ async function cleanupRecording(saveFiles: boolean = false): Promise<void> {
   // Show system cursor
   await platform.cursor.ensureVisible();
 
-  // Hide recording bar and show main window
-  hideRecordingBar();
+  // Disable content protection on main window if it exists
   if (mainWindow && !mainWindow.isDestroyed()) {
-    mainWindow.show();
     mainWindow.setContentProtection(false);
   }
+
+  // Show recording bar in idle mode
+  showRecordingBarIdle();
 
   // Delete temp files if not saving
   if (!saveFiles) {
@@ -712,12 +717,13 @@ ipcMain.handle('recording-bar-stop', async () => {
     logger.info('Showing system cursor...');
     await platform.cursor.ensureVisible();
 
-    // Hide recording bar and show main window
-    hideRecordingBar();
+    // Disable content protection on main window if it exists
     if (mainWindow && !mainWindow.isDestroyed()) {
-      mainWindow.show();
       mainWindow.setContentProtection(false);
     }
+
+    // Show recording bar in idle mode
+    showRecordingBarIdle();
 
     if (!videoPath) {
       throw new Error('Failed to stop recording');
@@ -848,6 +854,119 @@ ipcMain.handle('recording-bar-cancel', async () => {
   // Notify main window
   if (mainWindow && !mainWindow.isDestroyed()) {
     mainWindow.webContents.send('recording-cancelled');
+  }
+});
+
+// Open main window from recording bar menu
+ipcMain.handle('open-main-window', async () => {
+  logger.info('IPC: open-main-window called');
+
+  if (!mainWindow || mainWindow.isDestroyed()) {
+    createWindow();
+  } else {
+    mainWindow.show();
+    mainWindow.focus();
+  }
+});
+
+// Start recording from recording bar
+ipcMain.handle('recording-bar-start', async () => {
+  logger.info('IPC: recording-bar-start called');
+
+  if (recordingState.isRecording) {
+    logger.warn('Recording already in progress');
+    return;
+  }
+
+  // Initialize platform
+  const platform = await initPlatform();
+
+  // Check permissions first
+  logger.debug('Checking permissions...');
+  const permissions = platform.permissions.getDetailedStatus();
+  logger.debug('Permissions check result:', permissions);
+  if (permissions.screenRecording.state !== 'granted' || permissions.accessibility.state !== 'granted') {
+    logger.error('Required permissions not granted');
+    throw new Error('Required permissions not granted. Please grant Screen Recording and Accessibility permissions.');
+  }
+
+  // Initialize components
+  logger.info('Initializing screen capture and mouse tracker');
+  screenCapture = new ScreenCapture();
+  mouseTracker = new MouseTracker();
+
+  // Generate temp file paths
+  const tempDir = join(app.getPath('temp'), 'screen-recorder');
+  logger.debug('Temp directory:', tempDir);
+  if (!existsSync(tempDir)) {
+    logger.debug('Creating temp directory');
+    mkdirSync(tempDir, { recursive: true });
+  }
+
+  const timestamp = Date.now();
+  const tempVideoPath = join(tempDir, `recording_${timestamp}.mkv`);
+  const tempMouseDataPath = join(tempDir, `mouse_${timestamp}.json`);
+  const outputPath = join(app.getPath('downloads'), `recording_${timestamp}.mp4`);
+
+  recordingState = {
+    isRecording: true,
+    startTime: Date.now(),
+    tempVideoPath,
+    tempMouseDataPath,
+    outputPath,
+  };
+
+  // Create a default recording config
+  currentRecordingConfig = {
+    outputPath,
+    frameRate: DEFAULT_FRAME_RATE,
+  };
+
+  try {
+    // Hide the app window from screen capture
+    if (mainWindow && !mainWindow.isDestroyed()) {
+      mainWindow.setContentProtection(true);
+    }
+
+    // Hide system cursor FIRST
+    logger.info('Hiding system cursor...');
+    await platform.cursor.hide();
+
+    // Buffer time after cursor hide
+    await new Promise(resolve => setTimeout(resolve, 100));
+
+    // Start mouse tracking
+    logger.info('Starting mouse tracking...');
+    const mouseTrackingStartTime = Date.now();
+    await mouseTracker.startTracking();
+    logger.info('Mouse tracking started');
+
+    // Start screen recording
+    logger.info('Starting screen recording...');
+    await screenCapture.startRecording({
+      ...currentRecordingConfig,
+      outputPath: tempVideoPath,
+    });
+    const videoStartTime = Date.now();
+    const mouseToVideoOffset = videoStartTime - mouseTrackingStartTime;
+    recordingState.mouseToVideoOffset = mouseToVideoOffset;
+    logger.info(`Screen recording started successfully. Mouse-to-video offset: ${mouseToVideoOffset}ms`);
+
+    // Hide the recording bar completely during recording
+    hideRecordingBar();
+
+    return { success: true };
+  } catch (error) {
+    logger.error('Error starting recording from bar:', error);
+    recordingState.isRecording = false;
+    mouseTracker?.stopTracking();
+    await platform.cursor.show();
+    if (mainWindow) {
+      mainWindow.setContentProtection(false);
+    }
+    // Show recording bar again in idle mode on error
+    showRecordingBarIdle();
+    throw error;
   }
 });
 

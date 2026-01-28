@@ -1,11 +1,18 @@
 import { BrowserWindow, screen } from 'electron';
 import { join } from 'path';
 
+type RecordingBarMode = 'idle' | 'recording';
+
 let recordingBarWindow: BrowserWindow | null = null;
 let timerInterval: ReturnType<typeof setInterval> | null = null;
 let recordingStartTime: number = 0;
+let currentMode: RecordingBarMode = 'idle';
 
 const isDev = process.env.NODE_ENV === 'development' || !require('electron').app.isPackaged;
+
+const IDLE_WIDTH = 160;
+const RECORDING_WIDTH = 280;
+const BAR_HEIGHT = 56;
 
 function createRecordingBarWindow(): BrowserWindow {
   if (recordingBarWindow && !recordingBarWindow.isDestroyed()) {
@@ -16,9 +23,11 @@ function createRecordingBarWindow(): BrowserWindow {
     ? join(__dirname, '../renderer/recording-bar-preload.js')
     : join(__dirname, '../renderer/recording-bar-preload.js');
 
+  const width = currentMode === 'idle' ? IDLE_WIDTH : RECORDING_WIDTH;
+
   recordingBarWindow = new BrowserWindow({
-    width: 280,
-    height: 56,
+    width,
+    height: BAR_HEIGHT,
     frame: false,
     transparent: true,
     alwaysOnTop: true,
@@ -71,17 +80,45 @@ function positionBarAtBottomCenter(): void {
   recordingBarWindow.setPosition(x, y);
 }
 
+function updateBarSize(): void {
+  if (!recordingBarWindow || recordingBarWindow.isDestroyed()) return;
+
+  const width = currentMode === 'idle' ? IDLE_WIDTH : RECORDING_WIDTH;
+  recordingBarWindow.setSize(width, BAR_HEIGHT);
+  positionBarAtBottomCenter();
+}
+
+export function showRecordingBarIdle(): void {
+  currentMode = 'idle';
+  recordingStartTime = 0;
+  stopTimerUpdates();
+
+  if (!recordingBarWindow || recordingBarWindow.isDestroyed()) {
+    createRecordingBarWindow();
+  } else {
+    updateBarSize();
+  }
+
+  if (recordingBarWindow) {
+    recordingBarWindow.show();
+    sendStateUpdate({ isRecording: false, elapsedMs: 0, mode: 'idle' });
+  }
+}
+
 export function showRecordingBar(startTime: number): void {
+  currentMode = 'recording';
   recordingStartTime = startTime;
 
   if (!recordingBarWindow || recordingBarWindow.isDestroyed()) {
     createRecordingBarWindow();
+  } else {
+    updateBarSize();
   }
 
   if (recordingBarWindow) {
     recordingBarWindow.show();
     startTimerUpdates();
-    sendStateUpdate({ isRecording: true, elapsedMs: 0 });
+    sendStateUpdate({ isRecording: true, elapsedMs: 0, mode: 'recording' });
   }
 }
 
@@ -102,7 +139,7 @@ export function destroyRecordingBar(): void {
   }
 }
 
-function getRecordingBarWindow(): BrowserWindow | null {
+export function getRecordingBarWindow(): BrowserWindow | null {
   return recordingBarWindow;
 }
 
@@ -114,7 +151,7 @@ function startTimerUpdates(): void {
   timerInterval = setInterval(() => {
     if (recordingBarWindow && !recordingBarWindow.isDestroyed()) {
       const elapsedMs = Date.now() - recordingStartTime;
-      sendStateUpdate({ isRecording: true, elapsedMs });
+      sendStateUpdate({ isRecording: true, elapsedMs, mode: 'recording' });
     }
   }, 100); // Update every 100ms for smooth timer display
 }
@@ -129,17 +166,11 @@ function stopTimerUpdates(): void {
 export function stopRecordingBarTimer(): void {
   stopTimerUpdates();
   // Send final state to indicate recording has stopped
-  sendStateUpdate({ isRecording: false, elapsedMs: Date.now() - recordingStartTime });
+  sendStateUpdate({ isRecording: false, elapsedMs: Date.now() - recordingStartTime, mode: 'idle' });
 }
 
-function sendStateUpdate(state: { isRecording: boolean; elapsedMs: number }): void {
+function sendStateUpdate(state: { isRecording: boolean; elapsedMs: number; mode: RecordingBarMode }): void {
   if (recordingBarWindow && !recordingBarWindow.isDestroyed()) {
     recordingBarWindow.webContents.send('recording-state-update', state);
-  }
-}
-
-function sendTimerUpdate(elapsedMs: number): void {
-  if (recordingBarWindow && !recordingBarWindow.isDestroyed()) {
-    recordingBarWindow.webContents.send('recording-timer-update', elapsedMs);
   }
 }

@@ -11,10 +11,8 @@ interface DebugLogEntry {
 
 interface DebugLogsProps {
   logs: DebugLogEntry[];
-  isVisible: boolean;
   autoScroll: boolean;
   containerRef: React.RefObject<HTMLDivElement | null>;
-  onToggleVisible: () => void;
   onClear: () => void;
   onAutoScrollChange: (value: boolean) => void;
 }
@@ -27,21 +25,16 @@ const levelColors = {
 
 export function DebugLogs({
   logs,
-  isVisible,
   autoScroll,
   containerRef,
-  onToggleVisible,
   onClear,
   onAutoScrollChange,
 }: DebugLogsProps) {
   return (
-    <Card className="mt-5">
-      <div className="flex justify-between items-center mb-0">
+    <Card>
+      <div className="flex justify-between items-center mb-4">
         <CardTitle className="mb-0">Debug Logs</CardTitle>
         <div className="flex items-center gap-2">
-          <Button size="sm" variant="secondary" onClick={onToggleVisible}>
-            {isVisible ? 'Hide Logs' : 'Show Logs'}
-          </Button>
           <Button size="sm" variant="secondary" onClick={onClear}>
             Clear
           </Button>
@@ -57,22 +50,20 @@ export function DebugLogs({
         </div>
       </div>
 
-      {isVisible && (
-        <div
-          ref={containerRef as React.RefObject<HTMLDivElement>}
-          className="mt-4 max-h-[300px] overflow-y-auto bg-neutral-900 rounded-md p-3
-                     font-mono text-xs leading-relaxed"
-        >
-          {logs.map((entry) => (
-            <div
-              key={entry.id}
-              className={cn('mb-1 break-words whitespace-pre-wrap', levelColors[entry.level])}
-            >
-              [{entry.timestamp}] {entry.message}
-            </div>
-          ))}
-        </div>
-      )}
+      <div
+        ref={containerRef as React.RefObject<HTMLDivElement>}
+        className="max-h-[400px] overflow-y-auto bg-neutral-900 rounded-md p-3
+                   font-mono text-xs leading-relaxed"
+      >
+        {logs.map((entry) => (
+          <div
+            key={entry.id}
+            className={cn('mb-1 break-words whitespace-pre-wrap', levelColors[entry.level])}
+          >
+            [{entry.timestamp}] {entry.message}
+          </div>
+        ))}
+      </div>
     </Card>
   );
 }

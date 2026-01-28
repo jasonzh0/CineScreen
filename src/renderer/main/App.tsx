@@ -1,20 +1,21 @@
 import React, { useState, useCallback } from 'react';
 import { Header } from './components/Header';
-import { TabNav, RecordingIcon, EditingIcon } from './components/TabNav';
+import { TabNav, RecordingIcon, EditingIcon, PermissionsIcon, LogsIcon } from './components/TabNav';
 import { RecordingTab } from './components/tabs/RecordingTab';
 import { EditingTab } from './components/tabs/EditingTab';
+import { PermissionsTab } from './components/tabs/PermissionsTab';
+import { LogsTab } from './components/tabs/LogsTab';
 import { RecordingControls } from './components/RecordingControls';
-import { DebugLogs } from './components/DebugLogs';
-import { ProcessingProgress } from './components/ProcessingProgress';
 import { ToastContainer } from '../shared/components';
 import { usePermissions, getPermissionName } from './hooks/usePermissions';
-import { useRecording } from './hooks/useRecording';
 import { useDebugLogs } from './hooks/useDebugLogs';
 import { useToast } from './hooks/useToast';
 
 const tabs = [
   { id: 'recording', label: 'Recording', icon: <RecordingIcon /> },
   { id: 'editing', label: 'Editing', icon: <EditingIcon /> },
+  { id: 'permissions', label: 'Permissions', icon: <PermissionsIcon /> },
+  { id: 'logs', label: 'Logs', icon: <LogsIcon /> },
 ];
 
 export function App() {
@@ -27,14 +28,6 @@ export function App() {
     checkPermissions,
     requestPermission,
   } = usePermissions();
-
-  const {
-    isRecording,
-    isProcessing,
-    lastRecording,
-    startRecording,
-    clearLastRecording,
-  } = useRecording();
 
   const debugLogs = useDebugLogs();
   const { toasts, showToast, removeToast } = useToast();
@@ -80,39 +73,29 @@ export function App() {
         />
 
         <div className="mb-5">
-          {activeTab === 'recording' ? (
-            <RecordingTab
+          {activeTab === 'recording' && <RecordingTab />}
+          {activeTab === 'editing' && <EditingTab />}
+          {activeTab === 'permissions' && (
+            <PermissionsTab
               permissions={permissions}
               allRequiredGranted={allRequiredGranted}
               isChecking={isChecking}
               onRequestPermission={handleRequestPermission}
               onCheckAgain={handleCheckAgain}
             />
-          ) : (
-            <EditingTab />
+          )}
+          {activeTab === 'logs' && (
+            <LogsTab
+              logs={debugLogs.logs}
+              autoScroll={debugLogs.autoScroll}
+              containerRef={debugLogs.containerRef}
+              onClear={debugLogs.clearLogs}
+              onAutoScrollChange={debugLogs.setAutoScroll}
+            />
           )}
         </div>
 
-        <ProcessingProgress isVisible={isProcessing} />
-
-        <RecordingControls
-          isRecording={isRecording}
-          canRecord={allRequiredGranted}
-          onStartRecording={startRecording}
-          lastRecording={lastRecording}
-          onClearLastRecording={clearLastRecording}
-          showToast={showToast}
-        />
-
-        <DebugLogs
-          logs={debugLogs.logs}
-          isVisible={debugLogs.isVisible}
-          autoScroll={debugLogs.autoScroll}
-          containerRef={debugLogs.containerRef}
-          onToggleVisible={debugLogs.toggleVisible}
-          onClear={debugLogs.clearLogs}
-          onAutoScrollChange={debugLogs.setAutoScroll}
-        />
+        <RecordingControls showToast={showToast} />
 
         <ToastContainer toasts={toasts} onRemove={removeToast} />
       </div>

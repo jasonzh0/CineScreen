@@ -1,8 +1,11 @@
 import { contextBridge, ipcRenderer } from 'electron';
 
+type RecordingBarMode = 'idle' | 'recording';
+
 interface RecordingBarState {
   isRecording: boolean;
   elapsedMs: number;
+  mode: RecordingBarMode;
 }
 
 const recordingBarAPI = {
@@ -14,6 +17,12 @@ const recordingBarAPI = {
 
   cancelRecording: (): Promise<void> =>
     ipcRenderer.invoke('recording-bar-cancel'),
+
+  startRecording: (): Promise<void> =>
+    ipcRenderer.invoke('recording-bar-start'),
+
+  openMainWindow: (): Promise<void> =>
+    ipcRenderer.invoke('open-main-window'),
 
   onRecordingStateUpdate: (callback: (state: RecordingBarState) => void) => {
     ipcRenderer.on('recording-state-update', (_event, state: RecordingBarState) => {

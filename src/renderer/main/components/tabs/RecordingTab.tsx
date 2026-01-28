@@ -1,30 +1,14 @@
 import React, { useState, useCallback } from 'react';
-import type { DetailedPermissionStatus } from '../../../../types';
 import { Button, Select } from '../../../shared/components';
 import { SettingsGroup } from '../settings/SettingsGroup';
-import { PermissionsSection } from '../permissions/PermissionsSection';
 import { useElectronAPI } from '../../../shared/hooks/useElectronAPI';
-
-interface RecordingTabProps {
-  permissions: DetailedPermissionStatus | null;
-  allRequiredGranted: boolean;
-  isChecking: boolean;
-  onRequestPermission: (type: 'screen-recording' | 'accessibility' | 'microphone') => void;
-  onCheckAgain: () => void;
-}
 
 const frameRateOptions = [
   { value: '30', label: '30 fps' },
   { value: '60', label: '60 fps' },
 ];
 
-export function RecordingTab({
-  permissions,
-  allRequiredGranted,
-  isChecking,
-  onRequestPermission,
-  onCheckAgain,
-}: RecordingTabProps) {
+export function RecordingTab() {
   const api = useElectronAPI();
   const [outputPath, setOutputPath] = useState<string | null>(null);
   const [frameRate, setFrameRate] = useState('60');
@@ -82,15 +66,6 @@ export function RecordingTab({
           />
         </div>
       </SettingsGroup>
-
-      {/* Permissions */}
-      <PermissionsSection
-        permissions={permissions}
-        allRequiredGranted={allRequiredGranted}
-        isChecking={isChecking}
-        onRequestPermission={onRequestPermission}
-        onCheckAgain={onCheckAgain}
-      />
     </div>
   );
 }
