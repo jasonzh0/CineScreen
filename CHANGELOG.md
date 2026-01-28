@@ -1,6 +1,53 @@
 # Changelog
 
-All notable changes to CineScreen will be documented in this file.
+## [1.3.0]
+
+### Added
+- New recording flow
+- Tab system for settings organization
+- React and Tailwind UI overhaul
+
+### Fixed
+- Icon display
+- Timeline issues
+- Zoom functionality
+
+### Changed
+- Website updates
+- Code cleanup
+
+## [1.2.2]
+
+### Changed
+- Add pre-push version hook
+
+## [1.2.1]
+
+### Fixed
+- Microphone permission issue
+- Skip notarize for build test
+
+## [1.2.0]
+
+### Added
+- Platform compatibility layer
+- Windows support
+- Dockerized repository
+- Windows builder
+
+### Fixed
+- DevTools no longer open in studio
+- Actual cursor removed from recording
+- Cursor tracking issues
+- Start recording issues
+
+## [1.1.2]
+
+### Added
+- Keyboard shortcuts to studio editor
+
+### Changed
+- Constants and functions refactor
 
 ## [1.1.1]
 
