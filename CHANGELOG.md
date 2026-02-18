@@ -1,5 +1,11 @@
 # Changelog
 
+## [1.3.1]
+
+### Fixed
+- Recording bar layout shift when switching between idle and recording modes
+- Timer not stopping immediately when cancelling a recording
+
 ## [1.3.0]
 
 ### Added
