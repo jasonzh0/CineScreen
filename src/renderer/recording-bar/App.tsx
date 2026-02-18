@@ -33,6 +33,8 @@ export function App() {
 
         <Divider />
 
+        <TimerDisplay elapsedMs={0} />
+
         <div className="flex-1" />
 
         <MenuButton onOpenSettings={openMainWindow} />
@@ -49,9 +51,8 @@ export function App() {
 
       <TimerDisplay elapsedMs={elapsedMs} />
 
-      <Divider />
+      <div className="flex-1" />
 
-      <ActionButton icon="restart" onClick={restart} disabled={isLoading} />
       <ActionButton icon="cancel" onClick={cancel} disabled={isLoading} variant="danger" />
     </div>
   );

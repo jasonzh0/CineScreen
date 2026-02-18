@@ -222,6 +222,9 @@ export function registerRecordingBarHandlers(
       return;
     }
 
+    // Stop the timer immediately so UI shows recording has ended
+    stopRecordingBarTimer();
+
     const platform = await initPlatform();
     const mainWindow = getMainWindow();
     await cleanupRecording(platform, mainWindow, false);
@@ -312,6 +315,7 @@ export function registerRecordingBarHandlers(
           win.webContents.send('show-toast', {
             message: 'Please set an output path before recording',
             type: 'warning',
+            switchTab: 'recording',
           });
         }
       };
@@ -357,9 +361,10 @@ export function registerRecordingBarHandlers(
     const mainWindow = getMainWindow();
 
     try {
-      // Hide the app window from screen capture
+      // Hide the main window during recording
       if (mainWindow && !mainWindow.isDestroyed()) {
         mainWindow.setContentProtection(true);
+        mainWindow.hide();
       }
 
       // Hide system cursor FIRST
