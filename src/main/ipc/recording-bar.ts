@@ -281,6 +281,7 @@ export function registerRecordingBarHandlers(
           win.webContents.send('show-toast', {
             message: 'Please grant Screen Recording and Accessibility permissions before recording',
             type: 'warning',
+            switchTab: 'permissions',
           });
         }
       };

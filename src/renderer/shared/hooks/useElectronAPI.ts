@@ -41,7 +41,7 @@ export interface ElectronAPI {
   onRecordingCompleted: (callback: (data: { success: boolean; outputPath: string; metadataPath?: string }) => void) => void;
   onRestartRecording: (callback: (config: RecordingConfig) => void) => void;
   onRecordingCancelled: (callback: () => void) => void;
-  onShowToast: (callback: (data: { message: string; type: 'success' | 'error' | 'info' | 'warning' }) => void) => void;
+  onShowToast: (callback: (data: { message: string; type: 'success' | 'error' | 'info' | 'warning'; switchTab?: string }) => void) => void;
   removeRecordingBarListeners: () => void;
 }
 

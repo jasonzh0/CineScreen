@@ -109,7 +109,7 @@ const electronAPI = {
     ipcRenderer.on('recording-cancelled', () => callback());
   },
 
-  onShowToast: (callback: (data: { message: string; type: 'success' | 'error' | 'info' | 'warning' }) => void) => {
+  onShowToast: (callback: (data: { message: string; type: 'success' | 'error' | 'info' | 'warning'; switchTab?: string }) => void) => {
     ipcRenderer.on('show-toast', (_event, data) => callback(data));
   },
 
