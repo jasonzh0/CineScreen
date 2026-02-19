@@ -3,7 +3,9 @@
  */
 
 import { ipcMain, dialog, BrowserWindow } from 'electron';
-import { setConfiguredOutputPath, getConfiguredOutputPath } from '../state';
+import { setConfiguredOutputDir, getConfiguredOutputDir } from '../state';
+import { loadConfig, saveConfig } from '../state';
+import type { UserConfig } from '../state';
 
 /**
  * Register dialog-related IPC handlers
@@ -14,31 +16,29 @@ export function registerDialogHandlers(
 ): void {
   ipcMain.handle('select-output-path', async () => {
     const mainWindow = getMainWindow();
-    const result = await dialog.showSaveDialog(mainWindow!, {
-      title: 'Save Recording',
-      defaultPath: `recording_${Date.now()}.mp4`,
-      filters: [
-        { name: 'Video Files', extensions: ['mp4', 'mov'] },
-        { name: 'All Files', extensions: ['*'] },
-      ],
+    const currentDir = getConfiguredOutputDir();
+    const result = await dialog.showOpenDialog(mainWindow!, {
+      title: 'Select Save Location',
+      defaultPath: currentDir || undefined,
+      properties: ['openDirectory', 'createDirectory'],
     });
 
-    if (result.canceled) {
+    if (result.canceled || !result.filePaths || result.filePaths.length === 0) {
       return null;
     }
 
-    // Store the configured output path
-    setConfiguredOutputPath(result.filePath || null);
-    return result.filePath;
+    const dir = result.filePaths[0];
+    setConfiguredOutputDir(dir);
+    return dir;
   });
 
-  ipcMain.handle('set-output-path', async (_, path: string | null) => {
-    setConfiguredOutputPath(path);
+  ipcMain.handle('set-output-path', async (_, dir: string | null) => {
+    setConfiguredOutputDir(dir);
     return { success: true };
   });
 
   ipcMain.handle('get-output-path', async () => {
-    return getConfiguredOutputPath();
+    return getConfiguredOutputDir();
   });
 
   ipcMain.handle('select-video-file', async () => {
@@ -75,5 +75,16 @@ export function registerDialogHandlers(
     }
 
     return result.filePaths[0];
+  });
+
+  ipcMain.handle('get-user-config', async () => {
+    return loadConfig();
+  });
+
+  ipcMain.handle('set-user-config', async (_, partial: Partial<UserConfig>) => {
+    const config = loadConfig();
+    Object.assign(config, partial);
+    saveConfig(config);
+    return { success: true };
   });
 }

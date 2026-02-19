@@ -4,12 +4,14 @@
  */
 
 import { existsSync, unlinkSync } from 'fs';
+import { join } from 'path';
 import { ScreenCapture } from '../screen-capture';
 import { MouseTracker } from '../mouse-tracker';
 import type { RecordingConfig, RecordingState } from '../../types';
 import type { Platform } from '../../platform';
 import { createLogger } from '../../utils/logger';
 import { showRecordingBarIdle } from '../recording-bar-window';
+import { getConfigValue, setConfigValue } from './config-store';
 
 const logger = createLogger('RecordingState');
 
@@ -18,7 +20,7 @@ let recordingState: RecordingState = {
   isRecording: false,
 };
 let currentRecordingConfig: RecordingConfig | null = null;
-let configuredOutputPath: string | null = null;
+let configuredOutputDir: string | null | undefined = undefined;
 
 // Components
 let screenCapture: ScreenCapture | null = null;
@@ -33,8 +35,16 @@ export function getCurrentRecordingConfig(): RecordingConfig | null {
   return currentRecordingConfig;
 }
 
+export function getConfiguredOutputDir(): string | null {
+  if (configuredOutputDir === undefined) {
+    configuredOutputDir = getConfigValue('outputDir');
+  }
+  return configuredOutputDir;
+}
+
 export function getConfiguredOutputPath(): string | null {
-  return configuredOutputPath;
+  const dir = getConfiguredOutputDir();
+  return dir ? join(dir, `recording_${Date.now()}.mp4`) : null;
 }
 
 export function getScreenCapture(): ScreenCapture | null {
@@ -54,8 +64,9 @@ export function setCurrentRecordingConfig(config: RecordingConfig | null): void 
   currentRecordingConfig = config;
 }
 
-export function setConfiguredOutputPath(path: string | null): void {
-  configuredOutputPath = path;
+export function setConfiguredOutputDir(dir: string | null): void {
+  configuredOutputDir = dir;
+  setConfigValue('outputDir', dir);
 }
 
 // Create new instances

@@ -1,4 +1,4 @@
-import { useState, useEffect, useCallback } from 'react';
+import { useState, useEffect, useCallback, useRef } from 'react';
 
 type RecordingBarMode = 'idle' | 'recording';
 
@@ -30,6 +30,16 @@ export function useRecordingState() {
   const [isLoading, setIsLoading] = useState(false);
   const [mode, setMode] = useState<RecordingBarMode>('idle');
 
+  // Freeze UI state while loading — queue the last update and apply when done
+  const loadingRef = useRef(false);
+  const pendingStateRef = useRef<RecordingBarState | null>(null);
+
+  const applyState = useCallback((state: RecordingBarState) => {
+    setElapsedMs(state.elapsedMs);
+    setIsRecording(state.isRecording);
+    setMode(state.mode || (state.isRecording ? 'recording' : 'idle'));
+  }, []);
+
   useEffect(() => {
     const api = window.recordingBarAPI;
     if (!api) {
@@ -38,76 +48,70 @@ export function useRecordingState() {
     }
 
     api.onRecordingStateUpdate((state: RecordingBarState) => {
-      setElapsedMs(state.elapsedMs);
-      setIsRecording(state.isRecording);
-      if (state.mode) {
-        setMode(state.mode);
-      } else {
-        // Fallback: derive mode from isRecording
-        setMode(state.isRecording ? 'recording' : 'idle');
+      if (loadingRef.current) {
+        pendingStateRef.current = state;
+        return;
       }
+      applyState(state);
     });
 
     api.onRecordingTimerUpdate((elapsed: number) => {
+      if (loadingRef.current) return;
       setElapsedMs(elapsed);
     });
-  }, []);
+  }, [applyState]);
 
-  const startRecording = useCallback(async () => {
-    const api = window.recordingBarAPI;
-    if (!api) return;
+  const withLoading = useCallback(
+    (fn: () => Promise<void>) => async () => {
+      const api = window.recordingBarAPI;
+      if (!api) return;
 
-    setIsLoading(true);
-    try {
-      await api.startRecording();
-    } catch (error) {
-      console.error('Failed to start recording:', error);
-    } finally {
-      setIsLoading(false);
-    }
-  }, []);
+      loadingRef.current = true;
+      pendingStateRef.current = null;
+      setIsLoading(true);
+      try {
+        await fn();
+      } catch (error) {
+        console.error('Recording action failed:', error);
+      } finally {
+        loadingRef.current = false;
+        setIsLoading(false);
+        if (pendingStateRef.current) {
+          applyState(pendingStateRef.current);
+          pendingStateRef.current = null;
+        }
+      }
+    },
+    [applyState]
+  );
 
-  const stop = useCallback(async () => {
-    const api = window.recordingBarAPI;
-    if (!api) return;
+  const startRecording = useCallback(
+    withLoading(async () => {
+      await window.recordingBarAPI!.startRecording();
+    }),
+    [withLoading]
+  );
 
-    setIsLoading(true);
-    try {
-      await api.stopRecording();
-    } catch (error) {
-      console.error('Failed to stop recording:', error);
-    } finally {
-      setIsLoading(false);
-    }
-  }, []);
+  const stop = useCallback(
+    withLoading(async () => {
+      await window.recordingBarAPI!.stopRecording();
+    }),
+    [withLoading]
+  );
 
-  const restart = useCallback(async () => {
-    const api = window.recordingBarAPI;
-    if (!api) return;
+  const restart = useCallback(
+    withLoading(async () => {
+      await window.recordingBarAPI!.restartRecording();
+    }),
+    [withLoading]
+  );
 
-    setIsLoading(true);
-    try {
-      await api.restartRecording();
-    } catch (error) {
-      console.error('Failed to restart recording:', error);
-    } finally {
-      setIsLoading(false);
-    }
-  }, []);
-
-  const cancel = useCallback(async () => {
-    const api = window.recordingBarAPI;
-    if (!api) return;
-
-    setIsLoading(true);
-    try {
-      await api.cancelRecording();
-    } catch (error) {
-      console.error('Failed to cancel recording:', error);
-    } finally {
-      setIsLoading(false);
-    }
-  }, []);
+  const cancel = useCallback(
+    withLoading(async () => {
+      await window.recordingBarAPI!.cancelRecording();
+    }),
+    [withLoading]
+  );
 
   const openMainWindow = useCallback(async () => {
     const api = window.recordingBarAPI;

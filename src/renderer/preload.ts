@@ -50,6 +50,12 @@ const electronAPI = {
   getOutputPath: (): Promise<string | null> =>
     ipcRenderer.invoke('get-output-path'),
 
+  getUserConfig: (): Promise<Record<string, unknown>> =>
+    ipcRenderer.invoke('get-user-config'),
+
+  setUserConfig: (partial: Record<string, unknown>): Promise<{ success: boolean }> =>
+    ipcRenderer.invoke('set-user-config', partial),
+
   onDebugLog: (callback: (message: string) => void) => {
     ipcRenderer.on('debug-log', (_event, message: string) => callback(message));
   },
