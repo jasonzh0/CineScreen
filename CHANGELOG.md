@@ -1,5 +1,12 @@
 # Changelog
 
+## [1.3.2]
+
+### Added
+- Persistent user settings stored in `config.json` across app restarts
+- All recording and editing configs (output directory, frame rate, cursor, zoom, click effects) are saved automatically
+- Browse button now opens a folder picker instead of a save-file dialog
+
 ## [1.3.1]
 
 ### Fixed
