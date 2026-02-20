@@ -119,10 +119,21 @@ export class VideoProcessor {
       const frameRate = metadata.video.frameRate;
       const videoDuration = metadata.video.duration;
 
+      // Compute trim range
+      const trimStartMs = metadata.trim?.startMs ?? 0;
+      const trimEndMs = metadata.trim?.endMs ?? videoDuration;
+      const trimDurationMs = trimEndMs - trimStartMs;
+      const isTrimmed = trimStartMs > 0 || trimEndMs < videoDuration;
+
+      if (isTrimmed) {
+        logger.info(`Trim range: ${trimStartMs}ms - ${trimEndMs}ms (duration: ${trimDurationMs}ms)`);
+      }
+
       const extractionResult = await extractFrames({
         inputVideo,
         outputDir: tempDir,
         frameRate,
+        ...(isTrimmed ? { startTime: trimStartMs / 1000, duration: trimDurationMs / 1000 } : {}),
       });
       extractedFrameDir = extractionResult.frameDir;
       logger.info(`Extracted ${extractionResult.frameCount} frames`);
@@ -130,11 +141,11 @@ export class VideoProcessor {
       // Calculate actual video duration from extracted frames
       // This ensures cursor animation matches the actual video length
       const actualVideoDuration = (extractionResult.frameCount / frameRate) * 1000; // Convert to milliseconds
-      const effectiveVideoDuration = Math.min(videoDuration, actualVideoDuration);
+      const effectiveVideoDuration = Math.min(isTrimmed ? trimDurationMs : videoDuration, actualVideoDuration);
 
-      if (actualVideoDuration < videoDuration) {
+      if (actualVideoDuration < (isTrimmed ? trimDurationMs : videoDuration)) {
         logger.warn(
-          `Video duration mismatch: metadata says ${videoDuration}ms but actual video is ${actualVideoDuration}ms. ` +
+          `Video duration mismatch: expected ${isTrimmed ? trimDurationMs : videoDuration}ms but actual video is ${actualVideoDuration}ms. ` +
           `Using actual duration to match extracted frames.`
         );
       }
@@ -159,15 +170,56 @@ export class VideoProcessor {
       // Coordinates in metadata are already in video space (converted during export)
       // Use effectiveVideoDuration to match actual extracted frames
       onProgress?.(PROGRESS_PROCESSING_MOUSE_DATA, 'Processing keyframes...');
+
+      // Filter and shift data to trim range
+      let trimmedKeyframes = metadata.cursor.keyframes;
+      let trimmedZoomSections = metadata.zoom.sections;
+      let trimmedClicks = metadata.clicks;
+
+      if (isTrimmed) {
+        // Filter cursor keyframes to trim range and shift timestamps
+        trimmedKeyframes = metadata.cursor.keyframes
+          .filter(kf => kf.timestamp >= trimStartMs && kf.timestamp <= trimEndMs)
+          .map(kf => ({ ...kf, timestamp: kf.timestamp - trimStartMs }));
+
+        // If no keyframes in range, include the last keyframe before trim start
+        // and first keyframe after trim end for interpolation
+        if (trimmedKeyframes.length === 0) {
+          const before = [...metadata.cursor.keyframes]
+            .filter(kf => kf.timestamp < trimStartMs)
+            .pop();
+          const after = metadata.cursor.keyframes
+            .find(kf => kf.timestamp > trimEndMs);
+          if (before) trimmedKeyframes.push({ ...before, timestamp: 0 });
+          if (after) trimmedKeyframes.push({ ...after, timestamp: trimDurationMs });
+        }
+
+        // Filter and clip zoom sections to trim range, shift timestamps
+        trimmedZoomSections = metadata.zoom.sections
+          .filter(s => s.endTime > trimStartMs && s.startTime < trimEndMs)
+          .map(s => ({
+            ...s,
+            startTime: Math.max(0, s.startTime - trimStartMs),
+            endTime: Math.min(trimDurationMs, s.endTime - trimStartMs),
+          }));
+
+        // Filter clicks to trim range and shift timestamps
+        trimmedClicks = metadata.clicks
+          .filter(c => c.timestamp >= trimStartMs && c.timestamp <= trimEndMs)
+          .map(c => ({ ...c, timestamp: c.timestamp - trimStartMs }));
+
+        logger.info(`Trimmed data: ${trimmedKeyframes.length} keyframes, ${trimmedZoomSections.length} zoom sections, ${trimmedClicks.length} clicks`);
+      }
+
       const frameDataList = createFrameDataFromKeyframes(
-        metadata.cursor.keyframes,
-        metadata.zoom.sections,
+        trimmedKeyframes,
+        trimmedZoomSections,
         frameRate,
         effectiveVideoDuration,
         videoDimensions,
         cursorConfig,
         metadata.zoom.config.enabled ? metadata.zoom.config : undefined,
-        metadata.clicks
+        trimmedClicks
       );
       logger.info(`Created frame data for ${frameDataList.length} frames from keyframes (matching ${extractionResult.frameCount} extracted frames)`);
 

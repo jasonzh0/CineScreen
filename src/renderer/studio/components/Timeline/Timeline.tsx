@@ -2,6 +2,7 @@ import React, { useRef, useCallback, useEffect, useState } from 'react';
 import { useStudio } from '../../context/StudioContext';
 import { TimelineRuler } from './TimelineRuler';
 import { Playhead } from './Playhead';
+import { TrimOverlay } from './TrimOverlay';
 import { resetCursorSmoothing } from '../../../utils/cursor-renderer';
 
 export function Timeline() {
@@ -14,6 +15,9 @@ export function Timeline() {
     selectedZoomSection,
     setSelectedZoomSection,
     updateZoomSection,
+    trimStartMs,
+    trimEndMs,
+    updateTrim,
   } = useStudio();
 
   const timelineRef = useRef<HTMLDivElement>(null);
@@ -128,6 +132,13 @@ export function Timeline() {
               >
                 <span className="ml-3 text-xs font-medium text-white/70">Recording</span>
               </div>
+              <TrimOverlay
+                trimStartMs={trimStartMs}
+                trimEndMs={trimEndMs}
+                durationMs={durationMs}
+                scale={scale}
+                onTrimChange={updateTrim}
+              />
             </div>
 
             {/* Zoom track */}
