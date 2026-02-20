@@ -1,5 +1,13 @@
 # Changelog
 
+## [1.3.3]
+
+### Added
+- Video trimming with draggable trim overlay on the timeline
+
+### Changed
+- Upgraded dependencies
+
 ## [1.3.2]
 
 ### Added
