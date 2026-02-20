@@ -1,6 +1,6 @@
 {
   "name": "cinescreen",
-  "version": "1.3.2",
+  "version": "1.3.3",
   "description": "Screen recording software with cursor overlay",
   "main": "dist/main/main/main.js",
   "scripts": {
