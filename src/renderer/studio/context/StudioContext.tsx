@@ -1,4 +1,4 @@
-import React, { createContext, useContext, useRef, useCallback, useState } from 'react';
+import React, { createContext, useContext, useRef, useCallback, useState, useMemo } from 'react';
 import type { RecordingMetadata } from '../../../types/metadata';
 import type { ZoomSection } from '../../../processing/zoom-tracker';
 import { useMetadata } from '../hooks/useMetadata';
@@ -30,6 +30,12 @@ interface StudioContextValue {
   skipForward: (seconds?: number) => void;
   skipBackward: (seconds?: number) => void;
   stepFrame: (direction: 1 | -1) => void;
+
+  // Trim
+  trimStartMs: number;
+  trimEndMs: number;
+  trimmedDuration: number;
+  updateTrim: (startMs: number, endMs: number) => void;
 
   // Export
   isExporting: boolean;
@@ -66,7 +72,23 @@ export function StudioProvider({ children }: { children: React.ReactNode }) {
     reloadMetadata,
   } = useMetadata();
 
-  const playback = usePlayback(videoRef);
+  const trimStartMs = metadata?.trim?.startMs ?? 0;
+  const trimEndMs = metadata?.trim?.endMs ?? (metadata?.video.duration ?? 0);
+  const trimmedDuration = (trimEndMs - trimStartMs) / 1000;
+
+  const trimRange = useMemo(() => {
+    if (!metadata) return undefined;
+    return { startMs: trimStartMs, endMs: trimEndMs };
+  }, [metadata, trimStartMs, trimEndMs]);
+
+  const updateTrim = useCallback((startMs: number, endMs: number) => {
+    updateMetadata(prev => ({
+      ...prev,
+      trim: { startMs, endMs },
+    }));
+  }, [updateMetadata]);
+
+  const playback = usePlayback(videoRef, trimRange);
 
   const {
     isExporting,
@@ -135,6 +157,10 @@ export function StudioProvider({ children }: { children: React.ReactNode }) {
     reloadMetadata,
     videoRef,
     ...playback,
+    trimStartMs,
+    trimEndMs,
+    trimmedDuration,
+    updateTrim,
     isExporting,
     exportProgress,
     exportMessage,

@@ -13,11 +13,12 @@ export function RecordingTab() {
   const [outputPath, setOutputPath] = useState<string | null>(null);
   const [frameRate, setFrameRate] = useState('60');
 
-  // Load saved output path on mount
+  // Load saved config on mount
   useEffect(() => {
-    if (!api?.getOutputPath) return;
-    api.getOutputPath().then((path) => {
-      if (path) setOutputPath(path);
+    if (!api?.getUserConfig) return;
+    api.getUserConfig().then((config) => {
+      if (config.outputDir) setOutputPath(config.outputDir as string);
+      if (config.frameRate) setFrameRate(config.frameRate as string);
     });
   }, [api]);
 
@@ -28,6 +29,14 @@ export function RecordingTab() {
       setOutputPath(path);
     }
   }, [api]);
+
+  const handleFrameRate = useCallback(
+    (value: string) => {
+      setFrameRate(value);
+      api?.setUserConfig?.({ frameRate: value });
+    },
+    [api]
+  );
 
   return (
     <div className="space-y-5">
@@ -70,7 +79,7 @@ export function RecordingTab() {
           <Select
             options={frameRateOptions}
             value={frameRate}
-            onChange={setFrameRate}
+            onChange={handleFrameRate}
           />
         </div>
       </SettingsGroup>

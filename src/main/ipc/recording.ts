@@ -9,7 +9,6 @@ import type { Platform } from '../../platform';
 import type { RecordingConfig, CursorConfig, ZoomConfig, MouseEffectsConfig } from '../../types';
 import { MetadataExporter } from '../../processing/metadata-exporter';
 import { createLogger } from '../../utils/logger';
-import { DEFAULT_FRAME_RATE, DEFAULT_CURSOR_SIZE } from '../../utils/constants';
 import {
   getRecordingState,
   getCurrentRecordingConfig,
@@ -19,6 +18,7 @@ import {
   getMouseTracker,
   createScreenCapture,
   createMouseTracker,
+  loadConfig,
 } from '../state';
 import { showRecordingBar, hideRecordingBar, stopRecordingBarTimer } from '../recording-bar-window';
 
@@ -149,9 +149,10 @@ export function registerRecordingHandlers(
     mouseEffectsConfig?: MouseEffectsConfig;
   } | CursorConfig) => {
     // Handle both old format (just CursorConfig) and new format (object with cursorConfig)
+    const userConfig = loadConfig();
     let cursorConfig: CursorConfig = {
-      size: DEFAULT_CURSOR_SIZE,
-      shape: 'arrow',
+      size: userConfig.cursorSize,
+      shape: userConfig.cursorShape as CursorConfig['shape'],
     };
     let zoomConfig: ZoomConfig | undefined;
     let mouseEffectsConfig: MouseEffectsConfig | undefined;
@@ -278,7 +279,7 @@ export function registerRecordingHandlers(
         cursorConfig,
         zoomConfig,
         mouseEffectsConfig,
-        frameRate: DEFAULT_FRAME_RATE,
+        frameRate: parseInt(userConfig.frameRate, 10) || 60,
         videoDuration: recordingDuration,
         screenDimensions,
         recordingRegion: currentRecordingConfig?.region,

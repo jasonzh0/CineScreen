@@ -5,7 +5,7 @@ import type { RecordingConfig } from '../types';
 import { getFfmpegPath } from '../utils/ffmpeg-path';
 import { waitForFileStable, validateVideoFile } from '../utils/file-utils';
 import { createLogger } from '../utils/logger';
-import { DEFAULT_FRAME_RATE } from '../utils/constants';
+import { loadConfig } from './state';
 
 // Create logger for screen capture
 const logger = createLogger('ScreenCapture');
@@ -110,7 +110,7 @@ export class ScreenCapture {
    * Uses platform-specific input methods
    */
   private async buildRecordingArgs(config: RecordingConfig): Promise<string[]> {
-    const frameRate = String(config.frameRate || DEFAULT_FRAME_RATE);
+    const frameRate = String(config.frameRate || parseInt(loadConfig().frameRate, 10) || 60);
 
     if (isWindows) {
       // Windows: use gdigrab for desktop capture

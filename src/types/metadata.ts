@@ -52,6 +52,14 @@ export interface VideoInfo {
 }
 
 /**
+ * Trim range for cropping video start/end
+ */
+export interface TrimRange {
+  startMs: number;
+  endMs: number;
+}
+
+/**
  * Complete recording metadata
  * This is exported alongside the video file as JSON
  */
@@ -69,6 +77,7 @@ export interface RecordingMetadata {
   };
   clicks: ClickEvent[];
   effects?: MouseEffectsConfig;
+  trim?: TrimRange;
   createdAt: number; // timestamp when metadata was created
 }
 

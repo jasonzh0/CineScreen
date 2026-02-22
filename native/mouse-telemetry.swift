@@ -24,7 +24,47 @@ func CGSMainConnectionID() -> Int32
 // Debug mode - set via environment variable
 let debugMode = ProcessInfo.processInfo.environment["DEBUG"] != nil
 
-// Helper to get cursor signature (hotspot + size)
+// Build a lookup table mapping cursor image data -> cursor type name.
+// This uses actual pixel data comparison instead of just hotspot/size signatures,
+// which prevents false positives when different cursors share similar dimensions.
+var cursorImageLookup: [Data: String] = [:]
+
+let knownCursors: [(String, NSCursor)] = [
+    ("arrow", NSCursor.arrow),
+    ("ibeam", NSCursor.iBeam),
+    ("ibeamvertical", NSCursor.iBeamCursorForVerticalLayout),
+    ("pointer", NSCursor.pointingHand),
+    ("hand", NSCursor.openHand),
+    ("closedhand", NSCursor.closedHand),
+    ("crosshair", NSCursor.crosshair),
+    ("resizeleftright", NSCursor.resizeLeftRight),
+    ("resizeupdown", NSCursor.resizeUpDown),
+    ("resizeleft", NSCursor.resizeLeft),
+    ("resizeright", NSCursor.resizeRight),
+    ("resizeup", NSCursor.resizeUp),
+    ("resizedown", NSCursor.resizeDown),
+    ("notallowed", NSCursor.operationNotAllowed),
+    ("copy", NSCursor.dragCopy),
+    ("draglink", NSCursor.dragLink),
+    ("contextmenu", NSCursor.contextualMenu),
+    ("poof", NSCursor.disappearingItem),
+]
+
+for (name, cursor) in knownCursors {
+    if let tiffData = cursor.image.tiffRepresentation {
+        cursorImageLookup[tiffData] = name
+    }
+}
+
+if debugMode {
+    fputs("DEBUG: Pre-computed image data for \(cursorImageLookup.count) cursor types\n", stderr)
+}
+
+// Cursor seed caching - only redetect when cursor actually changes
+var lastCursorSeed: Int = -1
+var lastCursorType: String = "arrow"
+
+// Helper to get cursor signature (hotspot + size) - used as fallback
 func getCursorSignature(_ cursor: NSCursor) -> (hotspotX: Double, hotspotY: Double, width: Double, height: Double) {
     let hotspot = cursor.hotSpot
     let size = cursor.image.size
@@ -45,84 +85,122 @@ func signaturesMatch(
 
 // Get the current system cursor type using NSCursor.currentSystem
 func getCurrentCursorType() -> String {
+    // Use cursor seed to skip detection when cursor hasn't changed
+    let currentSeed = CGSCurrentCursorSeed()
+    if currentSeed == lastCursorSeed {
+        return lastCursorType
+    }
+    lastCursorSeed = currentSeed
+
     // Use NSCursor.currentSystem to get the actual system cursor
     guard let currentCursor = NSCursor.currentSystem else {
         if debugMode {
             fputs("DEBUG: NSCursor.currentSystem returned nil, defaulting to arrow\n", stderr)
         }
+        lastCursorType = "arrow"
         return "arrow"
     }
 
+    // Primary detection: compare actual image data for exact matching
+    if let currentTiff = currentCursor.image.tiffRepresentation,
+       let matchedType = cursorImageLookup[currentTiff] {
+        if debugMode {
+            fputs("DEBUG: Matched cursor type '\(matchedType)' via image data\n", stderr)
+        }
+        lastCursorType = matchedType
+        return matchedType
+    }
+
+    // Fallback: signature matching for cursors whose image data may differ
+    // (e.g. resolution variants or dynamic cursors)
     let currentSig = getCursorSignature(currentCursor)
 
     if debugMode {
+        fputs("DEBUG: Image data match failed, falling back to signature matching\n", stderr)
         fputs("DEBUG: Current cursor - hotspot=(\(currentSig.hotspotX), \(currentSig.hotspotY)) size=(\(currentSig.width), \(currentSig.height))\n", stderr)
-        let iBeamSig = getCursorSignature(NSCursor.iBeam)
-        fputs("DEBUG: iBeam signature - hotspot=(\(iBeamSig.hotspotX), \(iBeamSig.hotspotY)) size=(\(iBeamSig.width), \(iBeamSig.height))\n", stderr)
     }
 
-    // Check against standard system cursors by comparing signatures
-    // Order matters - check more specific cursors first
-
+    // Check arrow first since it's the most common fallback cursor
+    if signaturesMatch(currentSig, getCursorSignature(NSCursor.arrow)) {
+        lastCursorType = "arrow"
+        return "arrow"
+    }
     if signaturesMatch(currentSig, getCursorSignature(NSCursor.iBeam)) {
+        lastCursorType = "ibeam"
         return "ibeam"
     }
-    if signaturesMatch(currentSig, getCursorSignature(NSCursor.iBeamCursorForVerticalLayout)) {
-        return "ibeamvertical"
-    }
     if signaturesMatch(currentSig, getCursorSignature(NSCursor.pointingHand)) {
+        lastCursorType = "pointer"
         return "pointer"
     }
     if signaturesMatch(currentSig, getCursorSignature(NSCursor.openHand)) {
+        lastCursorType = "hand"
         return "hand"
     }
     if signaturesMatch(currentSig, getCursorSignature(NSCursor.closedHand)) {
+        lastCursorType = "closedhand"
         return "closedhand"
     }
     if signaturesMatch(currentSig, getCursorSignature(NSCursor.crosshair)) {
+        lastCursorType = "crosshair"
         return "crosshair"
     }
     if signaturesMatch(currentSig, getCursorSignature(NSCursor.resizeLeftRight)) {
+        lastCursorType = "resizeleftright"
         return "resizeleftright"
     }
     if signaturesMatch(currentSig, getCursorSignature(NSCursor.resizeUpDown)) {
+        lastCursorType = "resizeupdown"
         return "resizeupdown"
     }
     if signaturesMatch(currentSig, getCursorSignature(NSCursor.resizeLeft)) {
+        lastCursorType = "resizeleft"
         return "resizeleft"
     }
     if signaturesMatch(currentSig, getCursorSignature(NSCursor.resizeRight)) {
+        lastCursorType = "resizeright"
         return "resizeright"
     }
     if signaturesMatch(currentSig, getCursorSignature(NSCursor.resizeUp)) {
+        lastCursorType = "resizeup"
         return "resizeup"
     }
     if signaturesMatch(currentSig, getCursorSignature(NSCursor.resizeDown)) {
+        lastCursorType = "resizedown"
         return "resizedown"
     }
-    if signaturesMatch(currentSig, getCursorSignature(NSCursor.operationNotAllowed)) {
-        return "notallowed"
+    if signaturesMatch(currentSig, getCursorSignature(NSCursor.iBeamCursorForVerticalLayout)) {
+        lastCursorType = "ibeamvertical"
+        return "ibeamvertical"
     }
     if signaturesMatch(currentSig, getCursorSignature(NSCursor.dragCopy)) {
+        lastCursorType = "copy"
         return "copy"
     }
     if signaturesMatch(currentSig, getCursorSignature(NSCursor.dragLink)) {
+        lastCursorType = "draglink"
         return "draglink"
     }
     if signaturesMatch(currentSig, getCursorSignature(NSCursor.contextualMenu)) {
+        lastCursorType = "contextmenu"
         return "contextmenu"
     }
     if signaturesMatch(currentSig, getCursorSignature(NSCursor.disappearingItem)) {
+        lastCursorType = "poof"
         return "poof"
     }
-    if signaturesMatch(currentSig, getCursorSignature(NSCursor.arrow)) {
-        return "arrow"
+    // notallowed is checked LAST in fallback - it should almost never reach here
+    // since image data comparison above handles it accurately
+    if signaturesMatch(currentSig, getCursorSignature(NSCursor.operationNotAllowed)) {
+        lastCursorType = "notallowed"
+        return "notallowed"
     }
 
     // Default to arrow for unrecognized cursors (custom cursors from apps)
     if debugMode {
         fputs("DEBUG: Unrecognized cursor (possibly custom), defaulting to arrow\n", stderr)
     }
+    lastCursorType = "arrow"
     return "arrow"
 }
 

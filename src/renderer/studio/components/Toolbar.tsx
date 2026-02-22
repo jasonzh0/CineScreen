@@ -15,6 +15,8 @@ export function Toolbar() {
     isExporting,
     currentTime,
     duration,
+    trimStartMs,
+    trimmedDuration,
     showToast,
   } = useStudio();
 
@@ -52,7 +54,7 @@ export function Toolbar() {
         </button>
       </div>
       <div className="ml-auto text-xs text-[#666666] font-mono tabular-nums">
-        {formatTime(currentTime / 1000)} / {formatTime(duration)}
+        {formatTime(Math.max(0, (currentTime - trimStartMs) / 1000))} / {formatTime(trimmedDuration)}
       </div>
     </div>
   );

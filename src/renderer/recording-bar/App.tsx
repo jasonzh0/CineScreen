@@ -19,7 +19,7 @@ export function App() {
     openMainWindow,
   } = useRecordingState();
 
-  const barClasses = `flex items-center gap-1.5 px-2 py-1.5 h-12 w-[208px]
+  const barClasses = `flex items-center gap-1.5 px-2 py-1.5 h-12 w-[180px]
                       bg-neutral-900/85 backdrop-blur-xl
                       shadow-[0_4px_24px_rgba(0,0,0,0.4)]
                       select-none font-sans
@@ -33,7 +33,9 @@ export function App() {
 
         <Divider />
 
-        <div className="flex-1" />
+        <div className="flex-1 flex justify-center">
+          <TimerDisplay elapsedMs={0} />
+        </div>
 
         <MenuButton onOpenSettings={openMainWindow} />
       </div>
@@ -47,11 +49,10 @@ export function App() {
 
       <Divider />
 
-      <TimerDisplay elapsedMs={elapsedMs} />
+      <div className="flex-1 flex justify-center">
+        <TimerDisplay elapsedMs={elapsedMs} />
+      </div>
 
-      <Divider />
-
-      <ActionButton icon="restart" onClick={restart} disabled={isLoading} />
       <ActionButton icon="cancel" onClick={cancel} disabled={isLoading} variant="danger" />
     </div>
   );

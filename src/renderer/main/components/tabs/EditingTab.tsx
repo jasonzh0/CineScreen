@@ -1,6 +1,7 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect, useCallback } from 'react';
 import { Slider, Select, Toggle } from '../../../shared/components';
 import { SettingsGroup } from '../settings/SettingsGroup';
+import { useElectronAPI } from '../../../shared/hooks/useElectronAPI';
 
 const cursorStyleOptions = [
   { value: 'arrow', label: 'Arrow' },
@@ -16,6 +17,8 @@ const zoomAnimationOptions = [
 ];
 
 export function EditingTab() {
+  const api = useElectronAPI();
+
   // Cursor settings
   const [cursorSize, setCursorSize] = useState(32);
   const [cursorShape, setCursorShape] = useState('arrow');
@@ -26,8 +29,38 @@ export function EditingTab() {
   const [zoomAnimation, setZoomAnimation] = useState('mellow');
 
   // Click effects
-  const [clickCirclesEnabled, setClickCirclesEnabled] = useState(true);
+  const [clickCirclesEnabled, setClickCirclesEnabled] = useState(false);
   const [clickCircleColor, setClickCircleColor] = useState('#ffffff');
+
+  // Load config on mount
+  useEffect(() => {
+    if (!api?.getUserConfig) return;
+    api.getUserConfig().then((config) => {
+      if (config.cursorSize != null) setCursorSize(config.cursorSize as number);
+      if (config.cursorShape != null) setCursorShape(config.cursorShape as string);
+      if (config.zoomEnabled != null) setZoomEnabled(config.zoomEnabled as boolean);
+      if (config.zoomLevel != null) setZoomLevel(config.zoomLevel as number);
+      if (config.zoomAnimation != null) setZoomAnimation(config.zoomAnimation as string);
+      if (config.clickCirclesEnabled != null) setClickCirclesEnabled(config.clickCirclesEnabled as boolean);
+      if (config.clickCircleColor != null) setClickCircleColor(config.clickCircleColor as string);
+    });
+  }, [api]);
+
+  // Persist helper
+  const save = useCallback(
+    (partial: Record<string, unknown>) => {
+      api?.setUserConfig?.(partial);
+    },
+    [api]
+  );
+
+  const handleCursorSize = useCallback((v: number) => { setCursorSize(v); save({ cursorSize: v }); }, [save]);
+  const handleCursorShape = useCallback((v: string) => { setCursorShape(v); save({ cursorShape: v }); }, [save]);
+  const handleZoomEnabled = useCallback((v: boolean) => { setZoomEnabled(v); save({ zoomEnabled: v }); }, [save]);
+  const handleZoomLevel = useCallback((v: number) => { setZoomLevel(v); save({ zoomLevel: v }); }, [save]);
+  const handleZoomAnimation = useCallback((v: string) => { setZoomAnimation(v); save({ zoomAnimation: v }); }, [save]);
+  const handleClickCircles = useCallback((v: boolean) => { setClickCirclesEnabled(v); save({ clickCirclesEnabled: v }); }, [save]);
+  const handleClickColor = useCallback((v: string) => { setClickCircleColor(v); save({ clickCircleColor: v }); }, [save]);
 
   return (
     <div className="space-y-5">
@@ -36,7 +69,7 @@ export function EditingTab() {
         <Slider
           label="Cursor Size"
           value={cursorSize}
-          onChange={setCursorSize}
+          onChange={handleCursorSize}
           min={16}
           max={64}
           step={4}
@@ -49,7 +82,7 @@ export function EditingTab() {
           <Select
             options={cursorStyleOptions}
             value={cursorShape}
-            onChange={setCursorShape}
+            onChange={handleCursorShape}
           />
         </div>
       </SettingsGroup>
@@ -58,14 +91,14 @@ export function EditingTab() {
       <SettingsGroup title="Auto Zoom">
         <Toggle
           checked={zoomEnabled}
-          onChange={setZoomEnabled}
+          onChange={handleZoomEnabled}
           label="Enable zoom on click"
         />
         <div className={zoomEnabled ? 'opacity-100' : 'opacity-50'}>
           <Slider
             label="Zoom Level"
             value={zoomLevel}
-            onChange={setZoomLevel}
+            onChange={handleZoomLevel}
             min={1.5}
             max={3}
             step={0.1}
@@ -79,7 +112,7 @@ export function EditingTab() {
           <Select
             options={zoomAnimationOptions}
             value={zoomAnimation}
-            onChange={setZoomAnimation}
+            onChange={handleZoomAnimation}
           />
         </div>
       </SettingsGroup>
@@ -88,7 +121,7 @@ export function EditingTab() {
       <SettingsGroup title="Click Effects">
         <Toggle
           checked={clickCirclesEnabled}
-          onChange={setClickCirclesEnabled}
+          onChange={handleClickCircles}
           label="Show click circles"
         />
         <div className={`flex items-center justify-between ${clickCirclesEnabled ? 'opacity-100' : 'opacity-50'}`}>
@@ -98,7 +131,7 @@ export function EditingTab() {
           <input
             type="color"
             value={clickCircleColor}
-            onChange={(e) => setClickCircleColor(e.target.value)}
+            onChange={(e) => handleClickColor(e.target.value)}
             className="w-12 h-8"
           />
         </div>

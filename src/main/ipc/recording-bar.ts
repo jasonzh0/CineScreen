@@ -9,7 +9,6 @@ import type { Platform } from '../../platform';
 import type { CursorConfig, ZoomConfig } from '../../types';
 import { MetadataExporter } from '../../processing/metadata-exporter';
 import { createLogger } from '../../utils/logger';
-import { DEFAULT_FRAME_RATE, DEFAULT_CURSOR_SIZE } from '../../utils/constants';
 import {
   getRecordingState,
   getCurrentRecordingConfig,
@@ -21,6 +20,7 @@ import {
   createScreenCapture,
   createMouseTracker,
   cleanupRecording,
+  loadConfig,
 } from '../state';
 import {
   showRecordingBar,
@@ -55,15 +55,17 @@ export function registerRecordingBarHandlers(
     // Stop the timer immediately so UI shows recording has ended
     stopRecordingBarTimer();
 
-    // Use default configs for stop
+    // Load configs from persistent store
+    const userConfig = loadConfig();
+
     const cursorConfig: CursorConfig = {
-      size: DEFAULT_CURSOR_SIZE,
-      shape: 'arrow',
+      size: userConfig.cursorSize,
+      shape: userConfig.cursorShape as CursorConfig['shape'],
     };
 
     const zoomConfig: ZoomConfig = {
-      enabled: true,
-      level: 2.0,
+      enabled: userConfig.zoomEnabled,
+      level: userConfig.zoomLevel,
       transitionSpeed: 300,
       padding: 0,
       followSpeed: 1.0,
@@ -150,7 +152,7 @@ export function registerRecordingBarHandlers(
         mouseEvents: adjustedMouseEvents,
         cursorConfig,
         zoomConfig,
-        frameRate: DEFAULT_FRAME_RATE,
+        frameRate: parseInt(userConfig.frameRate, 10) || 60,
         videoDuration: recordingDuration,
         screenDimensions,
         recordingRegion: currentRecordingConfig?.region,
@@ -222,6 +224,9 @@ export function registerRecordingBarHandlers(
       return;
     }
 
+    // Stop the timer immediately so UI shows recording has ended
+    stopRecordingBarTimer();
+
     const platform = await initPlatform();
     const mainWindow = getMainWindow();
     await cleanupRecording(platform, mainWindow, false);
@@ -281,6 +286,7 @@ export function registerRecordingBarHandlers(
           win.webContents.send('show-toast', {
             message: 'Please grant Screen Recording and Accessibility permissions before recording',
             type: 'warning',
+            switchTab: 'permissions',
           });
         }
       };
@@ -311,6 +317,7 @@ export function registerRecordingBarHandlers(
           win.webContents.send('show-toast', {
             message: 'Please set an output path before recording',
             type: 'warning',
+            switchTab: 'recording',
           });
         }
       };
@@ -347,18 +354,20 @@ export function registerRecordingBarHandlers(
       outputPath: configuredOutputPath,
     });
 
-    // Create a default recording config
+    // Create recording config from persisted settings
+    const userConfig = loadConfig();
     setCurrentRecordingConfig({
       outputPath: configuredOutputPath,
-      frameRate: DEFAULT_FRAME_RATE,
+      frameRate: parseInt(userConfig.frameRate, 10) || 60,
     });
 
     const mainWindow = getMainWindow();
 
     try {
-      // Hide the app window from screen capture
+      // Hide the main window during recording
       if (mainWindow && !mainWindow.isDestroyed()) {
         mainWindow.setContentProtection(true);
+        mainWindow.hide();
       }
 
       // Hide system cursor FIRST

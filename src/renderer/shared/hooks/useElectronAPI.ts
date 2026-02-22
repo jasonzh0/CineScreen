@@ -31,6 +31,8 @@ export interface ElectronAPI {
   selectOutputPath: () => Promise<string | null>;
   setOutputPath: (path: string | null) => Promise<{ success: boolean }>;
   getOutputPath: () => Promise<string | null>;
+  getUserConfig: () => Promise<Record<string, unknown>>;
+  setUserConfig: (partial: Record<string, unknown>) => Promise<{ success: boolean }>;
   onDebugLog: (callback: (message: string) => void) => void;
   removeDebugLogListener: () => void;
   onProcessingProgress: (callback: (data: { percent: number; message: string }) => void) => void;
@@ -41,7 +43,7 @@ export interface ElectronAPI {
   onRecordingCompleted: (callback: (data: { success: boolean; outputPath: string; metadataPath?: string }) => void) => void;
   onRestartRecording: (callback: (config: RecordingConfig) => void) => void;
   onRecordingCancelled: (callback: () => void) => void;
-  onShowToast: (callback: (data: { message: string; type: 'success' | 'error' | 'info' | 'warning' }) => void) => void;
+  onShowToast: (callback: (data: { message: string; type: 'success' | 'error' | 'info' | 'warning'; switchTab?: string }) => void) => void;
   removeRecordingBarListeners: () => void;
 }
 

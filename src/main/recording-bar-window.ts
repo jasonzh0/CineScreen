@@ -10,7 +10,7 @@ let currentMode: RecordingBarMode = 'idle';
 
 const isDev = process.env.NODE_ENV === 'development' || !require('electron').app.isPackaged;
 
-const BAR_WIDTH = 208;
+const BAR_WIDTH = 180;
 const BAR_HEIGHT = 48;
 
 function createRecordingBarWindow(): BrowserWindow {

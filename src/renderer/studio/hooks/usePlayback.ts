@@ -1,6 +1,9 @@
 import { useState, useEffect, useCallback, useRef } from 'react';
 
-export function usePlayback(videoRef: React.RefObject<HTMLVideoElement | null>) {
+export function usePlayback(
+  videoRef: React.RefObject<HTMLVideoElement | null>,
+  trimRange?: { startMs: number; endMs: number }
+) {
   const [isPlaying, setIsPlaying] = useState(false);
   const [currentTime, setCurrentTime] = useState(0);
   const [duration, setDuration] = useState(0);
@@ -10,11 +13,20 @@ export function usePlayback(videoRef: React.RefObject<HTMLVideoElement | null>) 
   const play = useCallback(async () => {
     if (!videoRef.current) return;
     try {
+      // If at or past trim end, seek to trim start before playing
+      if (trimRange) {
+        const trimEndSec = trimRange.endMs / 1000;
+        const trimStartSec = trimRange.startMs / 1000;
+        if (videoRef.current.currentTime >= trimEndSec - 0.01) {
+          videoRef.current.currentTime = trimStartSec;
+          setCurrentTime(trimRange.startMs);
+        }
+      }
       await videoRef.current.play();
     } catch (err) {
       console.error('Failed to play video:', err);
     }
-  }, [videoRef]);
+  }, [videoRef, trimRange]);
 
   const pause = useCallback(() => {
     videoRef.current?.pause();
@@ -32,7 +44,14 @@ export function usePlayback(videoRef: React.RefObject<HTMLVideoElement | null>) 
   const seekTo = useCallback((timeSeconds: number) => {
     if (!videoRef.current) return;
     const maxTime = videoRef.current.duration || Infinity;
-    const clampedTime = Math.max(0, Math.min(timeSeconds, maxTime));
+    let clampedTime = Math.max(0, Math.min(timeSeconds, maxTime));
+
+    // Clamp to trim range if set
+    if (trimRange) {
+      const trimStartSec = trimRange.startMs / 1000;
+      const trimEndSec = trimRange.endMs / 1000;
+      clampedTime = Math.max(trimStartSec, Math.min(clampedTime, trimEndSec));
+    }
 
     // 1. Update React state immediately (UI updates now)
     setCurrentTime(clampedTime * 1000);
@@ -42,7 +61,7 @@ export function usePlayback(videoRef: React.RefObject<HTMLVideoElement | null>) 
 
     // 3. Sync video element
     videoRef.current.currentTime = clampedTime;
-  }, [videoRef]);
+  }, [videoRef, trimRange]);
 
   // Use React state for skip calculations instead of video.currentTime
   const skipForward = useCallback((seconds = 5) => {
@@ -67,7 +86,17 @@ export function usePlayback(videoRef: React.RefObject<HTMLVideoElement | null>) 
 
     const syncLoop = () => {
       if (videoRef.current && isPlaying && !isSeeking.current) {
-        setCurrentTime(videoRef.current.currentTime * 1000);
+        const timeMs = videoRef.current.currentTime * 1000;
+
+        // Stop at trim end
+        if (trimRange && timeMs >= trimRange.endMs) {
+          videoRef.current.pause();
+          videoRef.current.currentTime = trimRange.endMs / 1000;
+          setCurrentTime(trimRange.endMs);
+          return;
+        }
+
+        setCurrentTime(timeMs);
       }
       rafRef.current = requestAnimationFrame(syncLoop);
     };
@@ -76,7 +105,7 @@ export function usePlayback(videoRef: React.RefObject<HTMLVideoElement | null>) 
     return () => {
       if (rafRef.current) cancelAnimationFrame(rafRef.current);
     };
-  }, [isPlaying, videoRef]);
+  }, [isPlaying, videoRef, trimRange]);
 
   // Video element event listeners - polls until video element is available
   useEffect(() => {

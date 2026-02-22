@@ -9,7 +9,7 @@ import { VideoProcessor } from '../../processing/video-processor';
 import { MetadataExporter } from '../../processing/metadata-exporter';
 import type { RecordingMetadata } from '../../types/metadata';
 import { createLogger } from '../../utils/logger';
-import { DEFAULT_FRAME_RATE } from '../../utils/constants';
+import { loadConfig } from '../state';
 
 const logger = createLogger('IPC:Studio');
 
@@ -60,7 +60,7 @@ export function registerStudioHandlers(
     return {
       width: dimensions.width,
       height: dimensions.height,
-      frameRate: DEFAULT_FRAME_RATE, // Default, could be extracted from video
+      frameRate: parseInt(loadConfig().frameRate, 10) || 60,
       duration: 0, // Would need to extract from video metadata
     };
   });

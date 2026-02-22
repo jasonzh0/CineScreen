@@ -1,4 +1,9 @@
-.PHONY: bump-patch bump-minor bump-major version
+.PHONY: build bump-patch bump-minor bump-major version
+
+# Build the application
+build:
+	@npm run build
+	@npm run package:mac
 
 # Show current version
 version:

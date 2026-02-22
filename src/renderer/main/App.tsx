@@ -40,6 +40,9 @@ export function App() {
 
     api.onShowToast((data) => {
       showToast(data.message, data.type);
+      if (data.switchTab) {
+        setActiveTab(data.switchTab);
+      }
     });
 
     return () => {
