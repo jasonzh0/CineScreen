@@ -125,6 +125,7 @@ export class ScreenCapture {
         '-preset', 'medium',
         '-crf', this.getCrfValue(config.quality || 'medium'),
         '-pix_fmt', 'yuv420p',
+        '-g', frameRate, // Keyframe every 1 second for reliable seeking in MKV
       ];
 
       // Add crop filter for region capture
@@ -158,6 +159,7 @@ export class ScreenCapture {
         '-preset', 'medium',
         '-crf', this.getCrfValue(config.quality || 'medium'),
         '-pix_fmt', 'yuv420p',
+        '-g', frameRate, // Keyframe every 1 second for reliable seeking in MKV
       ];
 
       // Add crop filter for region capture

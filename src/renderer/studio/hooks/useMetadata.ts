@@ -1,6 +1,7 @@
 import { useState, useEffect, useCallback } from 'react';
 import type { RecordingMetadata } from '../../../types/metadata';
 import { useStudioAPI, getInitPaths } from './useStudioAPI';
+import { DEFAULT_EFFECTS } from '../../../utils/constants';
 
 export function useMetadata() {
   const api = useStudioAPI();
@@ -24,6 +25,13 @@ export function useMetadata() {
     try {
       setIsLoading(true);
       const data = await api.loadMetadata(paths.metadataPath);
+      data.effects = {
+        ...DEFAULT_EFFECTS,
+        ...data.effects,
+        clickCircles: { ...DEFAULT_EFFECTS.clickCircles, ...data.effects?.clickCircles },
+        trail: { ...DEFAULT_EFFECTS.trail, ...data.effects?.trail },
+        highlightRing: { ...DEFAULT_EFFECTS.highlightRing, ...data.effects?.highlightRing },
+      };
       setMetadata(data);
       setError(null);
     } catch (err) {
@@ -51,6 +59,13 @@ export function useMetadata() {
     try {
       const result = await api.reloadMetadata(metadataPath);
       if (result.success && result.data) {
+        result.data.effects = {
+          ...DEFAULT_EFFECTS,
+          ...result.data.effects,
+          clickCircles: { ...DEFAULT_EFFECTS.clickCircles, ...result.data.effects?.clickCircles },
+          trail: { ...DEFAULT_EFFECTS.trail, ...result.data.effects?.trail },
+          highlightRing: { ...DEFAULT_EFFECTS.highlightRing, ...result.data.effects?.highlightRing },
+        };
         setMetadata(result.data);
         return true;
       }

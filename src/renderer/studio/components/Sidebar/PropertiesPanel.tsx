@@ -1,5 +1,10 @@
 import React from 'react';
 import { useStudio } from '../../context/StudioContext';
+import {
+  CLICK_CIRCLE_DEFAULT_SIZE,
+  CLICK_CIRCLE_DEFAULT_COLOR,
+  DEFAULT_EFFECTS,
+} from '../../../../utils/constants';
 
 export function PropertiesPanel() {
   const { metadata, updateMetadata } = useStudio();
@@ -11,6 +16,9 @@ export function PropertiesPanel() {
   const motionBlurStrength = Math.round((metadata.cursor.config.motionBlur?.strength || 0.5) * 100);
   const zoomEnabled = metadata.zoom.config.enabled || false;
   const zoomLevel = metadata.zoom.config.level || 2.0;
+  const clickCirclesEnabled = metadata.effects?.clickCircles?.enabled ?? false;
+  const clickCirclesColor = metadata.effects?.clickCircles?.color ?? CLICK_CIRCLE_DEFAULT_COLOR;
+  const clickCirclesSize = metadata.effects?.clickCircles?.size ?? CLICK_CIRCLE_DEFAULT_SIZE;
 
   const handleCursorSizeChange = (value: number) => {
     updateMetadata(prev => ({
@@ -72,6 +80,45 @@ export function PropertiesPanel() {
         config: { ...prev.zoom.config, level: value },
       },
     }));
+  };
+
+  const handleClickCirclesEnabledChange = (enabled: boolean) => {
+    updateMetadata(prev => {
+      const effects = { ...DEFAULT_EFFECTS, ...prev.effects };
+      return {
+        ...prev,
+        effects: {
+          ...effects,
+          clickCircles: { ...effects.clickCircles, enabled },
+        },
+      };
+    });
+  };
+
+  const handleClickCirclesColorChange = (color: string) => {
+    updateMetadata(prev => {
+      const effects = { ...DEFAULT_EFFECTS, ...prev.effects };
+      return {
+        ...prev,
+        effects: {
+          ...effects,
+          clickCircles: { ...effects.clickCircles, color },
+        },
+      };
+    });
+  };
+
+  const handleClickCirclesSizeChange = (size: number) => {
+    updateMetadata(prev => {
+      const effects = { ...DEFAULT_EFFECTS, ...prev.effects };
+      return {
+        ...prev,
+        effects: {
+          ...effects,
+          clickCircles: { ...effects.clickCircles, size },
+        },
+      };
+    });
   };
 
   return (
@@ -150,6 +197,47 @@ export function PropertiesPanel() {
             />
             <span>{zoomLevel.toFixed(1)}x</span>
           </div>
+        )}
+      </div>
+
+      {/* Click Effects */}
+      <div className="mt-5">
+        <h4 className="text-xs font-medium text-[#808080] mb-3">Click Effects</h4>
+
+        <div className="setting-item">
+          <label className="flex items-center gap-2 cursor-pointer">
+            <input
+              type="checkbox"
+              checked={clickCirclesEnabled}
+              onChange={(e) => handleClickCirclesEnabledChange(e.target.checked)}
+            />
+            Click Circles
+          </label>
+        </div>
+
+        {clickCirclesEnabled && (
+          <>
+            <div className="setting-item">
+              <label>Color:</label>
+              <input
+                type="color"
+                value={clickCirclesColor}
+                onChange={(e) => handleClickCirclesColorChange(e.target.value)}
+              />
+            </div>
+
+            <div className="setting-item">
+              <label>Size:</label>
+              <input
+                type="range"
+                min="20"
+                max="80"
+                value={clickCirclesSize}
+                onChange={(e) => handleClickCirclesSizeChange(parseInt(e.target.value))}
+              />
+              <span>{clickCirclesSize}px</span>
+            </div>
+          </>
         )}
       </div>
     </div>

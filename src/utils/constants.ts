@@ -231,6 +231,39 @@ const CLICK_DETECTION_TIMEOUT_MS = 50;
 const CLICK_DETECTION_THRESHOLD_MS = 200;
 
 // ========================================
+// Click Circle Constants
+// ========================================
+
+/**
+ * Default click circle radius in pixels
+ */
+export const CLICK_CIRCLE_DEFAULT_SIZE = 40;
+
+/**
+ * Default click circle color
+ */
+export const CLICK_CIRCLE_DEFAULT_COLOR = '#ffffff';
+
+/**
+ * Default click circle animation duration in milliseconds
+ */
+export const CLICK_CIRCLE_DEFAULT_DURATION = 400;
+
+/**
+ * Default mouse effects configuration
+ */
+export const DEFAULT_EFFECTS = {
+  clickCircles: {
+    enabled: false,
+    size: CLICK_CIRCLE_DEFAULT_SIZE,
+    color: CLICK_CIRCLE_DEFAULT_COLOR,
+    duration: CLICK_CIRCLE_DEFAULT_DURATION,
+  },
+  trail: { enabled: false, length: 5, fadeSpeed: 0.5, color: '#ffffff' },
+  highlightRing: { enabled: false, size: 30, color: '#ffffff', pulseSpeed: 0.5 },
+} as const satisfies import('../types').MouseEffectsConfig;
+
+// ========================================
 // Mouse Effects Constants
 // ========================================
 
