@@ -167,7 +167,8 @@ export class VideoProcessor {
         videoDimensions,
         cursorConfig,
         metadata.zoom.config.enabled ? metadata.zoom.config : undefined,
-        metadata.clicks
+        metadata.clicks,
+        metadata.effects
       );
       logger.info(`Created frame data for ${frameDataList.length} frames from keyframes (matching ${extractionResult.frameCount} extracted frames)`);
 
@@ -191,6 +192,7 @@ export class VideoProcessor {
         cursorSize: cursorConfig.size,
         cursorConfig,
         zoomConfig: metadata.zoom.config.enabled ? metadata.zoom.config : undefined,
+        effects: metadata.effects,
         frameRate,
       };
 

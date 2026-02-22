@@ -1,6 +1,6 @@
 import sharp from 'sharp';
 import { existsSync, readFileSync } from 'fs';
-import type { ZoomConfig, CursorConfig } from '../types';
+import type { ZoomConfig, CursorConfig, MouseEffectsConfig } from '../types';
 import type { CursorKeyframe, EasingType } from '../types/metadata';
 import { generateSmoothedZoom } from './zoom-tracker';
 import { createLogger } from '../utils/logger';
@@ -23,6 +23,9 @@ import {
   CURSOR_STATIC_THRESHOLD,
   CURSOR_HIDE_AFTER_MS,
   CURSOR_LOOP_DURATION_SECONDS,
+  CLICK_CIRCLE_DEFAULT_SIZE,
+  CLICK_CIRCLE_DEFAULT_COLOR,
+  CLICK_CIRCLE_DEFAULT_DURATION,
 } from '../utils/constants';
 
 const logger = createLogger('SharpRenderer');
@@ -48,7 +51,14 @@ export interface FrameRenderOptions {
   cursorSize: number;
   cursorConfig?: CursorConfig;
   zoomConfig?: ZoomConfig;
+  effects?: MouseEffectsConfig;
   frameRate: number;
+}
+
+export interface ActiveClickCircle {
+  x: number; // Click position X (video coords)
+  y: number; // Click position Y (video coords)
+  progress: number; // Animation progress 0→1
 }
 
 export interface FrameData {
@@ -61,6 +71,7 @@ export interface FrameData {
   cursorVelocityY: number;
   cursorShape?: string; // Cursor shape for this frame (e.g., 'arrow', 'pointer', 'ibeam')
   clickAnimationScale?: number; // Scale factor for click animation (0-1)
+  activeClickCircles?: ActiveClickCircle[]; // Active click circles for this frame
   zoomCenterX?: number;
   zoomCenterY?: number;
   zoomLevel?: number;
@@ -132,9 +143,15 @@ export async function renderFrame(
     currentFrameWidth = cropWidth;
     currentFrameHeight = cropHeight;
 
-    // Adjust cursor position relative to the crop
+    // Adjust cursor and click circle positions relative to the crop
     frameData.cursorX = frameData.cursorX - cropX;
     frameData.cursorY = frameData.cursorY - cropY;
+    if (frameData.activeClickCircles) {
+      for (const circle of frameData.activeClickCircles) {
+        circle.x -= cropX;
+        circle.y -= cropY;
+      }
+    }
   }
 
   if (frameData.frameIndex === 0) {
@@ -248,20 +265,71 @@ export async function renderFrame(
   const cursorLeft = Math.round(frameData.cursorX - hotspotOffsetX);
   const cursorTop = Math.round(frameData.cursorY - hotspotOffsetY);
 
-  // Composite cursor overlay
+  // Collect all overlays into a single composite call (Sharp replaces previous composites)
+  const composites: sharp.OverlayOptions[] = [];
+
+  // Cursor overlay
   if (cursorBuffer) {
-    // Ensure cursor is within bounds (allow hotspot to reach edges)
     const clampedLeft = Math.max(-hotspotOffsetX, Math.min(outputWidth - scaledCursorSize + hotspotOffsetX, cursorLeft));
     const clampedTop = Math.max(-hotspotOffsetY, Math.min(outputHeight - scaledCursorSize + hotspotOffsetY, cursorTop));
 
-    pipeline = pipeline.composite([
-      {
-        input: cursorBuffer,
-        left: clampedLeft,
-        top: clampedTop,
-        blend: 'over',
-      },
-    ]);
+    composites.push({
+      input: cursorBuffer,
+      left: clampedLeft,
+      top: clampedTop,
+      blend: 'over',
+    });
+  }
+
+  // Click circle overlays
+  const activeCircles = frameData.activeClickCircles;
+  if (options.effects?.clickCircles?.enabled && activeCircles && activeCircles.length > 0) {
+    const {
+      size = CLICK_CIRCLE_DEFAULT_SIZE,
+      color = CLICK_CIRCLE_DEFAULT_COLOR,
+    } = options.effects.clickCircles;
+
+    for (const circle of activeCircles) {
+      const easedProgress = 1 - Math.pow(1 - circle.progress, 3);
+      const radius = Math.round(size * scale * easedProgress);
+      const opacity = 1.0 * (1 - circle.progress);
+      const strokeWidth = Math.max(1, Math.round(3 * scale));
+
+      if (radius <= 0) continue;
+
+      const svgSize = (radius + strokeWidth) * 2;
+      const svgCenter = svgSize / 2;
+      const fillOpacity = opacity * 0.15;
+      const svg = Buffer.from(
+        `<svg width="${svgSize}" height="${svgSize}" xmlns="http://www.w3.org/2000/svg">` +
+        `<circle cx="${svgCenter}" cy="${svgCenter}" r="${radius}" ` +
+        `fill="${color}" fill-opacity="${fillOpacity}" stroke="${color}" stroke-width="${strokeWidth}" opacity="${opacity}"/>` +
+        `</svg>`
+      );
+
+      const circleX = Math.round(circle.x * scale + offsetX);
+      const circleY = Math.round(circle.y * scale + offsetY);
+      const left = Math.round(circleX - svgSize / 2);
+      const top = Math.round(circleY - svgSize / 2);
+
+      if (left + svgSize > 0 && left < outputWidth && top + svgSize > 0 && top < outputHeight) {
+        try {
+          const circleBuffer = await sharp(svg).png().toBuffer();
+          composites.push({
+            input: circleBuffer,
+            left: Math.max(0, left),
+            top: Math.max(0, top),
+            blend: 'over',
+          });
+        } catch {
+          // Skip this circle if SVG conversion fails
+        }
+      }
+    }
+  }
+
+  if (composites.length > 0) {
+    pipeline = pipeline.composite(composites);
   }
 
   // Write output as PNG (lossless)
@@ -282,7 +350,8 @@ export function createFrameDataFromKeyframes(
   videoDimensions: { width: number; height: number },
   cursorConfig?: CursorConfig,
   zoomConfig?: ZoomConfig,
-  clicks?: Array<{ timestamp: number; action: string }>
+  clicks?: Array<{ timestamp: number; action: string; x?: number; y?: number }>,
+  effects?: MouseEffectsConfig
 ): FrameData[] {
   const frameInterval = 1000 / frameRate;
   const totalFrames = Math.ceil(videoDuration / frameInterval);
@@ -434,12 +503,46 @@ export function createFrameDataFromKeyframes(
     // Calculate click animation scale
     const clickAnimationScale = clicks ? calculateClickAnimationScale(timestamp, clicks) : 1.0;
 
+    // Calculate active click circles for this frame
+    let activeClickCircles: ActiveClickCircle[] | undefined;
+    if (effects?.clickCircles?.enabled && clicks) {
+      const duration = effects.clickCircles.duration || CLICK_CIRCLE_DEFAULT_DURATION;
+      const circles: ActiveClickCircle[] = [];
+      for (const click of clicks) {
+        if (click.action !== 'down') continue;
+        const elapsed = timestamp - click.timestamp;
+        if (elapsed >= 0 && elapsed <= duration && click.x != null && click.y != null) {
+          circles.push({
+            x: click.x,
+            y: click.y,
+            progress: elapsed / duration,
+          });
+        }
+      }
+      if (circles.length > 0) {
+        activeClickCircles = circles;
+      }
+    }
+
     // Get cursor shape with stabilization to prevent flickering
     const rawCursorShape = cursorPos.shape || cursorConfig?.shape || 'arrow';
     const cursorShape = cursorTypeStabilizer.update(rawCursorShape, timestamp);
 
     // Get zoom data
     const zoomData = interpolateZoom(timestamp);
+
+    const baseFrameData = {
+      frameIndex,
+      timestamp,
+      cursorX,
+      cursorY,
+      cursorVisible,
+      cursorVelocityX: velocityX,
+      cursorVelocityY: velocityY,
+      cursorShape,
+      clickAnimationScale,
+      activeClickCircles,
+    };
 
     if (zoomConfig?.enabled && zoomData) {
       const zoomVelocityX = (zoomData.centerX - prevZoomCenterX) / deltaTime;
@@ -448,15 +551,7 @@ export function createFrameDataFromKeyframes(
       prevZoomCenterY = zoomData.centerY;
 
       frameDataList.push({
-        frameIndex,
-        timestamp,
-        cursorX,
-        cursorY,
-        cursorVisible,
-        cursorVelocityX: velocityX,
-        cursorVelocityY: velocityY,
-        cursorShape,
-        clickAnimationScale,
+        ...baseFrameData,
         zoomCenterX: zoomData.centerX,
         zoomCenterY: zoomData.centerY,
         zoomLevel: zoomData.level,
@@ -464,17 +559,7 @@ export function createFrameDataFromKeyframes(
         zoomVelocityY,
       });
     } else {
-      frameDataList.push({
-        frameIndex,
-        timestamp,
-        cursorX,
-        cursorY,
-        cursorVisible,
-        cursorVelocityX: velocityX,
-        cursorVelocityY: velocityY,
-        cursorShape,
-        clickAnimationScale,
-      });
+      frameDataList.push(baseFrameData);
     }
   }
 

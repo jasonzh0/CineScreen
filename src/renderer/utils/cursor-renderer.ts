@@ -8,7 +8,12 @@ import {
   calculateClickAnimationScale,
   CursorTypeStabilizer,
 } from '../../processing/cursor-utils';
-import { DEFAULT_CURSOR_SIZE } from '../../utils/constants';
+import {
+  DEFAULT_CURSOR_SIZE,
+  CLICK_CIRCLE_DEFAULT_SIZE,
+  CLICK_CIRCLE_DEFAULT_COLOR,
+  CLICK_CIRCLE_DEFAULT_DURATION,
+} from '../../utils/constants';
 
 /**
  * Cursor position smoother for glide effect
@@ -156,6 +161,77 @@ preloadCursorImages();
 
 
 /**
+ * Easing function for click circle animation (ease-out cubic)
+ */
+function easeOutCubic(t: number): number {
+  return 1 - Math.pow(1 - t, 3);
+}
+
+/**
+ * Render click circles on canvas at click positions
+ */
+function renderClickCircles(
+  ctx: CanvasRenderingContext2D,
+  metadata: RecordingMetadata,
+  timestamp: number,
+  videoWidth: number,
+  videoHeight: number,
+  displayWidth: number,
+  displayHeight: number
+): void {
+  const effects = metadata.effects;
+  if (!effects?.clickCircles?.enabled) return;
+
+  const clicks = metadata.clicks || [];
+  if (clicks.length === 0) return;
+
+  const {
+    size = CLICK_CIRCLE_DEFAULT_SIZE,
+    color = CLICK_CIRCLE_DEFAULT_COLOR,
+    duration = CLICK_CIRCLE_DEFAULT_DURATION,
+  } = effects.clickCircles;
+
+  // Calculate scale factors (same as renderCursor)
+  const scaleX = displayWidth / videoWidth;
+  const scaleY = displayHeight / videoHeight;
+  const scale = Math.min(scaleX, scaleY);
+  const actualDisplayWidth = videoWidth * scale;
+  const actualDisplayHeight = videoHeight * scale;
+  const offsetX = (displayWidth - actualDisplayWidth) / 2;
+  const offsetY = (displayHeight - actualDisplayHeight) / 2;
+
+  for (const click of clicks) {
+    if (click.action !== 'down') continue;
+    if (click.x == null || click.y == null) continue;
+
+    const elapsed = timestamp - click.timestamp;
+    if (elapsed < 0 || elapsed > duration) continue;
+
+    const progress = elapsed / duration;
+    const radius = size * scale * easeOutCubic(progress);
+    const opacity = 1.0 * (1 - progress);
+
+    const x = click.x * scale + offsetX;
+    const y = click.y * scale + offsetY;
+
+    // Skip circles entirely outside the display area
+    if (x + radius < 0 || x - radius > displayWidth || y + radius < 0 || y - radius > displayHeight) continue;
+
+    ctx.save();
+    ctx.beginPath();
+    ctx.arc(x, y, radius, 0, Math.PI * 2);
+    ctx.globalAlpha = opacity * 0.15;
+    ctx.fillStyle = color;
+    ctx.fill();
+    ctx.globalAlpha = opacity;
+    ctx.strokeStyle = color;
+    ctx.lineWidth = 3 * scale;
+    ctx.stroke();
+    ctx.restore();
+  }
+}
+
+/**
  * Render cursor on canvas
  */
 export function renderCursor(
@@ -232,6 +308,9 @@ export function renderCursor(
 
   // Draw cursor using actual SVG assets
   drawCursorShape(ctx, x, y, cursorSize, shape);
+
+  // Draw click circles on top of cursor
+  renderClickCircles(ctx, metadata, timestamp, videoWidth, videoHeight, displayWidth, displayHeight);
 }
 
 /**
