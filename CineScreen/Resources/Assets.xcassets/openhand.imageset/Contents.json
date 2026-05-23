@@ -1,0 +1,9 @@
+{
+  "images" : [
+    { "idiom" : "universal", "scale" : "1x", "filename" : "openhand.png" },
+    { "idiom" : "universal", "scale" : "2x", "filename" : "openhand@2x.png" },
+    { "idiom" : "universal", "scale" : "3x", "filename" : "openhand@3x.png" }
+  ],
+  "info" : { "author" : "xcode", "version" : 1 },
+  "properties" : { "preserves-vector-representation" : true, "template-rendering-intent" : "original" }
+}

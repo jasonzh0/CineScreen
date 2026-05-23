@@ -1,28 +1,110 @@
-.PHONY: build bump-patch bump-minor bump-major version
+# CineScreen — Makefile
 
-# Build the application
-build:
-	@npm run build
-	@npm run package:mac
+PROJECT       := CineScreen.xcodeproj
+SCHEME        := CineScreen
+APP_NAME      := CineScreen
+CONFIG_DEBUG  := Debug
+CONFIG_RELEASE:= Release
+BUILD_DIR     := build
+ARCHIVE       := $(BUILD_DIR)/$(APP_NAME).xcarchive
+EXPORT_DIR    := $(BUILD_DIR)/export
+APP_BUNDLE    := $(EXPORT_DIR)/$(APP_NAME).app
+DMG_PATH      := $(BUILD_DIR)/$(APP_NAME).dmg
 
-# Show current version
-version:
-	@echo "Current version: $$(node -p "require('./package.json').version")"
+SIGNING_IDENTITY ?= Developer ID Application: Jiajun Zhang (JAT3GYBPJ4)
+TEAM_ID          ?= JAT3GYBPJ4
+NOTARY_PROFILE   ?= cinescreen-notary
 
-# Bump patch version (1.0.0 -> 1.0.1)
-bump-patch:
-	@echo "Bumping patch version..."
-	@npm version patch --no-git-tag-version
-	@echo "New version: $$(node -p "require('./package.json').version")"
+# --- Project generation -----------------------------------------------------
 
-# Bump minor version (1.0.0 -> 1.1.0)
-bump-minor:
-	@echo "Bumping minor version..."
-	@npm version minor --no-git-tag-version
-	@echo "New version: $$(node -p "require('./package.json').version")"
+.PHONY: project
+project:
+	xcodegen generate
 
-# Bump major version (1.0.0 -> 2.0.0)
-bump-major:
-	@echo "Bumping major version..."
-	@npm version major --no-git-tag-version
-	@echo "New version: $$(node -p "require('./package.json').version")"
+# --- Build ------------------------------------------------------------------
+
+.PHONY: build
+build: project
+	xcodebuild \
+	  -project $(PROJECT) \
+	  -scheme $(SCHEME) \
+	  -configuration $(CONFIG_DEBUG) \
+	  -derivedDataPath $(BUILD_DIR)/derived \
+	  build
+
+.PHONY: build-release
+build-release: project
+	xcodebuild \
+	  -project $(PROJECT) \
+	  -scheme $(SCHEME) \
+	  -configuration $(CONFIG_RELEASE) \
+	  -derivedDataPath $(BUILD_DIR)/derived \
+	  build
+
+# --- Archive + export for distribution -------------------------------------
+
+.PHONY: archive
+archive: project
+	xcodebuild \
+	  -project $(PROJECT) \
+	  -scheme $(SCHEME) \
+	  -configuration $(CONFIG_RELEASE) \
+	  -archivePath $(ARCHIVE) \
+	  archive
+
+.PHONY: export
+export: archive
+	@mkdir -p $(EXPORT_DIR)
+	xcodebuild \
+	  -exportArchive \
+	  -archivePath $(ARCHIVE) \
+	  -exportPath $(EXPORT_DIR) \
+	  -exportOptionsPlist exportOptions.plist
+
+# --- Notarization -----------------------------------------------------------
+# Prereq (run once): xcrun notarytool store-credentials cinescreen-notary \
+#                      --apple-id you@example.com \
+#                      --team-id JAT3GYBPJ4 \
+#                      --password APP-SPECIFIC-PASSWORD
+
+.PHONY: dmg
+dmg: export
+	hdiutil create -volname $(APP_NAME) \
+	  -srcfolder $(APP_BUNDLE) \
+	  -ov -format UDZO $(DMG_PATH)
+
+.PHONY: notarize
+notarize: dmg
+	xcrun notarytool submit $(DMG_PATH) \
+	  --keychain-profile $(NOTARY_PROFILE) \
+	  --wait
+	xcrun stapler staple $(DMG_PATH)
+
+.PHONY: release
+release: notarize
+	@echo "Release artifact: $(DMG_PATH)"
+
+# --- Utilities --------------------------------------------------------------
+
+.PHONY: open
+open: project
+	open $(PROJECT)
+
+.PHONY: clean
+clean:
+	rm -rf $(BUILD_DIR)
+	rm -rf $(PROJECT)
+
+.PHONY: help
+help:
+	@echo "Targets:"
+	@echo "  project        — regenerate $(PROJECT) from project.yml"
+	@echo "  build          — debug build"
+	@echo "  build-release  — release build"
+	@echo "  archive        — create xcarchive"
+	@echo "  export         — export signed .app from archive"
+	@echo "  dmg            — package .app into .dmg"
+	@echo "  notarize       — submit DMG to Apple and staple"
+	@echo "  release        — full pipeline: archive→export→dmg→notarize"
+	@echo "  open           — open Xcode"
+	@echo "  clean          — remove generated project and build artifacts"

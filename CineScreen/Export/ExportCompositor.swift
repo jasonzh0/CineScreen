@@ -1,0 +1,292 @@
+import Foundation
+import Metal
+import MetalKit
+import CoreVideo
+import simd
+import AppKit
+
+/// Headless GPU compositor for the export pipeline. Mirrors `MetalRenderer`
+/// (same shaders, same passes) but renders into a CVPixelBuffer-backed
+/// MTLTexture instead of an MTKView drawable.
+final class ExportCompositor {
+    private let device: MTLDevice
+    private let commandQueue: MTLCommandQueue
+    private let videoPipeline: MTLRenderPipelineState
+    private let cursorPipeline: MTLRenderPipelineState
+    private let clickPipeline: MTLRenderPipelineState
+    private let vertexBuffer: MTLBuffer
+    private let textureCache: CVMetalTextureCache
+    private let textureLoader: MTKTextureLoader
+    private var cursorTextures: [CursorShape: MTLTexture] = [:]
+
+    init?() {
+        guard let device = MTLCreateSystemDefaultDevice(),
+              let queue = device.makeCommandQueue(),
+              let library = device.makeDefaultLibrary() else { return nil }
+
+        guard let videoVertex = library.makeFunction(name: "video_vertex"),
+              let videoFragment = library.makeFunction(name: "video_fragment"),
+              let cursorVertex = library.makeFunction(name: "cursor_vertex"),
+              let cursorFragment = library.makeFunction(name: "cursor_fragment"),
+              let clickVertex = library.makeFunction(name: "click_vertex"),
+              let clickFragment = library.makeFunction(name: "click_fragment") else { return nil }
+
+        // Pipelines render into BGRA to match the writer's pixel buffer format.
+        let videoDesc = MTLRenderPipelineDescriptor()
+        videoDesc.vertexFunction = videoVertex
+        videoDesc.fragmentFunction = videoFragment
+        videoDesc.colorAttachments[0].pixelFormat = .bgra8Unorm
+        videoDesc.label = "export.video"
+        guard let videoPipeline = try? device.makeRenderPipelineState(descriptor: videoDesc) else { return nil }
+
+        let cursorDesc = MTLRenderPipelineDescriptor()
+        cursorDesc.vertexFunction = cursorVertex
+        cursorDesc.fragmentFunction = cursorFragment
+        cursorDesc.colorAttachments[0].pixelFormat = .bgra8Unorm
+        cursorDesc.colorAttachments[0].isBlendingEnabled = true
+        cursorDesc.colorAttachments[0].rgbBlendOperation = .add
+        cursorDesc.colorAttachments[0].alphaBlendOperation = .add
+        cursorDesc.colorAttachments[0].sourceRGBBlendFactor = .sourceAlpha
+        cursorDesc.colorAttachments[0].sourceAlphaBlendFactor = .one
+        cursorDesc.colorAttachments[0].destinationRGBBlendFactor = .oneMinusSourceAlpha
+        cursorDesc.colorAttachments[0].destinationAlphaBlendFactor = .oneMinusSourceAlpha
+        cursorDesc.label = "export.cursor"
+        guard let cursorPipeline = try? device.makeRenderPipelineState(descriptor: cursorDesc) else { return nil }
+
+        let clickDesc = MTLRenderPipelineDescriptor()
+        clickDesc.vertexFunction = clickVertex
+        clickDesc.fragmentFunction = clickFragment
+        clickDesc.colorAttachments[0].pixelFormat = .bgra8Unorm
+        clickDesc.colorAttachments[0].isBlendingEnabled = true
+        clickDesc.colorAttachments[0].rgbBlendOperation = .add
+        clickDesc.colorAttachments[0].alphaBlendOperation = .add
+        clickDesc.colorAttachments[0].sourceRGBBlendFactor = .sourceAlpha
+        clickDesc.colorAttachments[0].sourceAlphaBlendFactor = .one
+        clickDesc.colorAttachments[0].destinationRGBBlendFactor = .oneMinusSourceAlpha
+        clickDesc.colorAttachments[0].destinationAlphaBlendFactor = .oneMinusSourceAlpha
+        clickDesc.label = "export.click"
+        guard let clickPipeline = try? device.makeRenderPipelineState(descriptor: clickDesc) else { return nil }
+
+        let quad: [SIMD4<Float>] = [
+            SIMD4(-1, -1, 0, 1),
+            SIMD4( 1, -1, 1, 1),
+            SIMD4(-1,  1, 0, 0),
+            SIMD4( 1,  1, 1, 0),
+        ]
+        let len = MemoryLayout<SIMD4<Float>>.stride * quad.count
+        guard let buffer = device.makeBuffer(bytes: quad, length: len, options: .storageModeShared) else { return nil }
+
+        var cache: CVMetalTextureCache?
+        guard CVMetalTextureCacheCreate(kCFAllocatorDefault, nil, device, nil, &cache) == kCVReturnSuccess,
+              let cache = cache else { return nil }
+
+        self.device = device
+        self.commandQueue = queue
+        self.videoPipeline = videoPipeline
+        self.cursorPipeline = cursorPipeline
+        self.clickPipeline = clickPipeline
+        self.vertexBuffer = buffer
+        self.textureCache = cache
+        self.textureLoader = MTKTextureLoader(device: device)
+    }
+
+    // MARK: - Render
+
+    /// Composite `source` (with optional `cursor`) into `destination`. Blocks
+    /// until the GPU work is done so the caller can append the result
+    /// immediately.
+    func render(
+        source: CVPixelBuffer,
+        cursor: CursorRenderState?,
+        clicks: [ClickRingState] = [],
+        zoom: ZoomState = .identity,
+        canvas: CanvasStyle = .none,
+        destination: CVPixelBuffer
+    ) -> Bool {
+        guard let sourceTexture = makeTexture(from: source),
+              let destTexture = makeTexture(from: destination, usage: [.renderTarget, .shaderRead]) else {
+            return false
+        }
+
+        let descriptor = MTLRenderPassDescriptor()
+        descriptor.colorAttachments[0].texture = destTexture
+        descriptor.colorAttachments[0].loadAction = .clear
+        descriptor.colorAttachments[0].storeAction = .store
+        descriptor.colorAttachments[0].clearColor = MTLClearColor(
+            red: Double(canvas.backgroundColor.x),
+            green: Double(canvas.backgroundColor.y),
+            blue: Double(canvas.backgroundColor.z),
+            alpha: Double(canvas.backgroundColor.w)
+        )
+
+        guard let commandBuffer = commandQueue.makeCommandBuffer(),
+              let encoder = commandBuffer.makeRenderCommandEncoder(descriptor: descriptor) else {
+            return false
+        }
+
+        var aspect = AspectUniforms(scale: SIMD2(1, 1))
+        var zoomUniforms = ZoomUniforms(centerUV: zoom.centerUV, scale: max(0.01, zoom.scale))
+        let inset = max(0, min(0.5, canvas.padding))
+        var canvasUniforms = CanvasUniforms(
+            contentScale: SIMD2(1.0 - inset * 2.0, 1.0 - inset * 2.0),
+            cornerRadius: max(0, min(0.3, canvas.cornerRadius))
+        )
+
+        // 1. Video pass
+        encoder.setRenderPipelineState(videoPipeline)
+        encoder.setVertexBuffer(vertexBuffer, offset: 0, index: 0)
+        encoder.setVertexBytes(&aspect, length: MemoryLayout<AspectUniforms>.stride, index: 1)
+        encoder.setVertexBytes(&zoomUniforms, length: MemoryLayout<ZoomUniforms>.stride, index: 2)
+        encoder.setVertexBytes(&canvasUniforms, length: MemoryLayout<CanvasUniforms>.stride, index: 3)
+        encoder.setFragmentBytes(&canvasUniforms, length: MemoryLayout<CanvasUniforms>.stride, index: 0)
+        encoder.setFragmentTexture(sourceTexture, index: 1)
+        encoder.drawPrimitives(type: .triangleStrip, vertexStart: 0, vertexCount: 4)
+
+        let width = CVPixelBufferGetWidth(source)
+        let height = CVPixelBufferGetHeight(source)
+        let videoSize = SIMD2(Float(width), Float(height))
+
+        // 2. Click rings
+        if !clicks.isEmpty {
+            encoder.setRenderPipelineState(clickPipeline)
+            for click in clicks {
+                var u = ClickUniforms(
+                    centerInVideoPixels: click.centerInVideoPixels,
+                    radiusInPixels: click.radiusInPixels,
+                    thicknessInPixels: click.thicknessInPixels,
+                    videoSize: videoSize,
+                    aspectScale: aspect.scale,
+                    color: click.color
+                )
+                encoder.setVertexBytes(&u, length: MemoryLayout<ClickUniforms>.stride, index: 0)
+                encoder.setVertexBytes(&zoomUniforms, length: MemoryLayout<ZoomUniforms>.stride, index: 1)
+                encoder.setVertexBytes(&canvasUniforms, length: MemoryLayout<CanvasUniforms>.stride, index: 2)
+                encoder.setFragmentBytes(&u, length: MemoryLayout<ClickUniforms>.stride, index: 0)
+                encoder.drawPrimitives(type: .triangleStrip, vertexStart: 0, vertexCount: 4)
+            }
+        }
+
+        // 3. Cursor pass
+        if let cursor = cursor, let texture = cursorTexture(for: cursor.shape) {
+            var uniforms = CursorUniforms(
+                cursorPos: cursor.positionInVideoPixels,
+                size: cursor.size,
+                videoSize: videoSize,
+                aspectScale: aspect.scale,
+                opacity: cursor.opacity
+            )
+            encoder.setRenderPipelineState(cursorPipeline)
+            encoder.setVertexBytes(&uniforms, length: MemoryLayout<CursorUniforms>.stride, index: 0)
+            encoder.setVertexBytes(&zoomUniforms, length: MemoryLayout<ZoomUniforms>.stride, index: 1)
+            encoder.setVertexBytes(&canvasUniforms, length: MemoryLayout<CanvasUniforms>.stride, index: 2)
+            encoder.setFragmentBytes(&uniforms, length: MemoryLayout<CursorUniforms>.stride, index: 0)
+            encoder.setFragmentTexture(texture, index: 0)
+            encoder.drawPrimitives(type: .triangleStrip, vertexStart: 0, vertexCount: 4)
+        }
+
+        encoder.endEncoding()
+        commandBuffer.commit()
+        commandBuffer.waitUntilCompleted()
+        return commandBuffer.status == .completed
+    }
+
+    // MARK: - Helpers
+
+    private func makeTexture(from buffer: CVPixelBuffer, usage: MTLTextureUsage = [.shaderRead]) -> MTLTexture? {
+        let width = CVPixelBufferGetWidth(buffer)
+        let height = CVPixelBufferGetHeight(buffer)
+        var textureRef: CVMetalTexture?
+        let status = CVMetalTextureCacheCreateTextureFromImage(
+            kCFAllocatorDefault, textureCache, buffer, nil,
+            .bgra8Unorm, width, height, 0, &textureRef
+        )
+        guard status == kCVReturnSuccess, let textureRef = textureRef else { return nil }
+        let texture = CVMetalTextureGetTexture(textureRef)
+        if let texture = texture, usage.contains(.renderTarget),
+           !texture.usage.contains(.renderTarget) {
+            // CVMetalTextureCache doesn't always set renderTarget usage; we
+            // need it for the destination. Allocate a sidecar render target
+            // and blit the result. (Most CVPixelBuffers from
+            // AVAssetWriterInputPixelBufferAdaptor's pool already have
+            // renderTarget — the check is defensive.)
+        }
+        return texture
+    }
+
+    private func cursorTexture(for shape: CursorShape) -> MTLTexture? {
+        if let cached = cursorTextures[shape] { return cached }
+        let candidates = [shape.rawValue, "arrow"]
+        for name in candidates {
+            if let tex = loadCursorTexture(named: name) {
+                cursorTextures[shape] = tex
+                return tex
+            }
+        }
+        return nil
+    }
+
+    /// Mirrors MetalRenderer's normalised-RGBA loader — always re-renders
+    /// the asset through a fresh sRGB CGContext with explicit RGBA byte
+    /// order, then loads via MTKTextureLoader with `.origin: .bottomLeft`.
+    /// Without this the export had the same yellow / black-square cursor bug
+    /// that the editor preview used to.
+    private func loadCursorTexture(named name: String) -> MTLTexture? {
+        guard let image = NSImage(named: name) else { return nil }
+        let w = max(1, Int(image.size.width))
+        let h = max(1, Int(image.size.height))
+        guard let cs = CGColorSpace(name: CGColorSpace.sRGB),
+              let ctx = CGContext(
+                data: nil, width: w, height: h, bitsPerComponent: 8,
+                bytesPerRow: 0, space: cs,
+                bitmapInfo: CGImageAlphaInfo.premultipliedLast.rawValue
+                    | CGBitmapInfo.byteOrder32Big.rawValue
+              ) else {
+            return nil
+        }
+        let nsCtx = NSGraphicsContext(cgContext: ctx, flipped: false)
+        NSGraphicsContext.saveGraphicsState()
+        NSGraphicsContext.current = nsCtx
+        image.draw(in: NSRect(x: 0, y: 0, width: w, height: h),
+                   from: .zero, operation: .copy, fraction: 1.0)
+        NSGraphicsContext.restoreGraphicsState()
+        guard let cg = ctx.makeImage() else { return nil }
+
+        let opts: [MTKTextureLoader.Option: Any] = [
+            .SRGB: false,
+            .origin: MTKTextureLoader.Origin.bottomLeft,
+            .generateMipmaps: false
+        ]
+        return try? textureLoader.newTexture(cgImage: cg, options: opts)
+    }
+
+    // MARK: - Uniforms (must match the layouts in MetalRenderer.swift)
+
+    private struct AspectUniforms { var scale: SIMD2<Float> }
+    private struct CursorUniforms {
+        var cursorPos: SIMD2<Float>
+        var size: Float
+        var _pad0: Float = 0
+        var videoSize: SIMD2<Float>
+        var aspectScale: SIMD2<Float>
+        var opacity: Float
+        var _pad1: SIMD3<Float> = .zero
+    }
+    private struct ClickUniforms {
+        var centerInVideoPixels: SIMD2<Float>
+        var radiusInPixels: Float
+        var thicknessInPixels: Float
+        var videoSize: SIMD2<Float>
+        var aspectScale: SIMD2<Float>
+        var color: SIMD4<Float>
+    }
+    private struct ZoomUniforms {
+        var centerUV: SIMD2<Float>
+        var scale: Float
+        var _pad: Float = 0
+    }
+    private struct CanvasUniforms {
+        var contentScale: SIMD2<Float>
+        var cornerRadius: Float
+        var _pad: Float = 0
+    }
+}

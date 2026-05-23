@@ -1,12 +1,24 @@
-node_modules/
-dist/
-release/
-*.log
+# macOS
 .DS_Store
-.env
-*.local
-temp/
-recordings/
 
-native/mouse-telemetry
-native/cursor-control
+# XcodeGen output — regenerated from project.yml, do not commit
+CineScreen.xcodeproj/
+
+# Build artifacts
+build/
+DerivedData/
+*.xcuserstate
+*.xcuserdatad/
+xcuserdata/
+
+# Notarization staging
+*.dmg
+*.zip
+*.app
+notarize-receipt.json
+notarize.log
+
+# Swift Package Manager
+.swiftpm/
+.build/
+Package.resolved
