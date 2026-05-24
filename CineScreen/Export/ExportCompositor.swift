@@ -165,8 +165,7 @@ final class ExportCompositor {
         var zoomUniforms = ZoomUniforms(centerUV: zoom.centerUV, scale: max(0.01, zoom.scale))
         let inset = max(0, min(0.5, canvas.padding))
         var canvasUniforms = CanvasUniforms(
-            contentScale: SIMD2(1.0 - inset * 2.0, 1.0 - inset * 2.0),
-            cornerRadius: max(0, min(0.3, canvas.cornerRadius))
+            contentScale: SIMD2(1.0 - inset * 2.0, 1.0 - inset * 2.0)
         )
 
         // 0. Background pass — full-screen gradient (matches MetalRenderer)
@@ -180,10 +179,9 @@ final class ExportCompositor {
             let halfSize = aspect.scale * canvasUniforms.contentScale
             var shadowUniforms = ShadowUniforms(
                 halfSize: halfSize,
-                cornerRadius: canvasUniforms.cornerRadius,
-                blur: 0.07,
-                yOffset: -0.025,
-                opacity: 0.55
+                blur: 0.18,
+                yOffset: -0.03,
+                opacity: 0.42
             )
             encoder.setRenderPipelineState(shadowPipeline)
             encoder.setFragmentBytes(&shadowUniforms, length: MemoryLayout<ShadowUniforms>.stride, index: 0)
@@ -344,7 +342,5 @@ final class ExportCompositor {
     }
     private struct CanvasUniforms {
         var contentScale: SIMD2<Float>
-        var cornerRadius: Float
-        var _pad: Float = 0
     }
 }

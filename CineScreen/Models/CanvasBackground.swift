@@ -61,12 +61,10 @@ extension CanvasBackground {
 /// Flat Swift layout matching the Metal `ShadowUniforms` struct.
 struct ShadowUniforms {
     var halfSize: SIMD2<Float>
-    var cornerRadius: Float
     var blur: Float
     var yOffset: Float
     var opacity: Float
     var pad0: Float = 0
-    var pad1: Float = 0
 }
 
 /// Flat Swift layout matching the Metal `BackgroundUniforms` struct.

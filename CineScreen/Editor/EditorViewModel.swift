@@ -22,11 +22,10 @@ final class EditorViewModel {
     var trimStartMs: Double = 0
     var trimEndMs: Double = 0
 
-    // Canvas styling (Phase 4) — backgrounds + padding + rounded corners.
-    // Defaults give a polished out-of-the-box look (subtle padding, rounded
-    // corners, drop shadow) so new recordings already feel "designed".
+    // Canvas styling (Phase 4) — backgrounds + padding + drop shadow.
+    // Defaults give a polished out-of-the-box look so new recordings already
+    // feel "designed".
     var canvasPadding: Double = 0.05
-    var canvasCornerRadius: Double = 0.025
     var canvasBackground: CanvasBackground = .solid("#1a1a1a")
     var canvasDropShadow: Bool = true
 
@@ -40,7 +39,6 @@ final class EditorViewModel {
     var canvasStyle: CanvasStyle {
         CanvasStyle(
             padding: Float(canvasPadding),
-            cornerRadius: Float(canvasCornerRadius),
             background: canvasBackground,
             dropShadow: canvasDropShadow
         )
@@ -233,7 +231,8 @@ final class EditorViewModel {
 
     /// Auto-zoom: cluster click-down events within 2s into a single zoom
     /// section. Each section starts 300ms before the first click and ends
-    /// 1200ms after the last.
+    /// 1200ms after the last. Pan within each section is auto-computed from
+    /// the cursor track at render time, so we no longer carry a focal point.
     static func generateZoomSections(
         from clicks: [ClickEvent],
         videoDuration: Double,
@@ -249,19 +248,19 @@ final class EditorViewModel {
 
         var clusterStart = downClicks[0]
         var clusterEnd = downClicks[0]
-        var centerXSum = downClicks[0].x
-        var centerYSum = downClicks[0].y
-        var count = 1.0
 
         func flush() {
             let start = max(0, clusterStart.timestamp - preroll)
             let end = min(videoDuration, clusterEnd.timestamp + postroll)
+            // centerX / centerY are legacy fields — auto-pan ignores them at
+            // render time, but the model still carries them for on-disk
+            // compatibility with older projects. Default to video center.
             sections.append(ZoomSection(
                 startTime: start,
                 endTime: end,
                 scale: scale,
-                centerX: centerXSum / count,
-                centerY: centerYSum / count
+                centerX: 0,
+                centerY: 0
             ))
         }
 
@@ -269,16 +268,10 @@ final class EditorViewModel {
             let c = downClicks[i]
             if c.timestamp - clusterEnd.timestamp <= clusterGapMs {
                 clusterEnd = c
-                centerXSum += c.x
-                centerYSum += c.y
-                count += 1
             } else {
                 flush()
                 clusterStart = c
                 clusterEnd = c
-                centerXSum = c.x
-                centerYSum = c.y
-                count = 1
             }
         }
         flush()
@@ -319,14 +312,12 @@ final class EditorViewModel {
         guard var metadata = metadata else { return }
         let now = currentTimeMs
         let duration = max(500.0, min(metadata.video.duration - now, 2000.0))
-        let centerX = Double(metadata.video.width) / 2
-        let centerY = Double(metadata.video.height) / 2
         let section = ZoomSection(
             startTime: max(0, now - duration / 2),
             endTime: min(metadata.video.duration, now + duration / 2),
             scale: metadata.zoom.config.level,
-            centerX: centerX,
-            centerY: centerY
+            centerX: 0,
+            centerY: 0
         )
         var sections = metadata.zoom.sections
         sections.append(section)
@@ -363,15 +354,13 @@ final class EditorViewModel {
     }
 
     func updateZoomSection(at index: Int, startTime: Double? = nil, endTime: Double? = nil,
-                           scale: Double? = nil, centerX: Double? = nil, centerY: Double? = nil) {
+                           scale: Double? = nil) {
         materializeIfAuto()
         guard var metadata = metadata, metadata.zoom.sections.indices.contains(index) else { return }
         var section = metadata.zoom.sections[index]
         if let s = startTime { section.startTime = max(0, s) }
         if let e = endTime { section.endTime = min(metadata.video.duration, e) }
         if let z = scale { section.scale = max(1.0, min(z, 6.0)) }
-        if let x = centerX { section.centerX = x }
-        if let y = centerY { section.centerY = y }
         metadata.zoom.sections[index] = section
         // DO NOT re-sort here — dragging a block past a neighbour would
         // reorder the array mid-drag, the captured drag index would suddenly

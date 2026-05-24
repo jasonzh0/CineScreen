@@ -15,9 +15,6 @@ struct CanvasUniforms {
     // Multiplied with the post-aspect-fit position to shrink the video into
     // a padded sub-region. e.g. 0.8 = 20% padding total.
     float2 contentScale;
-    // Corner radius in normalized canvas coordinates (0..1). 0 = sharp.
-    float cornerRadius;
-    float _pad;
 };
 
 // Zoom: shifts UV space so a sub-region of the video fills the drawable.
@@ -121,12 +118,10 @@ fragment float4 background_fragment(
 
 struct ShadowUniforms {
     float2 halfSize;     // video quad half-size in NDC (= aspect.scale * contentScale)
-    float cornerRadius;  // matches the video quad's UV-space radius
-    float blur;          // shadow blur radius in NDC (0.02..0.1 typical)
+    float blur;          // shadow blur radius in NDC (0.02..0.2 typical)
     float yOffset;       // downward offset in NDC (negative y)
     float opacity;       // peak alpha at the quad's edge
     float pad0;
-    float pad1;
 };
 
 vertex VertexOut shadow_vertex(uint vid [[vertex_id]]) {
@@ -146,18 +141,16 @@ fragment float4 shadow_fragment(
     VertexOut in [[stage_in]],
     constant ShadowUniforms &u [[buffer(0)]]
 ) {
-    // Translate the sample point so the shadow centre sits below the quad.
+    // Shift the sample point so the shadow sits slightly below the quad.
     float2 p = float2(in.uv.x, in.uv.y - u.yOffset);
 
-    // SDF to the inset rounded rectangle.
-    float r = u.cornerRadius * min(u.halfSize.x, u.halfSize.y);
-    float2 d = abs(p) - (u.halfSize - r);
-    float dist = length(max(d, float2(0.0))) - r;
+    // SDF to the sharp video rectangle (no corner radius).
+    float2 d = abs(p) - u.halfSize;
+    float dist = length(max(d, float2(0.0)));
 
-    // Alpha only outside the rect (we don't want shadow under the video).
-    float outside = step(0.0, dist);
+    // Alpha is zero inside the rect, peaks at the edge, fades over `blur`.
     float falloff = smoothstep(u.blur, 0.0, dist);
-    float alpha = outside * falloff * u.opacity;
+    float alpha = step(0.0, dist) * falloff * u.opacity;
     return float4(0.0, 0.0, 0.0, alpha);
 }
 
@@ -187,20 +180,7 @@ fragment float4 video_fragment(
     texture2d<float> tex [[texture(1)]]
 ) {
     constexpr sampler s(mag_filter::linear, min_filter::linear, address::clamp_to_edge);
-    float4 colour = tex.sample(s, in.uv);
-
-    // Optional rounded corners. We're sampling the texture at UV in [0,1].
-    // Bend the quad's UV into a signed-distance from rounded rectangle.
-    if (canvas.cornerRadius > 0.0) {
-        float r = canvas.cornerRadius;
-        float2 d = abs(in.uv - 0.5) - (0.5 - r);
-        float corner = length(max(d, float2(0.0))) - r;
-        // AA edge: smoothstep from inside the rounded edge to fully outside.
-        float aa = max(fwidth(corner), 0.0005);
-        float mask = 1.0 - smoothstep(0.0, aa, corner);
-        colour.a *= mask;
-    }
-    return colour;
+    return tex.sample(s, in.uv);
 }
 
 // =============================================================================

@@ -236,20 +236,9 @@ struct SidebarView: View {
 
     @ViewBuilder
     private func selectedZoomEditor(index: Int, section: ZoomSection) -> some View {
-        let videoW = Double(vm.metadata?.video.width ?? 1920)
-        let videoH = Double(vm.metadata?.video.height ?? 1080)
-
         let scaleBinding = Binding<Double>(
             get: { section.scale },
             set: { vm.updateZoomSection(at: index, scale: $0) }
-        )
-        let centerXBinding = Binding<Double>(
-            get: { section.centerX / max(1, videoW) },
-            set: { vm.updateZoomSection(at: index, centerX: $0 * videoW) }
-        )
-        let centerYBinding = Binding<Double>(
-            get: { section.centerY / max(1, videoH) },
-            set: { vm.updateZoomSection(at: index, centerY: $0 * videoH) }
         )
         let lengthBinding = Binding<Double>(
             get: { section.endTime - section.startTime },
@@ -282,52 +271,17 @@ struct SidebarView: View {
                    in: 100...max(500, vm.metadata?.video.duration ?? 1000),
                    step: 50)
 
-            // Centre X / Y as 0..100% sliders so users can dial where the zoom
-            // focuses without doing pixel math.
-            HStack {
-                Text("Centre X").font(.caption).foregroundStyle(.secondary)
-                Spacer()
-                Text(String(format: "%.0f%%", section.centerX / max(1, videoW) * 100))
-                    .font(.system(.caption, design: .monospaced))
-            }
-            Slider(value: centerXBinding, in: 0...1)
-
-            HStack {
-                Text("Centre Y").font(.caption).foregroundStyle(.secondary)
-                Spacer()
-                Text(String(format: "%.0f%%", section.centerY / max(1, videoH) * 100))
-                    .font(.system(.caption, design: .monospaced))
-            }
-            Slider(value: centerYBinding, in: 0...1)
-
-            HStack {
-                Button("Centre on playhead cursor") {
-                    centerOnCursor(index: index)
-                }
-                .font(.caption)
-                .controlSize(.small)
-                Spacer()
-            }
-            .padding(.top, 2)
+            Text("Pan is auto-framed to follow the cursor with rule-of-thirds smoothing — no manual focal point needed.")
+                .font(.caption2)
+                .foregroundStyle(.secondary)
+                .fixedSize(horizontal: false, vertical: true)
+                .padding(.top, 2)
 
             Text("Drag the block on the timeline to move it; drag the 3-pt edges to resize.")
                 .font(.caption2)
                 .foregroundStyle(.tertiary)
                 .fixedSize(horizontal: false, vertical: true)
         }
-    }
-
-    /// Snap the selected zoom section's centre to wherever the cursor is at
-    /// playhead time — useful when you want the camera to follow a specific
-    /// click or interaction.
-    private func centerOnCursor(index: Int) {
-        guard let snapshot = vm.makeRenderSnapshot(),
-              let cursor = snapshot.cursorStateForExport(atMilliseconds: vm.currentTimeMs) else { return }
-        vm.updateZoomSection(
-            at: index,
-            centerX: Double(cursor.positionInVideoPixels.x),
-            centerY: Double(cursor.positionInVideoPixels.y)
-        )
     }
 
     private func zoomRow(index: Int, section: ZoomSection) -> some View {
@@ -373,16 +327,6 @@ struct SidebarView: View {
                     .font(.system(.caption, design: .monospaced))
             }
             Slider(value: $vm.canvasPadding, in: 0...0.25)
-
-            HStack {
-                Text("Corner Radius")
-                    .font(.caption)
-                    .foregroundStyle(.secondary)
-                Spacer()
-                Text(String(format: "%.0f", vm.canvasCornerRadius * 100))
-                    .font(.system(.caption, design: .monospaced))
-            }
-            Slider(value: $vm.canvasCornerRadius, in: 0...0.2)
 
             Toggle(isOn: $vm.canvasDropShadow) {
                 Text("Drop Shadow")
