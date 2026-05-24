@@ -1,114 +1,11 @@
-name: Build
+name: CI
 
 on:
-  push:
-    tags: ["v*"]
   pull_request:
-  workflow_dispatch:
-    inputs:
-      notarize:
-        description: "Notarize the DMG"
-        required: false
-        default: "false"
-        type: choice
-        options:
-          - "false"
-          - "true"
-
-permissions:
-  contents: read
 
 jobs:
   build:
-    name: Build · Sign · (Notarize)
-    runs-on: macos-latest
-    timeout-minutes: 30
-
-    steps:
-      - name: Checkout
-        uses: actions/checkout@v4
-
-      - name: Select latest Xcode
-        run: sudo xcode-select -s "$(ls -d /Applications/Xcode*.app | sort -V | tail -1)"
-
-      - name: Install XcodeGen
-        run: brew install xcodegen
-
-      - name: Generate project
-        run: xcodegen generate
-
-      - name: Build (Debug, no signing)
-        run: |
-          mkdir -p build
-          xcodebuild \
-            -project CineScreen.xcodeproj \
-            -scheme CineScreen \
-            -configuration Debug \
-            -derivedDataPath build/derived \
-            -destination 'platform=macOS' \
-            CODE_SIGN_IDENTITY="-" \
-            CODE_SIGNING_REQUIRED=NO \
-            build | tee build/build.log
-
-      - name: Import signing certificate
-        if: github.event_name == 'workflow_dispatch' || github.ref_type == 'tag'
-        env:
-          APPLE_CERTIFICATE: ${{ secrets.APPLE_CERTIFICATE }}
-          APPLE_CERTIFICATE_PASSWORD: ${{ secrets.APPLE_CERTIFICATE_PASSWORD }}
-        run: |
-          set -euo pipefail
-          KEYCHAIN_PATH=$RUNNER_TEMP/build.keychain
-          KEYCHAIN_PWD=$(openssl rand -hex 16)
-          security create-keychain -p "$KEYCHAIN_PWD" "$KEYCHAIN_PATH"
-          security set-keychain-settings -lut 21600 "$KEYCHAIN_PATH"
-          security unlock-keychain -p "$KEYCHAIN_PWD" "$KEYCHAIN_PATH"
-          echo "$APPLE_CERTIFICATE" | base64 -d > $RUNNER_TEMP/cert.p12
-          security import $RUNNER_TEMP/cert.p12 \
-            -k "$KEYCHAIN_PATH" \
-            -P "$APPLE_CERTIFICATE_PASSWORD" \
-            -T /usr/bin/codesign \
-            -T /usr/bin/security
-          security set-key-partition-list -S apple-tool:,apple: -s -k "$KEYCHAIN_PWD" "$KEYCHAIN_PATH"
-          security list-keychains -d user -s "$KEYCHAIN_PATH" $(security list-keychains -d user | xargs)
-
-      - name: Archive (Release, signed)
-        if: github.event_name == 'workflow_dispatch' || github.ref_type == 'tag'
-        run: make archive
-
-      - name: Export signed app
-        if: github.event_name == 'workflow_dispatch' || github.ref_type == 'tag'
-        run: make export
-
-      - name: Create DMG
-        if: github.event_name == 'workflow_dispatch' || github.ref_type == 'tag'
-        run: make dmg
-
-      - name: Notarize and staple
-        if: (github.event_name == 'workflow_dispatch' && inputs.notarize == 'true') || github.ref_type == 'tag'
-        env:
-          APPLE_ID: ${{ secrets.APPLE_ID }}
-          APPLE_APP_SPECIFIC_PASSWORD: ${{ secrets.APPLE_APP_SPECIFIC_PASSWORD }}
-          APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
-        run: |
-          xcrun notarytool submit build/CineScreen.dmg \
-            --apple-id "$APPLE_ID" \
-            --team-id "$APPLE_TEAM_ID" \
-            --password "$APPLE_APP_SPECIFIC_PASSWORD" \
-            --wait
-          xcrun stapler staple build/CineScreen.dmg
-
-      - name: Upload DMG artifact
-        if: github.event_name == 'workflow_dispatch' || github.ref_type == 'tag'
-        uses: actions/upload-artifact@v4
-        with:
-          name: CineScreen-mac
-          path: build/CineScreen.dmg
-          if-no-files-found: error
-
-      - name: Upload build log on failure
-        if: failure()
-        uses: actions/upload-artifact@v4
-        with:
-          name: build-log
-          path: build/build.log
-          if-no-files-found: ignore
+    uses: ./.github/workflows/build-workflow.yml
+    with:
+      upload-artifacts: false
+      release: false
