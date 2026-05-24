@@ -7,10 +7,14 @@ import CoreVideo
 /// video output for the current frame and hands it to MetalRenderer.
 struct MetalPreviewView: NSViewRepresentable {
     let player: AVPlayer
+    /// Optional sibling webcam player. Frames are pulled per draw and
+    /// composited via the same Metal pipeline as the export.
+    var webcamPlayer: AVPlayer? = nil
     var cursorStateProvider: (() -> CursorRenderState?)?
     var clickStatesProvider: (() -> [ClickRingState])?
     var zoomStateProvider: (() -> ZoomState)?
     var canvasStyleProvider: (() -> CanvasStyle)?
+    var webcamLayoutProvider: (() -> WebcamLayout)?
 
     func makeCoordinator() -> Coordinator {
         Coordinator(player: player)
@@ -23,14 +27,19 @@ struct MetalPreviewView: NSViewRepresentable {
         }
         context.coordinator.renderer = renderer
         context.coordinator.attachVideoOutput(to: player)
+        context.coordinator.attachWebcamVideoOutput(to: webcamPlayer)
 
         renderer.frameProvider = { [weak coordinator = context.coordinator] in
             coordinator?.copyCurrentFrame() ?? nil
+        }
+        renderer.webcamFrameProvider = { [weak coordinator = context.coordinator] in
+            coordinator?.copyCurrentWebcamFrame() ?? nil
         }
         renderer.cursorStateProvider = cursorStateProvider
         renderer.clickStatesProvider = clickStatesProvider
         renderer.zoomStateProvider = zoomStateProvider
         renderer.canvasStyleProvider = canvasStyleProvider
+        renderer.webcamLayoutProvider = webcamLayoutProvider
         view.delegate = renderer
         return view
     }
@@ -40,18 +49,25 @@ struct MetalPreviewView: NSViewRepresentable {
             context.coordinator.attachVideoOutput(to: player)
             context.coordinator.player = player
         }
+        if context.coordinator.webcamPlayer !== webcamPlayer {
+            context.coordinator.attachWebcamVideoOutput(to: webcamPlayer)
+        }
         context.coordinator.renderer?.cursorStateProvider = cursorStateProvider
         context.coordinator.renderer?.clickStatesProvider = clickStatesProvider
         context.coordinator.renderer?.zoomStateProvider = zoomStateProvider
         context.coordinator.renderer?.canvasStyleProvider = canvasStyleProvider
+        context.coordinator.renderer?.webcamLayoutProvider = webcamLayoutProvider
     }
 
     @MainActor
     final class Coordinator {
         var renderer: MetalRenderer?
         weak var player: AVPlayer?
+        weak var webcamPlayer: AVPlayer?
         private var videoOutput: AVPlayerItemVideoOutput?
         private var observedItem: AVPlayerItem?
+        private var webcamVideoOutput: AVPlayerItemVideoOutput?
+        private var observedWebcamItem: AVPlayerItem?
 
         init(player: AVPlayer) {
             self.player = player
@@ -102,6 +118,52 @@ struct MetalPreviewView: NSViewRepresentable {
             let host = CACurrentMediaTime()
             let itemTime = output.itemTime(forHostTime: host)
             guard output.hasNewPixelBuffer(forItemTime: itemTime) else { return nil }
+            return output.copyPixelBuffer(forItemTime: itemTime, itemTimeForDisplay: nil)
+        }
+
+        // MARK: - Webcam attachment
+
+        func attachWebcamVideoOutput(to player: AVPlayer?) {
+            self.webcamPlayer = player
+            // Tear down old subscription if the player changed.
+            observedWebcamItem = nil
+            webcamVideoOutput = nil
+            guard let player = player else { return }
+            if let item = player.currentItem {
+                attachWebcam(item: item)
+            } else {
+                DispatchQueue.main.asyncAfter(deadline: .now() + 0.05) { [weak self] in
+                    guard let self = self, let item = player.currentItem else { return }
+                    self.attachWebcam(item: item)
+                }
+            }
+        }
+
+        private func attachWebcam(item: AVPlayerItem) {
+            guard observedWebcamItem !== item else { return }
+            let attributes: [String: Any] = [
+                kCVPixelBufferPixelFormatTypeKey as String: kCVPixelFormatType_32BGRA,
+            ]
+            let output = AVPlayerItemVideoOutput(pixelBufferAttributes: attributes)
+            // Webcam has no AVPlayerLayer either — same suppression logic as
+            // the main player so VRP doesn't try to draw it.
+            output.suppressesPlayerRendering = true
+            item.add(output)
+            webcamVideoOutput = output
+            observedWebcamItem = item
+        }
+
+        /// Last decoded webcam frame at the current host time. If the player
+        /// hasn't advanced since the previous draw we return nil and the
+        /// renderer skips the webcam pass — but only when we've never seen
+        /// any frame; otherwise we return the cached output so the overlay
+        /// keeps drawing across paused/static moments.
+        nonisolated func copyCurrentWebcamFrame() -> CVPixelBuffer? {
+            guard let output = MainActor.assumeIsolated({ webcamVideoOutput }) else { return nil }
+            let host = CACurrentMediaTime()
+            let itemTime = output.itemTime(forHostTime: host)
+            // Always return the current buffer (even if not new) — the
+            // overlay should stay visible while paused.
             return output.copyPixelBuffer(forItemTime: itemTime, itemTimeForDisplay: nil)
         }
     }

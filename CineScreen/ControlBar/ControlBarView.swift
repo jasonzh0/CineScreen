@@ -116,11 +116,23 @@ struct ControlBarView: View {
     private var audioSection: some View {
         HStack(spacing: 4) {
             pillToggle(
-                label: state.permissions.camera == .granted ? "Camera" : "No camera",
-                systemImage: state.permissions.camera == .granted ? "video.fill" : "video.slash",
-                isOn: false,  // Webcam recording lands in v2.1
-                disabled: true,
-                onChange: { _ in }
+                label: cameraLabel,
+                systemImage: state.captureCamera && state.permissions.camera == .granted ? "video.fill" : "video.slash",
+                isOn: state.captureCamera && state.permissions.camera == .granted,
+                disabled: false,
+                onChange: { value in
+                    if state.permissions.camera != .granted {
+                        Task {
+                            _ = await Permissions.requestCamera()
+                            state.refreshPermissions()
+                            if state.permissions.camera == .granted {
+                                state.saveCaptureCamera(true)
+                            }
+                        }
+                        return
+                    }
+                    state.saveCaptureCamera(value)
+                }
             )
             pillToggle(
                 label: micLabel,
@@ -222,6 +234,11 @@ struct ControlBarView: View {
         return state.captureMic ? "Microphone" : "No microphone"
     }
 
+    private var cameraLabel: String {
+        if state.permissions.camera != .granted { return "No camera" }
+        return state.captureCamera ? "Camera" : "No camera"
+    }
+
     // MARK: - Actions
 
     private func select(_ mode: CaptureMode) {
@@ -258,7 +275,10 @@ struct ControlBarView: View {
             fps: state.frameRate,
             quality: state.quality,
             captureSystemAudio: state.captureSystemAudio,
-            captureMic: state.captureMic && state.permissions.microphone == .granted
+            captureMic: state.captureMic && state.permissions.microphone == .granted,
+            captureCamera: state.captureCamera && state.permissions.camera == .granted,
+            cameraDeviceID: state.selectedCameraID,
+            webcamURL: project.fallbackWebcamURL
         )
         Task { @MainActor in
             do {

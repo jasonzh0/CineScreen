@@ -29,12 +29,17 @@ struct EditorView: View {
                     .fill(Color.black)
                 MetalPreviewView(
                     player: vm.player,
+                    webcamPlayer: vm.webcamPlayer,
                     cursorStateProvider: { [weak vm] in vm?.cursorState() },
                     clickStatesProvider: { [weak vm] in vm?.clickRingStates() ?? [] },
                     zoomStateProvider: { [weak vm] in vm?.zoomState() ?? .identity },
-                    canvasStyleProvider: { [weak vm] in vm?.canvasStyle ?? .none }
+                    canvasStyleProvider: { [weak vm] in vm?.canvasStyle ?? .none },
+                    webcamLayoutProvider: { [weak vm] in vm?.webcamLayout ?? .default }
                 )
                 .clipShape(RoundedRectangle(cornerRadius: 14))
+
+                WebcamHandleOverlay(vm: vm)
+                    .clipShape(RoundedRectangle(cornerRadius: 14))
             }
             .padding(.horizontal, 24)
             .padding(.top, 4)

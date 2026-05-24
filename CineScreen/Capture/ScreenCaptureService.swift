@@ -19,6 +19,12 @@ struct CaptureRequest {
     var quality: Quality = .medium
     var captureSystemAudio: Bool = false
     var captureMic: Bool = false
+    var captureCamera: Bool = false
+    /// AVCaptureDevice uniqueID. `nil` = system default camera.
+    var cameraDeviceID: String? = nil
+    /// URL the webcam capture writes to. Defaults to a sibling of `outputURL`
+    /// named `webcam.mp4`. Caller can override.
+    var webcamURL: URL? = nil
 
     enum Quality: String, Codable {
         case low, medium, high
@@ -43,6 +49,7 @@ struct CaptureInfo {
     var scaleFactor: CGFloat
     var hasSystemAudio: Bool
     var hasMic: Bool
+    var webcamURL: URL? = nil
 }
 
 struct CaptureResult {
@@ -687,7 +694,7 @@ private final class StreamOutput: NSObject, SCStreamDelegate, SCStreamOutput {
 
     /// Builds a copy of an audio sample buffer with its PTS rewritten so it
     /// aligns with the rebased video timeline.
-    private static func rebaseAudio(_ buffer: CMSampleBuffer, to newPTS: CMTime) -> CMSampleBuffer? {
+    fileprivate static func rebaseAudio(_ buffer: CMSampleBuffer, to newPTS: CMTime) -> CMSampleBuffer? {
         var info = CMSampleTimingInfo()
         info.presentationTimeStamp = newPTS
         info.duration = CMSampleBufferGetDuration(buffer)
@@ -722,10 +729,18 @@ private final class MicOutputDelegate: NSObject, AVCaptureAudioDataOutputSampleB
     func captureOutput(_ output: AVCaptureOutput,
                        didOutput sampleBuffer: CMSampleBuffer,
                        from connection: AVCaptureConnection) {
-        // Drop mic samples until the writer has actually started its session.
-        guard getSessionStart() != nil, sampleBuffer.isValid else { return }
-        if target.isReadyForMoreMediaData {
-            _ = target.append(sampleBuffer)
+        // Mic samples carry raw host-clock PTS (days-since-boot). Rebase by
+        // the SCK session start the same way StreamOutput rebases video and
+        // system audio — otherwise AVAssetWriter derives the file duration
+        // from the mic PTS and the editor shows hundreds of hours.
+        guard let baseTime = getSessionStart(), sampleBuffer.isValid else { return }
+        guard target.isReadyForMoreMediaData else { return }
+        let rawPts = CMSampleBufferGetPresentationTimeStamp(sampleBuffer)
+        let rebasedPts = CMTimeSubtract(rawPts, baseTime)
+        // Mic samples buffered before SCK's first frame would rebase negative.
+        guard rebasedPts >= .zero else { return }
+        if let rebased = StreamOutput.rebaseAudio(sampleBuffer, to: rebasedPts) {
+            _ = target.append(rebased)
         }
     }
 }

@@ -29,6 +29,11 @@ final class EditorViewModel {
     var canvasBackground: CanvasBackground = .solid("#1a1a1a")
     var canvasDropShadow: Bool = true
 
+    /// User-editable webcam overlay layout. Mirrored from metadata so the
+    /// drag overlay can read/write through a single binding; persisted back
+    /// into `metadata.webcam` on every mutation.
+    var webcamLayout: WebcamLayout = .default
+
     /// Timeline horizontal zoom (1.0 = fit, >1 = zoomed in). Persists per
     /// editor instance only.
     var timelineZoom: Double = 1.0
@@ -52,6 +57,13 @@ final class EditorViewModel {
     @ObservationIgnored
     nonisolated(unsafe) private var timeObserver: Any?
 
+    /// Sibling webcam track if the recording included one. nil when there's no
+    /// webcam.mp4 next to the screen recording.
+    let webcamURL: URL?
+    /// Secondary player that mirrors the main player's clock — playback rate
+    /// and seeks are mirrored so the webcam overlay stays in sync.
+    @ObservationIgnored let webcamPlayer: AVPlayer?
+
     // Cursor smoothing state — preview-only.
     @ObservationIgnored private var cursorSmoother = SmoothPosition2D(x: 0, y: 0, smoothTime: 0.25)
     @ObservationIgnored private var lastCursorSampleMs: Double?
@@ -68,6 +80,18 @@ final class EditorViewModel {
         } else {
             let candidate = videoURL.deletingPathExtension().appendingPathExtension("json")
             self.metadataURL = FileManager.default.fileExists(atPath: candidate.path) ? candidate : nil
+        }
+
+        // Sibling webcam — same folder, fixed name.
+        let webcamCandidate = videoURL.deletingLastPathComponent()
+            .appendingPathComponent(Project.webcamFileName)
+        if FileManager.default.fileExists(atPath: webcamCandidate.path) {
+            self.webcamURL = webcamCandidate
+            self.webcamPlayer = AVPlayer(url: webcamCandidate)
+            self.webcamPlayer?.isMuted = true   // audio comes from the main file
+        } else {
+            self.webcamURL = nil
+            self.webcamPlayer = nil
         }
 
         self.player = AVPlayer()
@@ -92,11 +116,35 @@ final class EditorViewModel {
                 trimStartMs = trim.startMs
                 trimEndMs = trim.endMs
             }
+            if let layout = metadata?.webcam {
+                webcamLayout = layout
+            }
             Log.editor.info("Loaded metadata: \(url.lastPathComponent)")
         } catch {
             loadError = "Could not parse metadata: \(error.localizedDescription)"
             Log.editor.error("Metadata decode failed: \(error.localizedDescription)")
         }
+    }
+
+    // MARK: - Webcam layout
+
+    /// Persist a webcam layout change into the metadata model. The drag
+    /// overlay calls these on every gesture tick — they're cheap (model
+    /// mutation only); the disk write happens later via the existing save
+    /// flow that runs on user "Save" or window close.
+    func setWebcamLayout(_ layout: WebcamLayout) {
+        webcamLayout = layout.clamped()
+        metadata?.webcam = webcamLayout
+    }
+
+    func setWebcamEnabled(_ on: Bool) {
+        var layout = webcamLayout
+        layout.enabled = on
+        setWebcamLayout(layout)
+    }
+
+    func resetWebcamLayout() {
+        setWebcamLayout(.default)
     }
 
     private func loadAsset() {
@@ -122,7 +170,17 @@ final class EditorViewModel {
 
     private func loadDuration(asset: AVURLAsset) async {
         do {
-            let cmDuration = try await asset.load(.duration)
+            // Use the video track's range, not asset.duration. asset.duration
+            // is max(track.timeRange.end) — older recordings (pre-mic-rebase
+            // fix) have a mic track stamped with raw host-clock PTS, which
+            // poisoned the asset duration with hundreds of hours.
+            let videoTracks = try await asset.loadTracks(withMediaType: .video)
+            let cmDuration: CMTime
+            if let videoTrack = videoTracks.first {
+                cmDuration = try await videoTrack.load(.timeRange).duration
+            } else {
+                cmDuration = try await asset.load(.duration)
+            }
             await MainActor.run {
                 let ms = cmDuration.seconds * 1000
                 self.durationMs = ms
@@ -139,11 +197,13 @@ final class EditorViewModel {
 
     func play() {
         player.play()
+        webcamPlayer?.play()
         isPlaying = true
     }
 
     func pause() {
         player.pause()
+        webcamPlayer?.pause()
         isPlaying = false
     }
 
@@ -156,6 +216,7 @@ final class EditorViewModel {
         currentTimeMs = clamped
         let time = CMTime(seconds: clamped / 1000, preferredTimescale: 600)
         player.seek(to: time, toleranceBefore: .zero, toleranceAfter: .zero)
+        webcamPlayer?.seek(to: time, toleranceBefore: .zero, toleranceAfter: .zero)
         // Drop the smoother's history — otherwise it tries to catch up across the jump.
         if let snapshot = makeRenderSnapshot(),
            let raw = RenderSnapshot.rawCursorPosition(atMilliseconds: clamped, metadata: snapshot.metadata) {

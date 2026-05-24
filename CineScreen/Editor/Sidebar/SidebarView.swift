@@ -17,6 +17,9 @@ struct SidebarView: View {
                     card(title: "Background", icon: "photo.on.rectangle.angled") { canvasControls }
                     card(title: "Cursor",     icon: "cursorarrow.rays")           { cursorControls }
                     card(title: "Zoom",       icon: "plus.magnifyingglass")       { zoomControls }
+                    if vm.webcamPlayer != nil {
+                        card(title: "Webcam",  icon: "video.fill")                { webcamControls }
+                    }
                     card(title: "Trim",       icon: "scissors")                   { trimControls }
                     card(title: "Recording",  icon: "info.circle")                { info }
                 }
@@ -397,6 +400,51 @@ struct SidebarView: View {
 
     }
 
+    // MARK: - Webcam
+
+    private var webcamControls: some View {
+        VStack(alignment: .leading, spacing: 8) {
+            Toggle("Show webcam overlay", isOn: Binding(
+                get: { vm.webcamLayout.enabled },
+                set: { vm.setWebcamEnabled($0) }
+            ))
+            .font(.system(size: 12))
+
+            // Size slider — the diameter is clamped 5%..60% in the model.
+            VStack(alignment: .leading, spacing: 4) {
+                HStack {
+                    Text("Size").font(.caption).foregroundStyle(.secondary)
+                    Spacer()
+                    Text("\(Int(vm.webcamLayout.diameterNorm * 100))%")
+                        .font(.caption.monospacedDigit())
+                        .foregroundStyle(.secondary)
+                }
+                Slider(
+                    value: Binding(
+                        get: { Double(vm.webcamLayout.diameterNorm) },
+                        set: {
+                            var next = vm.webcamLayout
+                            next.diameterNorm = Float($0)
+                            vm.setWebcamLayout(next)
+                        }
+                    ),
+                    in: 0.05...0.6
+                )
+            }
+            .disabled(!vm.webcamLayout.enabled)
+            .opacity(vm.webcamLayout.enabled ? 1.0 : 0.5)
+
+            Button("Reset Position") { vm.resetWebcamLayout() }
+                .font(.caption)
+                .disabled(!vm.webcamLayout.enabled)
+
+            Text("Drag the circle in the preview to reposition; drag the corner handle to resize.")
+                .font(.caption2)
+                .foregroundStyle(.secondary)
+                .fixedSize(horizontal: false, vertical: true)
+        }
+    }
+
     // MARK: - Helpers
 
     private func row(_ label: String, _ value: String) -> some View {
@@ -468,9 +516,17 @@ struct SidebarView: View {
         isExporting = true
         exportError = nil
         exportFraction = 0
+        // Pause the editor preview while the export runs. The preview's
+        // MetalRenderer fires at 60fps and pulls frames via the same Metal
+        // device — keeping it active during export contends for the GPU
+        // and the source files' decoder pools, slowing exports and (in
+        // some configs) stalling them entirely.
+        vm.pause()
+        vm.webcamPlayer?.pause()
         Task { @MainActor in
             do {
                 let pipeline = ExportPipeline()
+                let webcamLayout = vm.webcamLayout
                 _ = try await pipeline.export(.init(
                     sourceVideoURL: vm.videoURL,
                     outputURL: outURL,
@@ -478,7 +534,9 @@ struct SidebarView: View {
                     cursorAt: cursorAt,
                     clicksAt: clicksAt,
                     zoomAt: zoomAt,
-                    canvas: vm.canvasStyle
+                    canvas: vm.canvasStyle,
+                    webcamURL: vm.webcamURL,
+                    webcamLayout: webcamLayout
                 )) { progress in
                     Task { @MainActor in
                         switch progress {

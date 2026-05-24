@@ -15,11 +15,15 @@ struct Project: Identifiable, Hashable {
     var videoURL: URL?
     /// Discovered metadata URL (`recording.json` by convention).
     var metadataURL: URL?
+    /// Discovered webcam URL (`webcam.mp4`) — nil if the recording was made
+    /// without webcam.
+    var webcamURL: URL?
 
     static let videoFileName = "recording.mp4"
     static let metadataFileName = "recording.json"
     static let projectFileName = "project.json"
     static let thumbnailFileName = "thumbnail.jpg"
+    static let webcamFileName = "webcam.mp4"
 
     var thumbnailURL: URL { folderURL.appendingPathComponent(Self.thumbnailFileName) }
 
@@ -27,6 +31,7 @@ struct Project: Identifiable, Hashable {
 
     var fallbackVideoURL: URL { folderURL.appendingPathComponent(Self.videoFileName) }
     var fallbackMetadataURL: URL { folderURL.appendingPathComponent(Self.metadataFileName) }
+    var fallbackWebcamURL: URL { folderURL.appendingPathComponent(Self.webcamFileName) }
     var projectFileURL: URL { folderURL.appendingPathComponent(Self.projectFileName) }
 }
 

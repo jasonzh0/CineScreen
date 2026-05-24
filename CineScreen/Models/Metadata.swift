@@ -13,9 +13,43 @@ struct RecordingMetadata: Codable, Equatable {
     var clicks: [ClickEvent]
     var effects: MouseEffectsConfig?
     var trim: TrimRange?
+    /// Optional webcam overlay layout. Absent for recordings without a
+    /// sibling webcam.mp4 — and for older recordings made before the webcam
+    /// editor controls landed.
+    var webcam: WebcamLayout?
     var createdAt: TimeInterval
 
     static let currentVersion = "1.0.0"
+}
+
+/// User-editable layout for the circular webcam overlay. Coordinates are
+/// normalised to the canvas's content rect: (0, 0) = top-left of content,
+/// (1, 1) = bottom-right. `diameterNorm` is measured against the shorter
+/// side of the content rect.
+struct WebcamLayout: Codable, Equatable {
+    var enabled: Bool
+    var centerXNorm: Float
+    var centerYNorm: Float
+    var diameterNorm: Float
+
+    static let `default` = WebcamLayout(
+        enabled: true,
+        centerXNorm: 0.91,
+        centerYNorm: 0.91,
+        diameterNorm: 0.18
+    )
+
+    /// Clamp the layout to sensible bounds so the user can't drag the
+    /// overlay off-canvas or shrink it into oblivion.
+    func clamped() -> WebcamLayout {
+        let d = max(0.05, min(0.6, diameterNorm))
+        return WebcamLayout(
+            enabled: enabled,
+            centerXNorm: max(0, min(1, centerXNorm)),
+            centerYNorm: max(0, min(1, centerYNorm)),
+            diameterNorm: d
+        )
+    }
 }
 
 // MARK: - Video

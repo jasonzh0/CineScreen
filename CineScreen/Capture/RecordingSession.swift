@@ -14,6 +14,7 @@ struct SessionResult {
     var metadataURL: URL
     var frames: Int64
     var durationMs: Double
+    var webcamURL: URL?
 }
 
 enum SessionError: LocalizedError {
@@ -46,7 +47,11 @@ final class RecordingSession {
 
     private let capture = ScreenCaptureService()
     private let mouse = MouseTrackingService()
+    private let webcam = WebcamCaptureService()
     private var startWallTime: Date?
+    /// Resolved webcam destination for the active recording. nil if the user
+    /// disabled webcam or no camera was available.
+    private var webcamOutputURL: URL?
 
     // MARK: - Public API
 
@@ -87,8 +92,28 @@ final class RecordingSession {
             throw SessionError.captureFailed(error.localizedDescription)
         }
 
+        // Start webcam in parallel. Failure here doesn't abort the recording —
+        // the user still gets a working screen capture, just without the
+        // webcam overlay. We surface the error via statusMessage from the
+        // caller side.
+        if request.captureCamera {
+            let webcamURL = request.webcamURL
+                ?? request.outputURL.deletingLastPathComponent()
+                    .appendingPathComponent(Project.webcamFileName)
+            do {
+                try webcam.start(outputURL: webcamURL, deviceID: request.cameraDeviceID)
+                webcamOutputURL = webcamURL
+            } catch {
+                Log.session.warning("Webcam start failed (continuing without it): \(error.localizedDescription)")
+                webcamOutputURL = nil
+            }
+        } else {
+            webcamOutputURL = nil
+        }
+
         state = .recording(startedAt: startWallTime ?? Date())
-        Log.session.info("Recording session started — \(info.pixelWidth)x\(info.pixelHeight)@\(info.fps)fps")
+        let webcamRunning = webcamOutputURL != nil
+        Log.session.info("Recording session started — \(info.pixelWidth)x\(info.pixelHeight)@\(info.fps)fps webcam=\(webcamRunning)")
     }
 
     func stop() async throws -> SessionResult {
@@ -97,13 +122,18 @@ final class RecordingSession {
         Log.session.info("Stopping recording session")
 
         let samples = mouse.stop()
+        // Stop webcam concurrently with screen capture finalisation so the
+        // user's "Stop" tap isn't held up by webcam writer flushing.
+        async let webcamFinishedURL: URL? = webcam.stop()
         let captureResult: CaptureResult
         do {
             captureResult = try await capture.stop()
         } catch {
+            _ = await webcamFinishedURL  // let the task complete
             state = .error(error.localizedDescription)
             throw SessionError.captureFailed(error.localizedDescription)
         }
+        let finalWebcamURL = await webcamFinishedURL
 
         let durationMs: Double = (startWallTime.map { Date().timeIntervalSince($0) * 1000.0 }) ?? 0
         let info = captureResult.info
@@ -128,7 +158,8 @@ final class RecordingSession {
             videoURL: videoURL,
             metadataURL: metadataURL,
             frames: captureResult.frames,
-            durationMs: durationMs
+            durationMs: durationMs,
+            webcamURL: finalWebcamURL
         )
         lastResult = result
         state = .idle
@@ -140,12 +171,16 @@ final class RecordingSession {
         guard case .recording = state else { return }
         Log.session.info("Cancelling recording session")
         _ = mouse.stop()
+        async let webcamCleanup: URL? = webcam.stop()
         do {
             let result = try await capture.stop()
             // Delete the partial video — cancel discards.
             try? FileManager.default.removeItem(at: result.outputURL)
         } catch {
             Log.session.warning("Capture cleanup during cancel: \(error.localizedDescription)")
+        }
+        if let webcamURL = await webcamCleanup {
+            try? FileManager.default.removeItem(at: webcamURL)
         }
         state = .idle
     }

@@ -16,6 +16,7 @@ final class ExportCompositor {
     private let videoPipeline: MTLRenderPipelineState
     private let cursorPipeline: MTLRenderPipelineState
     private let clickPipeline: MTLRenderPipelineState
+    private let webcamPipeline: MTLRenderPipelineState
     private let vertexBuffer: MTLBuffer
     private let textureCache: CVMetalTextureCache
     private let textureLoader: MTKTextureLoader
@@ -101,6 +102,22 @@ final class ExportCompositor {
         clickDesc.label = "export.click"
         guard let clickPipeline = try? device.makeRenderPipelineState(descriptor: clickDesc) else { return nil }
 
+        guard let webcamVertex = library.makeFunction(name: "webcam_vertex"),
+              let webcamFragment = library.makeFunction(name: "webcam_fragment") else { return nil }
+        let webcamDesc = MTLRenderPipelineDescriptor()
+        webcamDesc.vertexFunction = webcamVertex
+        webcamDesc.fragmentFunction = webcamFragment
+        webcamDesc.colorAttachments[0].pixelFormat = .bgra8Unorm
+        webcamDesc.colorAttachments[0].isBlendingEnabled = true
+        webcamDesc.colorAttachments[0].rgbBlendOperation = .add
+        webcamDesc.colorAttachments[0].alphaBlendOperation = .add
+        webcamDesc.colorAttachments[0].sourceRGBBlendFactor = .sourceAlpha
+        webcamDesc.colorAttachments[0].sourceAlphaBlendFactor = .one
+        webcamDesc.colorAttachments[0].destinationRGBBlendFactor = .oneMinusSourceAlpha
+        webcamDesc.colorAttachments[0].destinationAlphaBlendFactor = .oneMinusSourceAlpha
+        webcamDesc.label = "export.webcam"
+        guard let webcamPipeline = try? device.makeRenderPipelineState(descriptor: webcamDesc) else { return nil }
+
         let quad: [SIMD4<Float>] = [
             SIMD4(-1, -1, 0, 1),
             SIMD4( 1, -1, 1, 1),
@@ -110,8 +127,16 @@ final class ExportCompositor {
         let len = MemoryLayout<SIMD4<Float>>.stride * quad.count
         guard let buffer = device.makeBuffer(bytes: quad, length: len, options: .storageModeShared) else { return nil }
 
+        // Cache attributes: auto-expire bindings older than 0.5s. Without
+        // this the cache grows unbounded — each frame's source + destination
+        // textures pin their CVPixelBuffers, eventually exhausting the
+        // reader and writer pools. Manifests as a deterministic stall at
+        // ~frame 117 on 2560×1500 content (≈1.8 GB pinned).
+        let cacheAttrs: CFDictionary = [
+            kCVMetalTextureCacheMaximumTextureAgeKey as String: 0.5 as CFNumber
+        ] as CFDictionary
         var cache: CVMetalTextureCache?
-        guard CVMetalTextureCacheCreate(kCFAllocatorDefault, nil, device, nil, &cache) == kCVReturnSuccess,
+        guard CVMetalTextureCacheCreate(kCFAllocatorDefault, cacheAttrs, device, nil, &cache) == kCVReturnSuccess,
               let cache = cache else { return nil }
 
         self.device = device
@@ -121,6 +146,7 @@ final class ExportCompositor {
         self.videoPipeline = videoPipeline
         self.cursorPipeline = cursorPipeline
         self.clickPipeline = clickPipeline
+        self.webcamPipeline = webcamPipeline
         self.vertexBuffer = buffer
         self.textureCache = cache
         self.textureLoader = MTKTextureLoader(device: device)
@@ -137,11 +163,23 @@ final class ExportCompositor {
         clicks: [ClickRingState] = [],
         zoom: ZoomState = .identity,
         canvas: CanvasStyle = .none,
+        webcam: CVPixelBuffer? = nil,
+        webcamLayout: WebcamLayout = .default,
         destination: CVPixelBuffer
     ) -> Bool {
         guard let sourceTexture = makeTexture(from: source),
               let destTexture = makeTexture(from: destination, usage: [.renderTarget, .shaderRead]) else {
             return false
+        }
+        // CRITICAL: keep the webcam texture in function scope so it survives
+        // until after `commandBuffer.commit()`. If we created it inside an
+        // `if let` further down, ARC could release it before the GPU is done
+        // sampling — manifesting as a GPU hang / "stuck" export.
+        let webcamTexture: MTLTexture?
+        if webcamLayout.enabled, let webcamBuffer = webcam {
+            webcamTexture = makeTexture(from: webcamBuffer)
+        } else {
+            webcamTexture = nil
         }
 
         let descriptor = MTLRenderPassDescriptor()
@@ -240,10 +278,58 @@ final class ExportCompositor {
             encoder.drawPrimitives(type: .triangleStrip, vertexStart: 0, vertexCount: 4)
         }
 
+        // 4. Webcam pass — circular overlay. User-editable position/size via
+        //    `webcamLayout`. Skipped when the user has hidden the overlay.
+        if let webcamTex = webcamTexture {
+            drawWebcam(
+                encoder: encoder,
+                texture: webcamTex,
+                destinationSize: SIMD2(
+                    Float(CVPixelBufferGetWidth(destination)),
+                    Float(CVPixelBufferGetHeight(destination))
+                ),
+                canvas: canvasUniforms,
+                layout: webcamLayout
+            )
+        }
+
         encoder.endEncoding()
         commandBuffer.commit()
         commandBuffer.waitUntilCompleted()
-        return commandBuffer.status == .completed
+        let ok = commandBuffer.status == .completed
+        // Keep references alive until after commit so ARC can't release the
+        // textures while the GPU is still using them. The previous version
+        // also called CVMetalTextureCacheFlush here — that turned out to
+        // invalidate the destination texture's IOSurface binding while it
+        // was still in flight to AVAssetWriter, stalling exports at ~1s.
+        _ = sourceTexture
+        _ = destTexture
+        _ = webcamTexture
+        return ok
+    }
+
+    /// Lays out the webcam circle using the user-editable layout. Calls the
+    /// shared `MetalRenderer.webcamUniforms` so live preview and export
+    /// produce identical pixels.
+    private func drawWebcam(
+        encoder: MTLRenderCommandEncoder,
+        texture: MTLTexture,
+        destinationSize: SIMD2<Float>,
+        canvas: CanvasUniforms,
+        layout: WebcamLayout
+    ) {
+        let viewAspect = destinationSize.x / destinationSize.y
+        var uniforms = MetalRenderer.webcamUniforms(
+            for: layout,
+            contentScale: canvas.contentScale,
+            viewAspect: viewAspect,
+            texture: texture
+        )
+        encoder.setRenderPipelineState(webcamPipeline)
+        encoder.setVertexBytes(&uniforms, length: MemoryLayout<WebcamUniforms>.stride, index: 0)
+        encoder.setFragmentBytes(&uniforms, length: MemoryLayout<WebcamUniforms>.stride, index: 0)
+        encoder.setFragmentTexture(texture, index: 0)
+        encoder.drawPrimitives(type: .triangleStrip, vertexStart: 0, vertexCount: 4)
     }
 
     // MARK: - Helpers

@@ -38,6 +38,21 @@ struct ZoomState {
     static let identity = ZoomState(centerUV: SIMD2(0.5, 0.5), scale: 1.0)
 }
 
+/// GPU uniforms for the circular webcam overlay. Shared between
+/// `MetalRenderer` (live preview) and `ExportCompositor` (offline) so they
+/// always read identical pixels.
+struct WebcamUniforms {
+    var centerNDC: SIMD2<Float>
+    var halfSizeNDC: SIMD2<Float>
+    var textureUVScale: SIMD2<Float>
+    var textureUVOffset: SIMD2<Float>
+    var ringColor: SIMD4<Float>
+    var ringWidthNorm: Float
+    var _pad0: Float = 0
+    var _pad1: Float = 0
+    var _pad2: Float = 0
+}
+
 /// Canvas styling (background + padding + rounded corners). The renderer
 /// draws the gradient background full-screen then composites the video
 /// region inset by `padding` on top.
@@ -71,6 +86,7 @@ final class MetalRenderer: NSObject {
     private let videoPipeline: MTLRenderPipelineState
     private let cursorPipeline: MTLRenderPipelineState
     private let clickPipeline: MTLRenderPipelineState
+    private let webcamPipeline: MTLRenderPipelineState
     private let videoVertexBuffer: MTLBuffer
     private let textureCache: CVMetalTextureCache
 
@@ -94,6 +110,13 @@ final class MetalRenderer: NSObject {
     var zoomStateProvider: (() -> ZoomState)?
     /// Optional — returns the canvas style (background, padding, corner radius).
     var canvasStyleProvider: (() -> CanvasStyle)?
+    /// Optional — pulled on every draw to ingest the latest webcam pixel
+    /// buffer. When present, drawn as a circular overlay matching the export
+    /// pipeline byte-for-byte.
+    var webcamFrameProvider: (() -> CVPixelBuffer?)?
+    /// User-editable position + size of the webcam circle. The pass is
+    /// skipped entirely when `enabled = false`.
+    var webcamLayoutProvider: (() -> WebcamLayout)?
 
     init?(view: MTKView) {
         guard let device = MTLCreateSystemDefaultDevice() else { return nil }
@@ -187,6 +210,27 @@ final class MetalRenderer: NSObject {
         clickDesc.label = "click.ring"
         guard let clickPipeline = try? device.makeRenderPipelineState(descriptor: clickDesc) else { return nil }
 
+        // Webcam pipeline — same blend setup as the others. Identical shader
+        // pair as ExportCompositor so the editor preview matches the export
+        // pixel-for-pixel.
+        guard let webcamVertex = library.makeFunction(name: "webcam_vertex"),
+              let webcamFragment = library.makeFunction(name: "webcam_fragment") else { return nil }
+        let webcamDesc = MTLRenderPipelineDescriptor()
+        webcamDesc.vertexFunction = webcamVertex
+        webcamDesc.fragmentFunction = webcamFragment
+        webcamDesc.colorAttachments[0].pixelFormat = view.colorPixelFormat
+        webcamDesc.colorAttachments[0].isBlendingEnabled = true
+        webcamDesc.colorAttachments[0].rgbBlendOperation = .add
+        webcamDesc.colorAttachments[0].alphaBlendOperation = .add
+        webcamDesc.colorAttachments[0].sourceRGBBlendFactor = .sourceAlpha
+        webcamDesc.colorAttachments[0].sourceAlphaBlendFactor = .one
+        webcamDesc.colorAttachments[0].destinationRGBBlendFactor = .oneMinusSourceAlpha
+        webcamDesc.colorAttachments[0].destinationAlphaBlendFactor = .oneMinusSourceAlpha
+        webcamDesc.label = "webcam.circle"
+        guard let webcamPipeline = try? device.makeRenderPipelineState(descriptor: webcamDesc) else {
+            return nil
+        }
+
         // Video vertex buffer: triangle strip covering [-1,1]² with UVs.
         let quad: [SIMD4<Float>] = [
             SIMD4(-1.0, -1.0, 0.0, 1.0),
@@ -199,8 +243,14 @@ final class MetalRenderer: NSObject {
             return nil
         }
 
+        // Auto-expire texture bindings after 0.5s — same fix as in
+        // ExportCompositor. Long editor sessions otherwise accumulate
+        // bindings until the player's frame pool stalls.
+        let cacheAttrs: CFDictionary = [
+            kCVMetalTextureCacheMaximumTextureAgeKey as String: 0.5 as CFNumber
+        ] as CFDictionary
         var cache: CVMetalTextureCache?
-        guard CVMetalTextureCacheCreate(kCFAllocatorDefault, nil, device, nil, &cache) == kCVReturnSuccess,
+        guard CVMetalTextureCacheCreate(kCFAllocatorDefault, cacheAttrs, device, nil, &cache) == kCVReturnSuccess,
               let cache = cache else { return nil }
 
         self.device = device
@@ -210,6 +260,7 @@ final class MetalRenderer: NSObject {
         self.videoPipeline = videoPipeline
         self.cursorPipeline = cursorPipeline
         self.clickPipeline = clickPipeline
+        self.webcamPipeline = webcamPipeline
         self.videoVertexBuffer = buffer
         self.textureCache = cache
         self.textureLoader = MTKTextureLoader(device: device)
@@ -363,9 +414,106 @@ final class MetalRenderer: NSObject {
             }
         }
 
+        // 4. Webcam pass — drawn after cursor so it sits on top of every
+        //    other overlay (matches export).
+        let webcamLayout = webcamLayoutProvider?() ?? .default
+        if webcamLayout.enabled,
+           let webcamBuffer = webcamFrameProvider?(),
+           let webcamTexture = makeTexture(from: webcamBuffer) {
+            drawWebcam(
+                encoder: encoder,
+                texture: webcamTexture,
+                drawableSize: drawableSize,
+                canvas: canvasUniforms,
+                layout: webcamLayout
+            )
+        }
+
         encoder.endEncoding()
         commandBuffer.present(drawable)
         commandBuffer.commit()
+    }
+
+    /// Mirrors `ExportCompositor.drawWebcam` so the editor preview is a
+    /// pixel-for-pixel preview of what the export will write — circle
+    /// position, ring colour, ring width, and crop logic are identical.
+    private func drawWebcam(
+        encoder: MTLRenderCommandEncoder,
+        texture: MTLTexture,
+        drawableSize: CGSize,
+        canvas: CanvasUniforms,
+        layout: WebcamLayout
+    ) {
+        let aspectRatio: Float
+        if drawableSize.width > 0, drawableSize.height > 0 {
+            aspectRatio = Float(drawableSize.width / drawableSize.height)
+        } else {
+            aspectRatio = 1
+        }
+        var uniforms = Self.webcamUniforms(
+            for: layout,
+            contentScale: canvas.contentScale,
+            viewAspect: aspectRatio,
+            texture: texture
+        )
+        encoder.setRenderPipelineState(webcamPipeline)
+        encoder.setVertexBytes(&uniforms, length: MemoryLayout<WebcamUniforms>.stride, index: 0)
+        encoder.setFragmentBytes(&uniforms, length: MemoryLayout<WebcamUniforms>.stride, index: 0)
+        encoder.setFragmentTexture(texture, index: 0)
+        encoder.drawPrimitives(type: .triangleStrip, vertexStart: 0, vertexCount: 4)
+    }
+
+    /// Shared layout math — also used by `ExportCompositor` so the same
+    /// formula produces identical pixels in both paths.
+    static func webcamUniforms(
+        for layout: WebcamLayout,
+        contentScale: SIMD2<Float>,
+        viewAspect: Float,
+        texture: MTLTexture
+    ) -> WebcamUniforms {
+        let clamped = layout.clamped()
+        let shortSide = min(contentScale.x, contentScale.y)
+        let halfX = clamped.diameterNorm * shortSide
+        // viewAspect = view width / view height. halfY is scaled so the
+        // overlay renders visually circular regardless of canvas aspect.
+        let halfY = halfX * viewAspect
+
+        // Content rect in NDC is [-contentScale.x, contentScale.x] ×
+        // [-contentScale.y, contentScale.y]. Map normalised [0,1] coords
+        // into that — y inverted so 0 = top, 1 = bottom.
+        let centerX = contentScale.x * (2 * clamped.centerXNorm - 1)
+        let centerY = contentScale.y * (1 - 2 * clamped.centerYNorm)
+
+        let srcAspect = Float(texture.width) / Float(texture.height)
+        let uvScale: SIMD2<Float>
+        if srcAspect > 1 {
+            uvScale = SIMD2(1.0 / srcAspect, 1.0)
+        } else {
+            uvScale = SIMD2(1.0, srcAspect)
+        }
+
+        return WebcamUniforms(
+            centerNDC: SIMD2(centerX, centerY),
+            halfSizeNDC: SIMD2(halfX, halfY),
+            textureUVScale: uvScale,
+            textureUVOffset: SIMD2(0.5, 0.5),
+            ringColor: SIMD4(1.0, 1.0, 1.0, 0.55),
+            ringWidthNorm: 0.022
+        )
+    }
+
+    /// Shared helper for one-off textures (e.g. webcam frames) — distinct
+    /// from `updateFrame` which is the long-lived main video texture path.
+    private func makeTexture(from buffer: CVPixelBuffer) -> MTLTexture? {
+        let width = CVPixelBufferGetWidth(buffer)
+        let height = CVPixelBufferGetHeight(buffer)
+        var textureRef: CVMetalTexture?
+        let status = CVMetalTextureCacheCreateTextureFromImage(
+            kCFAllocatorDefault, textureCache, buffer, nil,
+            .bgra8Unorm, width, height, 0, &textureRef
+        )
+        guard status == kCVReturnSuccess, let textureRef = textureRef else { return nil }
+        return CVMetalTextureGetTexture(textureRef)
     }
 
     // MARK: - Cursor textures

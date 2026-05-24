@@ -6,7 +6,13 @@ struct CineScreenApp: App {
 
     var body: some Scene {
         Window("CineScreen", id: "main") {
-            ProjectsView()
+            Group {
+                if state.needsOnboarding {
+                    OnboardingView { state.needsOnboarding = false }
+                } else {
+                    ProjectsView()
+                }
+            }
                 .environment(state)
                 .frame(minWidth: 720, minHeight: 520)
                 .onAppear {

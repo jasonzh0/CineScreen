@@ -234,6 +234,80 @@ fragment float4 cursor_fragment(
 }
 
 // =============================================================================
+// Webcam overlay pipeline (circular crop with feathered edge + ring)
+// =============================================================================
+//
+// The vertex stage emits a square quad in NDC positioned at `centerNDC` with
+// `halfSizeNDC` extents — the caller computes these in client code so the
+// shader doesn't need to know about canvas padding or aspect ratio.
+//
+// The fragment stage samples the webcam texture with aspect-fill cropping
+// (a square cut from the centre of a typically-widescreen frame) and applies
+// a circular alpha mask with anti-aliased edge + a thin white ring.
+
+struct WebcamUniforms {
+    float2 centerNDC;
+    float2 halfSizeNDC;
+    float2 textureUVScale;     // applied to centred [-0.5,0.5] UV before re-shifting
+    float2 textureUVOffset;    // texture coords for the centre of the crop
+    float4 ringColor;
+    float ringWidthNorm;       // ring thickness as a fraction of radius (0..1)
+    float pad0;
+    float pad1;
+    float pad2;
+};
+
+vertex VertexOut webcam_vertex(
+    uint vid [[vertex_id]],
+    constant WebcamUniforms &u [[buffer(0)]]
+) {
+    float2 quadOffset = kUnitQuad[vid] * (u.halfSizeNDC * 2.0);
+    float2 pos = u.centerNDC + quadOffset;
+    VertexOut out;
+    out.position = float4(pos, 0.0, 1.0);
+    // Centred UV in [-0.5, 0.5] — the fragment shader uses it for both the
+    // circular mask and the aspect-fill texture lookup.
+    out.uv = kUnitQuad[vid];
+    return out;
+}
+
+fragment float4 webcam_fragment(
+    VertexOut in [[stage_in]],
+    constant WebcamUniforms &u [[buffer(0)]],
+    texture2d<float> tex [[texture(0)]]
+) {
+    constexpr sampler s(mag_filter::linear, min_filter::linear, address::clamp_to_edge);
+    float2 centred = in.uv;
+    float dist = length(centred);
+
+    // Sample with aspect-fill: scale centred UV by `textureUVScale`, then
+    // shift so [-0.5,0.5]² maps to the desired square crop in the source.
+    float2 sampleUV = centred * u.textureUVScale + u.textureUVOffset;
+    // Source frames arrive with top-left origin in the texture, so we flip Y.
+    sampleUV.y = 1.0 - sampleUV.y;
+    float4 colour = tex.sample(s, sampleUV);
+
+    // Anti-aliased circle mask: alpha 1 inside, 0 outside the unit circle of
+    // radius 0.5 (matching the centred UV space).
+    float aa = fwidth(dist);
+    float radius = 0.5;
+    float circleAlpha = smoothstep(radius, radius - aa, dist);
+
+    // Ring drawn just inside the circle edge.
+    float ringOuter = radius;
+    float ringInner = radius - u.ringWidthNorm;
+    float ringMask = smoothstep(ringOuter, ringOuter - aa, dist)
+                   * smoothstep(ringInner - aa, ringInner, dist);
+
+    colour.a *= circleAlpha;
+    // Blend the ring on top (premultiplied semantics — we just lerp RGB and
+    // bump alpha toward the ring's alpha where the mask says we should).
+    colour.rgb = mix(colour.rgb, u.ringColor.rgb, ringMask * u.ringColor.a);
+    colour.a = max(colour.a, ringMask * u.ringColor.a);
+    return colour;
+}
+
+// =============================================================================
 // Click circle pipeline (procedural ring drawn over video)
 // =============================================================================
 

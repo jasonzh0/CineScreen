@@ -21,6 +21,9 @@ final class AppState {
     var quality: CaptureRequest.Quality = .medium
     var captureSystemAudio: Bool = false
     var captureMic: Bool = false
+    var captureCamera: Bool = false
+    /// AVCaptureDevice uniqueID for the selected webcam. nil = system default.
+    var selectedCameraID: String? = nil
     /// `nil` = capture the entire display. Otherwise the chosen on-screen window.
     var selectedWindowID: CGWindowID? = nil
     var availableWindows: [CaptureWindow] = []
@@ -33,6 +36,10 @@ final class AppState {
 
     // Toast/banner text for the main window — keep simple in Phase 1.
     var statusMessage: String?
+
+    /// True until the first-launch onboarding flow has been completed. The
+    /// main window swaps in OnboardingView while this is set.
+    var needsOnboarding: Bool = !OnboardingState.hasCompleted
 
     init() {
         self.permissions = Permissions.currentStatus()
@@ -54,6 +61,8 @@ final class AppState {
         static let quality = "cs.quality"
         static let captureSystemAudio = "cs.captureSystemAudio"
         static let captureMic = "cs.captureMic"
+        static let captureCamera = "cs.captureCamera"
+        static let selectedCameraID = "cs.selectedCameraID"
     }
 
     private func loadSettings() {
@@ -65,6 +74,8 @@ final class AppState {
         }
         captureSystemAudio = d.bool(forKey: Keys.captureSystemAudio)
         captureMic = d.bool(forKey: Keys.captureMic)
+        captureCamera = d.bool(forKey: Keys.captureCamera)
+        selectedCameraID = d.string(forKey: Keys.selectedCameraID)
     }
 
     func saveProjectsDirectory(_ url: URL) {
@@ -91,6 +102,20 @@ final class AppState {
     func saveCaptureMic(_ on: Bool) {
         captureMic = on
         UserDefaults.standard.set(on, forKey: Keys.captureMic)
+    }
+
+    func saveCaptureCamera(_ on: Bool) {
+        captureCamera = on
+        UserDefaults.standard.set(on, forKey: Keys.captureCamera)
+    }
+
+    func saveSelectedCameraID(_ id: String?) {
+        selectedCameraID = id
+        if let id = id {
+            UserDefaults.standard.set(id, forKey: Keys.selectedCameraID)
+        } else {
+            UserDefaults.standard.removeObject(forKey: Keys.selectedCameraID)
+        }
     }
 
     // MARK: - Permissions

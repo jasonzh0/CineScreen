@@ -47,8 +47,10 @@ final class ProjectsLibrary {
 
         let candidateVideo = folder.appendingPathComponent(Project.videoFileName)
         let candidateMetadata = folder.appendingPathComponent(Project.metadataFileName)
+        let candidateWebcam = folder.appendingPathComponent(Project.webcamFileName)
         let videoURL = fm.fileExists(atPath: candidateVideo.path) ? candidateVideo : nil
         let metadataURL = fm.fileExists(atPath: candidateMetadata.path) ? candidateMetadata : nil
+        let webcamURL = fm.fileExists(atPath: candidateWebcam.path) ? candidateWebcam : nil
 
         let createdAt: Date
         if let descriptor = descriptor {
@@ -65,7 +67,8 @@ final class ProjectsLibrary {
             name: name,
             createdAt: createdAt,
             videoURL: videoURL,
-            metadataURL: metadataURL
+            metadataURL: metadataURL,
+            webcamURL: webcamURL
         )
     }
 
@@ -99,7 +102,8 @@ final class ProjectsLibrary {
             name: folder.lastPathComponent,
             createdAt: now,
             videoURL: nil,
-            metadataURL: nil
+            metadataURL: nil,
+            webcamURL: nil
         )
     }
 

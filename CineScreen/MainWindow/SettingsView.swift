@@ -43,6 +43,20 @@ struct SettingsView: View {
                     .foregroundStyle(.secondary)
                     .fixedSize(horizontal: false, vertical: true)
             }
+            Section("Onboarding") {
+                HStack {
+                    Text("First-launch tour")
+                    Spacer()
+                    Button("Replay") {
+                        OnboardingState.reset()
+                        state.needsOnboarding = true
+                    }
+                }
+                Text("Re-runs the welcome flow on the main window. Useful for re-granting permissions or testing the setup steps.")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+                    .fixedSize(horizontal: false, vertical: true)
+            }
         }
         .formStyle(.grouped)
     }
@@ -76,6 +90,27 @@ struct SettingsView: View {
                     .onChange(of: state.captureMic) { _, new in
                         state.saveCaptureMic(new)
                     }
+            }
+            Section("Webcam") {
+                Toggle("Record webcam by default", isOn: $state.captureCamera)
+                    .disabled(state.permissions.camera != .granted)
+                    .onChange(of: state.captureCamera) { _, new in
+                        state.saveCaptureCamera(new)
+                    }
+                Picker("Camera", selection: Binding(
+                    get: { state.selectedCameraID ?? "" },
+                    set: { state.saveSelectedCameraID($0.isEmpty ? nil : $0) }
+                )) {
+                    Text("System default").tag("")
+                    ForEach(WebcamCaptureService.availableDevices(), id: \.uniqueID) { device in
+                        Text(device.localizedName).tag(device.uniqueID)
+                    }
+                }
+                .disabled(state.permissions.camera != .granted)
+                Text("Webcam is saved as `webcam.mp4` next to the screen recording. It plays as a circular overlay in the editor preview.")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+                    .fixedSize(horizontal: false, vertical: true)
             }
         }
         .formStyle(.grouped)

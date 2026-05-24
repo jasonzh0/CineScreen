@@ -20,6 +20,12 @@ final class ExportPipeline {
         var zoomAt: @Sendable (Double) -> ZoomState = { _ in .identity }
         /// Static canvas style applied to every frame.
         var canvas: CanvasStyle = .none
+        /// Optional sibling webcam track. When present, frames from this file
+        /// are composited as a circular overlay in the bottom-right corner.
+        var webcamURL: URL? = nil
+        /// Position/size/visibility of the webcam circle. Ignored when
+        /// `webcamURL` is nil.
+        var webcamLayout: WebcamLayout = .default
     }
 
     enum Progress {
@@ -75,7 +81,13 @@ final class ExportPipeline {
                 kCVPixelBufferIOSurfacePropertiesKey as String: [:],
             ]
         )
-        videoReaderOutput.alwaysCopiesSampleData = false
+        // Must copy: we bind the source CVPixelBuffer into a CVMetalTexture
+        // via the texture cache, which can keep a reference alive past the
+        // function scope. With `false`, those bindings pin the decoder's
+        // internal pool buffers — over ~100 frames the pool exhausts and
+        // copyNextSampleBuffer blocks waiting for a free slot, presenting
+        // as a "stuck" export at ~2s.
+        videoReaderOutput.alwaysCopiesSampleData = true
         guard reader.canAdd(videoReaderOutput) else {
             throw ExportError.readerSetupFailed("video output")
         }
@@ -83,7 +95,22 @@ final class ExportPipeline {
 
         var audioReaderOutputs: [AVAssetReaderTrackOutput] = []
         for track in audioTracks {
-            let out = AVAssetReaderTrackOutput(track: track, outputSettings: nil)
+            // Decode the audio to uncompressed 16-bit interleaved PCM. The
+            // writer below re-encodes to AAC. We tried passthrough
+            // (outputSettings: nil on both sides) — it avoids the
+            // decode/encode round trip but produces audio-less MP4 files
+            // because the writer can't reliably establish the format
+            // without a sourceFormatHint.
+            let pcmSettings: [String: Any] = [
+                AVFormatIDKey: kAudioFormatLinearPCM,
+                AVLinearPCMBitDepthKey: 16,
+                AVLinearPCMIsBigEndianKey: false,
+                AVLinearPCMIsFloatKey: false,
+                AVLinearPCMIsNonInterleaved: false,
+                AVSampleRateKey: 48000,
+                AVNumberOfChannelsKey: 2,
+            ]
+            let out = AVAssetReaderTrackOutput(track: track, outputSettings: pcmSettings)
             out.alwaysCopiesSampleData = false
             if reader.canAdd(out) {
                 reader.add(out)
@@ -129,6 +156,8 @@ final class ExportPipeline {
 
         var audioWriterInputs: [AVAssetWriterInput] = []
         for _ in audioTracks {
+            // Re-encode the PCM coming out of the reader to AAC for the
+            // output container. Matches the recorder's own AAC settings.
             let audioSettings: [String: Any] = [
                 AVFormatIDKey: kAudioFormatMPEG4AAC,
                 AVNumberOfChannelsKey: 2,
@@ -154,25 +183,46 @@ final class ExportPipeline {
 
         onProgress(.running(fraction: 0))
 
-        // Video loop
-        try await runVideoLoop(
-            reader: reader,
-            readerOutput: videoReaderOutput,
-            writerInput: videoWriterInput,
-            adaptor: adaptor,
-            compositor: compositor,
-            cursorAt: input.cursorAt,
-            clicksAt: input.clicksAt,
-            zoomAt: input.zoomAt,
-            canvasStyle: input.canvas,
-            timeRangeStart: startTime,
-            trimmedSeconds: trimmedSeconds,
-            onProgress: onProgress
+        // Optional webcam source — uses the same trim range so the overlay
+        // stays in sync after trimming the head off the screen recording.
+        let webcamSource = try await WebcamFrameSource.open(
+            url: input.webcamURL,
+            timeRange: timeRange
         )
 
-        // Audio loops — each in series for simplicity
-        for (out, input) in zip(audioReaderOutputs, audioWriterInputs) {
-            try await runAudioLoop(writerInput: input, readerOutput: out)
+        // Run video AND audio loops concurrently. AVAssetWriter does
+        // cross-input synchronization: when you add multiple writer inputs,
+        // it expects you to append interleaved samples. If we ran video
+        // alone first, the writer would back off video input (isReady=false
+        // forever) waiting for audio that doesn't arrive until later —
+        // exactly the symptom we saw: writer stays in .writing state, video
+        // closure never re-invoked.
+        try await withThrowingTaskGroup(of: Void.self) { group in
+            group.addTask { [self] in
+                try await runVideoLoop(
+                    reader: reader,
+                    readerOutput: videoReaderOutput,
+                    writer: writer,
+                    writerInput: videoWriterInput,
+                    adaptor: adaptor,
+                    compositor: compositor,
+                    cursorAt: input.cursorAt,
+                    clicksAt: input.clicksAt,
+                    zoomAt: input.zoomAt,
+                    canvasStyle: input.canvas,
+                    webcamSource: webcamSource,
+                    webcamLayout: input.webcamLayout,
+                    timeRangeStart: startTime,
+                    trimmedSeconds: trimmedSeconds,
+                    onProgress: onProgress
+                )
+            }
+            for (out, audioInput) in zip(audioReaderOutputs, audioWriterInputs) {
+                group.addTask { [self] in
+                    try await runAudioLoop(writerInput: audioInput, readerOutput: out)
+                }
+            }
+            try await group.waitForAll()
         }
 
         await writer.finishWriting()
@@ -192,6 +242,7 @@ final class ExportPipeline {
     private func runVideoLoop(
         reader: AVAssetReader,
         readerOutput: AVAssetReaderTrackOutput,
+        writer: AVAssetWriter,
         writerInput: AVAssetWriterInput,
         adaptor: AVAssetWriterInputPixelBufferAdaptor,
         compositor: ExportCompositor,
@@ -199,18 +250,22 @@ final class ExportPipeline {
         clicksAt: @escaping @Sendable (Double) -> [ClickRingState],
         zoomAt: @escaping @Sendable (Double) -> ZoomState,
         canvasStyle: CanvasStyle,
+        webcamSource: WebcamFrameSource?,
+        webcamLayout: WebcamLayout,
         timeRangeStart: CMTime,
         trimmedSeconds: Double,
         onProgress: @Sendable @escaping (Progress) -> Void
     ) async throws {
         let processingQueue = DispatchQueue(label: "com.cinescreen.export.video", qos: .userInitiated)
 
+        let frameCounter = FrameCounter()
         try await withCheckedThrowingContinuation { (continuation: CheckedContinuation<Void, Error>) in
             writerInput.requestMediaDataWhenReady(on: processingQueue) {
                 while writerInput.isReadyForMoreMediaData {
                     guard reader.status == .reading,
                           let sample = readerOutput.copyNextSampleBuffer() else {
                         writerInput.markAsFinished()
+                        Log.app.info("Export: video loop finished at frame \(frameCounter.count), reader.status=\(reader.status.rawValue)")
                         if reader.status == .failed {
                             continuation.resume(throwing: ExportError.readError(
                                 reader.error?.localizedDescription ?? "unknown"
@@ -240,25 +295,34 @@ final class ExportPipeline {
                         return
                     }
 
+                    let webcamFrame = webcamLayout.enabled ? webcamSource?.frame(at: pts) : nil
                     let ok = compositor.render(
                         source: sourceBuffer,
                         cursor: cursorState,
                         clicks: clickStates,
                         zoom: zoom,
                         canvas: canvasStyle,
+                        webcam: webcamFrame,
+                        webcamLayout: webcamLayout,
                         destination: dest
                     )
                     if !ok {
+                        Log.app.error("Export: compositor.render returned false at frame \(frameCounter.count), pts=\(pts.seconds)s")
                         continuation.resume(throwing: ExportError.compositeFailed)
                         return
                     }
                     if !adaptor.append(dest, withPresentationTime: pts) {
+                        Log.app.error("Export: adaptor.append failed at frame \(frameCounter.count), pts=\(pts.seconds)s, writer.status=\(writer.status.rawValue), writer.error=\(writer.error?.localizedDescription ?? "nil")")
                         continuation.resume(throwing: ExportError.appendFailed(
                             reader.error?.localizedDescription ?? "video append failed"
                         ))
                         return
                     }
 
+                    let n = frameCounter.increment()
+                    if n % 60 == 0 {
+                        Log.app.info("Export: frame \(n) at \(pts.seconds, format: .fixed(precision: 2))s")
+                    }
                     let elapsed = (pts.seconds - timeRangeStart.seconds)
                     let fraction = min(1.0, max(0.0, elapsed / trimmedSeconds))
                     onProgress(.running(fraction: fraction))
@@ -296,6 +360,17 @@ final class ExportPipeline {
     private func applyTransform(_ transform: CGAffineTransform, to size: CGSize) -> CGSize {
         let rect = CGRect(origin: .zero, size: size).applying(transform)
         return CGSize(width: abs(rect.width), height: abs(rect.height))
+    }
+}
+
+/// Simple atomic counter for diagnostic logging across the export's
+/// processing queue. Not thread-safe — the export's video loop is
+/// single-threaded so a plain Int is fine here.
+private final class FrameCounter: @unchecked Sendable {
+    private(set) var count: Int = 0
+    func increment() -> Int {
+        count += 1
+        return count
     }
 }
 
