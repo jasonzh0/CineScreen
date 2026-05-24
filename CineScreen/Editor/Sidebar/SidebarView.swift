@@ -9,29 +9,19 @@ struct SidebarView: View {
     @State private var exportError: String?
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 16) {
-            header("Recording")
-            info
+        VStack(alignment: .leading, spacing: 14) {
+            exportRow
 
-            header("Cursor")
-            cursorControls
-
-            header("Zoom")
-            zoomControls
-
-            header("Canvas")
-            canvasControls
-
-            header("Trim")
-            trimControls
-
-            Spacer()
-
-            if let saveMessage = saveMessage {
-                Text(saveMessage)
-                    .font(.caption)
-                    .foregroundStyle(.secondary)
+            ScrollView {
+                VStack(alignment: .leading, spacing: 14) {
+                    card(title: "Background", icon: "photo.on.rectangle.angled") { canvasControls }
+                    card(title: "Cursor",     icon: "cursorarrow.rays")           { cursorControls }
+                    card(title: "Zoom",       icon: "plus.magnifyingglass")       { zoomControls }
+                    card(title: "Trim",       icon: "scissors")                   { trimControls }
+                    card(title: "Recording",  icon: "info.circle")                { info }
+                }
             }
+            .scrollIndicators(.never)
 
             if isExporting {
                 VStack(alignment: .leading, spacing: 4) {
@@ -45,37 +35,84 @@ struct SidebarView: View {
                     .foregroundStyle(.red)
                     .fixedSize(horizontal: false, vertical: true)
             }
-
-            HStack {
-                Button {
-                    saveEdits()
-                } label: {
-                    Label("Save Edits", systemImage: "checkmark.circle")
-                }
-                .buttonStyle(.bordered)
-                .disabled(vm.metadataURL == nil || vm.metadata == nil)
-
-                Button {
-                    startExport()
-                } label: {
-                    Label("Export…", systemImage: "square.and.arrow.up")
-                }
-                .buttonStyle(.borderedProminent)
-                .disabled(isExporting || vm.metadata == nil)
+            if let saveMessage = saveMessage {
+                Text(saveMessage)
+                    .font(.caption2)
+                    .foregroundStyle(.secondary)
             }
         }
-        .padding(16)
-        .frame(width: 260)
-        .background(Color(nsColor: .underPageBackgroundColor))
+        .padding(14)
+        .frame(width: 304)
+        .background(Color(white: 0.09))
     }
 
-    // MARK: - Sections
+    // MARK: - Top export row
 
-    private func header(_ title: String) -> some View {
-        Text(title.uppercased())
-            .font(.system(size: 10, weight: .semibold))
-            .foregroundStyle(.secondary)
-            .tracking(0.6)
+    private var exportRow: some View {
+        HStack(spacing: 8) {
+            Button {
+                saveEdits()
+            } label: {
+                Image(systemName: "checkmark.circle.fill")
+                    .font(.system(size: 13, weight: .medium))
+                    .frame(width: 36, height: 32)
+                    .foregroundStyle(.secondary)
+                    .background(Color.white.opacity(0.08), in: RoundedRectangle(cornerRadius: 8))
+            }
+            .buttonStyle(.plain)
+            .disabled(vm.metadataURL == nil || vm.metadata == nil)
+            .help("Save edits to metadata")
+
+            Spacer()
+
+            Button {
+                startExport()
+            } label: {
+                HStack(spacing: 6) {
+                    Image(systemName: "square.and.arrow.up")
+                        .font(.system(size: 12, weight: .semibold))
+                    Text("Export")
+                        .font(.system(size: 13, weight: .semibold))
+                }
+                .padding(.horizontal, 14)
+                .frame(height: 32)
+                .foregroundStyle(.white)
+                .background(
+                    LinearGradient(
+                        colors: [Color(red: 0.55, green: 0.31, blue: 0.97), Color(red: 0.43, green: 0.21, blue: 0.85)],
+                        startPoint: .top, endPoint: .bottom
+                    ),
+                    in: RoundedRectangle(cornerRadius: 8)
+                )
+            }
+            .buttonStyle(.plain)
+            .disabled(isExporting || vm.metadata == nil)
+        }
+    }
+
+    // MARK: - Card scaffolding
+
+    @ViewBuilder
+    private func card<Content: View>(title: String, icon: String, @ViewBuilder content: () -> Content) -> some View {
+        VStack(alignment: .leading, spacing: 10) {
+            HStack(spacing: 6) {
+                Image(systemName: icon)
+                    .font(.system(size: 11, weight: .semibold))
+                    .foregroundStyle(.secondary)
+                Text(title)
+                    .font(.system(size: 12, weight: .semibold))
+                    .foregroundStyle(.primary)
+                Spacer()
+            }
+            content()
+        }
+        .padding(12)
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .background(Color.white.opacity(0.04), in: RoundedRectangle(cornerRadius: 10))
+        .overlay(
+            RoundedRectangle(cornerRadius: 10)
+                .stroke(Color.white.opacity(0.06), lineWidth: 1)
+        )
     }
 
     private var info: some View {
@@ -93,9 +130,8 @@ struct SidebarView: View {
                     .fixedSize(horizontal: false, vertical: true)
             }
         }
-        .padding(10)
+
         .frame(maxWidth: .infinity, alignment: .leading)
-        .background(Color.secondary.opacity(0.08), in: RoundedRectangle(cornerRadius: 6))
     }
 
     @ViewBuilder
@@ -144,8 +180,7 @@ struct SidebarView: View {
             }
 
         }
-        .padding(10)
-        .background(Color.secondary.opacity(0.08), in: RoundedRectangle(cornerRadius: 6))
+
     }
 
     @ViewBuilder
@@ -196,8 +231,7 @@ struct SidebarView: View {
                 }
             }
         }
-        .padding(10)
-        .background(Color.secondary.opacity(0.08), in: RoundedRectangle(cornerRadius: 6))
+
     }
 
     @ViewBuilder
@@ -350,40 +384,64 @@ struct SidebarView: View {
             }
             Slider(value: $vm.canvasCornerRadius, in: 0...0.2)
 
+            Toggle(isOn: $vm.canvasDropShadow) {
+                Text("Drop Shadow")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+            }
+            .toggleStyle(.switch)
+            .controlSize(.small)
+
             HStack {
                 Text("Background")
                     .font(.caption)
                     .foregroundStyle(.secondary)
                 Spacer()
-                ForEach(["#000000", "#1a1a1a", "#2b2b2b", "#6aabdf", "#dd5a5a", "#5acf85"], id: \.self) { hex in
+            }
+            LazyVGrid(
+                columns: [GridItem(.adaptive(minimum: 36, maximum: 44), spacing: 6)],
+                spacing: 6
+            ) {
+                ForEach(CanvasBackground.presets, id: \.name) { preset in
                     Button {
-                        vm.canvasBackgroundHex = hex
+                        vm.canvasBackground = preset.bg
                     } label: {
-                        RoundedRectangle(cornerRadius: 4)
-                            .fill(swatchColor(hex))
-                            .frame(width: 18, height: 18)
+                        backgroundPresetTile(preset.bg)
+                            .frame(height: 32)
                             .overlay(
-                                RoundedRectangle(cornerRadius: 4)
-                                    .stroke(vm.canvasBackgroundHex == hex ? Color.accentColor : .clear, lineWidth: 2)
+                                RoundedRectangle(cornerRadius: 6)
+                                    .stroke(vm.canvasBackground == preset.bg ? Color.accentColor : Color.white.opacity(0.08), lineWidth: vm.canvasBackground == preset.bg ? 2 : 1)
                             )
+                            .help(preset.name)
                     }
                     .buttonStyle(.plain)
                 }
             }
         }
-        .padding(10)
-        .background(Color.secondary.opacity(0.08), in: RoundedRectangle(cornerRadius: 6))
+
     }
 
-    private func swatchColor(_ hex: String) -> Color {
-        var s = hex
-        if s.hasPrefix("#") { s.removeFirst() }
-        guard s.count == 6, let v = UInt32(s, radix: 16) else { return .black }
-        return Color(
-            red: Double((v >> 16) & 0xff) / 255,
-            green: Double((v >> 8) & 0xff) / 255,
-            blue: Double(v & 0xff) / 255
-        )
+    /// SwiftUI preview tile mirroring the GPU gradient — same colours, same angle.
+    @ViewBuilder
+    private func backgroundPresetTile(_ bg: CanvasBackground) -> some View {
+        let colors = bg.stops.map { stop in
+            Color(red: Double(stop.color.x), green: Double(stop.color.y), blue: Double(stop.color.z))
+        }
+        // GPU angle: 0 = left→right; 90 = bottom→top. SwiftUI's UnitPoint is
+        // y-down, so convert by negating sin.
+        let rad = Double(bg.angleDegrees) * .pi / 180
+        let dx = cos(rad), dy = -sin(rad)
+        if colors.count <= 1 {
+            RoundedRectangle(cornerRadius: 6).fill(colors.first ?? .black)
+        } else {
+            RoundedRectangle(cornerRadius: 6).fill(
+                LinearGradient(
+                    colors: colors,
+                    startPoint: UnitPoint(x: 0.5 - dx * 0.5, y: 0.5 - dy * 0.5),
+                    endPoint: UnitPoint(x: 0.5 + dx * 0.5, y: 0.5 + dy * 0.5)
+                )
+            )
+        }
     }
 
     private var trimControls: some View {
@@ -392,8 +450,7 @@ struct SidebarView: View {
             row("End", format(vm.trimEndMs))
             row("Length", format(vm.trimEndMs - vm.trimStartMs))
         }
-        .padding(10)
-        .background(Color.secondary.opacity(0.08), in: RoundedRectangle(cornerRadius: 6))
+
     }
 
     // MARK: - Helpers

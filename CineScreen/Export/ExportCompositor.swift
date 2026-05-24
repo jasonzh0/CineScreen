@@ -11,6 +11,8 @@ import AppKit
 final class ExportCompositor {
     private let device: MTLDevice
     private let commandQueue: MTLCommandQueue
+    private let backgroundPipeline: MTLRenderPipelineState
+    private let shadowPipeline: MTLRenderPipelineState
     private let videoPipeline: MTLRenderPipelineState
     private let cursorPipeline: MTLRenderPipelineState
     private let clickPipeline: MTLRenderPipelineState
@@ -24,7 +26,11 @@ final class ExportCompositor {
               let queue = device.makeCommandQueue(),
               let library = device.makeDefaultLibrary() else { return nil }
 
-        guard let videoVertex = library.makeFunction(name: "video_vertex"),
+        guard let bgVertex = library.makeFunction(name: "background_vertex"),
+              let bgFragment = library.makeFunction(name: "background_fragment"),
+              let shadowVertex = library.makeFunction(name: "shadow_vertex"),
+              let shadowFragment = library.makeFunction(name: "shadow_fragment"),
+              let videoVertex = library.makeFunction(name: "video_vertex"),
               let videoFragment = library.makeFunction(name: "video_fragment"),
               let cursorVertex = library.makeFunction(name: "cursor_vertex"),
               let cursorFragment = library.makeFunction(name: "cursor_fragment"),
@@ -32,10 +38,38 @@ final class ExportCompositor {
               let clickFragment = library.makeFunction(name: "click_fragment") else { return nil }
 
         // Pipelines render into BGRA to match the writer's pixel buffer format.
+        let bgDesc = MTLRenderPipelineDescriptor()
+        bgDesc.vertexFunction = bgVertex
+        bgDesc.fragmentFunction = bgFragment
+        bgDesc.colorAttachments[0].pixelFormat = .bgra8Unorm
+        bgDesc.label = "export.background"
+        guard let backgroundPipeline = try? device.makeRenderPipelineState(descriptor: bgDesc) else { return nil }
+
+        let shadowDesc = MTLRenderPipelineDescriptor()
+        shadowDesc.vertexFunction = shadowVertex
+        shadowDesc.fragmentFunction = shadowFragment
+        shadowDesc.colorAttachments[0].pixelFormat = .bgra8Unorm
+        shadowDesc.colorAttachments[0].isBlendingEnabled = true
+        shadowDesc.colorAttachments[0].rgbBlendOperation = .add
+        shadowDesc.colorAttachments[0].alphaBlendOperation = .add
+        shadowDesc.colorAttachments[0].sourceRGBBlendFactor = .sourceAlpha
+        shadowDesc.colorAttachments[0].sourceAlphaBlendFactor = .one
+        shadowDesc.colorAttachments[0].destinationRGBBlendFactor = .oneMinusSourceAlpha
+        shadowDesc.colorAttachments[0].destinationAlphaBlendFactor = .oneMinusSourceAlpha
+        shadowDesc.label = "export.shadow"
+        guard let shadowPipeline = try? device.makeRenderPipelineState(descriptor: shadowDesc) else { return nil }
+
         let videoDesc = MTLRenderPipelineDescriptor()
         videoDesc.vertexFunction = videoVertex
         videoDesc.fragmentFunction = videoFragment
         videoDesc.colorAttachments[0].pixelFormat = .bgra8Unorm
+        videoDesc.colorAttachments[0].isBlendingEnabled = true
+        videoDesc.colorAttachments[0].rgbBlendOperation = .add
+        videoDesc.colorAttachments[0].alphaBlendOperation = .add
+        videoDesc.colorAttachments[0].sourceRGBBlendFactor = .sourceAlpha
+        videoDesc.colorAttachments[0].sourceAlphaBlendFactor = .one
+        videoDesc.colorAttachments[0].destinationRGBBlendFactor = .oneMinusSourceAlpha
+        videoDesc.colorAttachments[0].destinationAlphaBlendFactor = .oneMinusSourceAlpha
         videoDesc.label = "export.video"
         guard let videoPipeline = try? device.makeRenderPipelineState(descriptor: videoDesc) else { return nil }
 
@@ -82,6 +116,8 @@ final class ExportCompositor {
 
         self.device = device
         self.commandQueue = queue
+        self.backgroundPipeline = backgroundPipeline
+        self.shadowPipeline = shadowPipeline
         self.videoPipeline = videoPipeline
         self.cursorPipeline = cursorPipeline
         self.clickPipeline = clickPipeline
@@ -112,11 +148,12 @@ final class ExportCompositor {
         descriptor.colorAttachments[0].texture = destTexture
         descriptor.colorAttachments[0].loadAction = .clear
         descriptor.colorAttachments[0].storeAction = .store
+        let clearColor = canvas.background.firstColor
         descriptor.colorAttachments[0].clearColor = MTLClearColor(
-            red: Double(canvas.backgroundColor.x),
-            green: Double(canvas.backgroundColor.y),
-            blue: Double(canvas.backgroundColor.z),
-            alpha: Double(canvas.backgroundColor.w)
+            red: Double(clearColor.x),
+            green: Double(clearColor.y),
+            blue: Double(clearColor.z),
+            alpha: Double(clearColor.w)
         )
 
         guard let commandBuffer = commandQueue.makeCommandBuffer(),
@@ -131,6 +168,27 @@ final class ExportCompositor {
             contentScale: SIMD2(1.0 - inset * 2.0, 1.0 - inset * 2.0),
             cornerRadius: max(0, min(0.3, canvas.cornerRadius))
         )
+
+        // 0. Background pass — full-screen gradient (matches MetalRenderer)
+        var bgUniforms = BackgroundUniforms(canvas.background)
+        encoder.setRenderPipelineState(backgroundPipeline)
+        encoder.setFragmentBytes(&bgUniforms, length: MemoryLayout<BackgroundUniforms>.stride, index: 0)
+        encoder.drawPrimitives(type: .triangleStrip, vertexStart: 0, vertexCount: 4)
+
+        // 0.5 Drop shadow
+        if canvas.dropShadow && canvas.padding > 0.005 {
+            let halfSize = aspect.scale * canvasUniforms.contentScale
+            var shadowUniforms = ShadowUniforms(
+                halfSize: halfSize,
+                cornerRadius: canvasUniforms.cornerRadius,
+                blur: 0.07,
+                yOffset: -0.025,
+                opacity: 0.55
+            )
+            encoder.setRenderPipelineState(shadowPipeline)
+            encoder.setFragmentBytes(&shadowUniforms, length: MemoryLayout<ShadowUniforms>.stride, index: 0)
+            encoder.drawPrimitives(type: .triangleStrip, vertexStart: 0, vertexCount: 4)
+        }
 
         // 1. Video pass
         encoder.setRenderPipelineState(videoPipeline)

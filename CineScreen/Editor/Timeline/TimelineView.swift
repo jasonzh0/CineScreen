@@ -113,15 +113,23 @@ struct TimelineView: View {
 
     // MARK: - Video (main) track with trim handles
 
+    private static let videoTint = Color(red: 0.95, green: 0.62, blue: 0.20)   // warm amber
+    private static let zoomTint  = Color(red: 0.51, green: 0.39, blue: 0.95)   // indigo
+
     private func videoTrack(width: CGFloat, duration: Double) -> some View {
         let startX = CGFloat(vm.trimStartMs / duration) * width
         let endX = CGFloat(vm.trimEndMs / duration) * width
         return ZStack(alignment: .topLeading) {
-            RoundedRectangle(cornerRadius: 4)
-                .fill(Color.accentColor.opacity(0.14))
+            RoundedRectangle(cornerRadius: 6)
+                .fill(
+                    LinearGradient(
+                        colors: [Self.videoTint.opacity(0.35), Self.videoTint.opacity(0.22)],
+                        startPoint: .top, endPoint: .bottom
+                    )
+                )
                 .overlay(
-                    RoundedRectangle(cornerRadius: 4)
-                        .stroke(Color.accentColor.opacity(0.35), lineWidth: 1)
+                    RoundedRectangle(cornerRadius: 6)
+                        .stroke(Self.videoTint.opacity(0.5), lineWidth: 1)
                 )
 
             // Greyed-out regions outside trim
@@ -145,7 +153,7 @@ struct TimelineView: View {
         return ZStack {
             Rectangle().fill(Color.clear).frame(width: 16)
             Rectangle()
-                .fill(Color.accentColor.opacity(0.85))
+                .fill(Self.videoTint.opacity(0.95))
                 .frame(width: 3)
             VStack(spacing: 2) {
                 Circle().fill(.white).frame(width: 3, height: 3)
@@ -219,7 +227,7 @@ struct TimelineView: View {
         var body: some View {
             let x = CGFloat(section.startTime / duration) * trackWidth
             let w = max(20, CGFloat((section.endTime - section.startTime) / duration) * trackWidth)
-            let fill = Color(red: 0.78, green: 0.45, blue: 0.40)
+            let fill = TimelineView.zoomTint
             let h = trackHeight - 4
 
             // Lay the block out via HStack + non-interactive Spacers so each
@@ -253,11 +261,19 @@ struct TimelineView: View {
             ZStack(alignment: .center) {
                 // Visual: background fill + outline. Hit testing disabled so
                 // it doesn't intercept the body / edge gestures sitting on top.
-                RoundedRectangle(cornerRadius: 4)
-                    .fill(fill.opacity(isSelected ? 0.55 : 0.30))
+                RoundedRectangle(cornerRadius: 6)
+                    .fill(
+                        LinearGradient(
+                            colors: [
+                                fill.opacity(isSelected ? 0.85 : 0.55),
+                                fill.opacity(isSelected ? 0.65 : 0.40)
+                            ],
+                            startPoint: .top, endPoint: .bottom
+                        )
+                    )
                     .overlay(
-                        RoundedRectangle(cornerRadius: 4)
-                            .stroke(isSelected ? Color.white.opacity(0.85) : fill, lineWidth: isSelected ? 1.5 : 1)
+                        RoundedRectangle(cornerRadius: 6)
+                            .stroke(isSelected ? Color.white.opacity(0.85) : fill.opacity(0.9), lineWidth: isSelected ? 1.5 : 1)
                     )
                     .allowsHitTesting(false)
 

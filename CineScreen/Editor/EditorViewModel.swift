@@ -23,9 +23,12 @@ final class EditorViewModel {
     var trimEndMs: Double = 0
 
     // Canvas styling (Phase 4) — backgrounds + padding + rounded corners.
-    var canvasPadding: Double = 0
-    var canvasCornerRadius: Double = 0
-    var canvasBackgroundHex: String = "#1a1a1a"
+    // Defaults give a polished out-of-the-box look (subtle padding, rounded
+    // corners, drop shadow) so new recordings already feel "designed".
+    var canvasPadding: Double = 0.05
+    var canvasCornerRadius: Double = 0.025
+    var canvasBackground: CanvasBackground = .solid("#1a1a1a")
+    var canvasDropShadow: Bool = true
 
     /// Timeline horizontal zoom (1.0 = fit, >1 = zoomed in). Persists per
     /// editor instance only.
@@ -38,7 +41,8 @@ final class EditorViewModel {
         CanvasStyle(
             padding: Float(canvasPadding),
             cornerRadius: Float(canvasCornerRadius),
-            backgroundColor: RenderSnapshot.parseHexColor(canvasBackgroundHex)
+            background: canvasBackground,
+            dropShadow: canvasDropShadow
         )
     }
 

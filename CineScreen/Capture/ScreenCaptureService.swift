@@ -143,15 +143,23 @@ final class ScreenCaptureService: NSObject {
         var sourceRect: CGRect? = nil
         if let preBuilt = request.preBuiltFilter {
             // Native picker gave us a filter — its contentRect is in points,
-            // and pointPixelScale converts to native pixels.
+            // and pointPixelScale converts to native pixels. Using contentRect
+            // (not window.frame) is what captures the FULL window chrome —
+            // title bar / toolbar / drop shadow region — without cropping.
             let rect = preBuilt.contentRect
             let pxScale = CGFloat(preBuilt.pointPixelScale)
             outputW = Int(rect.width * pxScale)
             outputH = Int(rect.height * pxScale)
         } else if let window = window {
-            // Window capture (legacy windowID path): dimensions from window bounds.
-            outputW = Int(window.frame.width * scale)
-            outputH = Int(window.frame.height * scale)
+            // Window capture (legacy windowID path): build the filter early
+            // so we can use its contentRect for sizing. This is what makes
+            // the title bar render — window.frame alone excludes the chrome
+            // padding SCK adds around the window.
+            let probeFilter = SCContentFilter(desktopIndependentWindow: window)
+            let rect = probeFilter.contentRect
+            let pxScale = CGFloat(probeFilter.pointPixelScale)
+            outputW = Int(rect.width * pxScale)
+            outputH = Int(rect.height * pxScale)
         } else if let region = request.region {
             outputW = Int(region.width)
             outputH = Int(region.height)
@@ -192,6 +200,15 @@ final class ScreenCaptureService: NSObject {
         cfg.colorSpaceName = CGColorSpace.sRGB
         cfg.showsCursor = false
         cfg.scalesToFit = false
+        // Single-window capture: drop the OS drop shadow so the window chrome
+        // (title bar, traffic lights, toolbar) sits flush at the frame edge.
+        // The editor then composites its own shadow over the gradient bg.
+        cfg.ignoreShadowsSingleWindow = true
+        // Include child windows (popovers, sheets, accessory bars attached to
+        // the title bar). Without this, sheets and the menu would clip away.
+        if #available(macOS 14.2, *) {
+            cfg.includeChildWindows = true
+        }
         if let rect = sourceRect { cfg.sourceRect = rect }
         if request.captureSystemAudio {
             cfg.capturesAudio = true

@@ -39,17 +39,24 @@ struct ZoomState {
 }
 
 /// Canvas styling (background + padding + rounded corners). The renderer
-/// clears the drawable to `backgroundColor` and shrinks the video region by
-/// `padding`. Phase 4: solid color only — gradient + image come later.
+/// draws the gradient background full-screen then composites the video
+/// region inset by `padding` on top.
 struct CanvasStyle {
     /// 0..0.5 — fraction of the half-axis used as padding. 0.05 = 10% padding overall.
     var padding: Float
     /// 0..0.3 — rounded-corner radius as a fraction of the video quad's UV space.
     var cornerRadius: Float
-    /// RGBA in 0..1.
-    var backgroundColor: SIMD4<Float>
+    /// 1-to-4-stop linear gradient (or solid via a 1-stop background).
+    var background: CanvasBackground
+    /// Soft drop shadow underneath the rounded video quad.
+    var dropShadow: Bool = true
 
-    static let none = CanvasStyle(padding: 0, cornerRadius: 0, backgroundColor: SIMD4(0, 0, 0, 1))
+    static let none = CanvasStyle(
+        padding: 0,
+        cornerRadius: 0,
+        background: .solid("#000000"),
+        dropShadow: false
+    )
 }
 
 /// Owns the GPU resources and the per-frame draw routine for the editor's
@@ -62,6 +69,8 @@ final class MetalRenderer: NSObject {
     let device: MTLDevice
     let commandQueue: MTLCommandQueue
 
+    private let backgroundPipeline: MTLRenderPipelineState
+    private let shadowPipeline: MTLRenderPipelineState
     private let videoPipeline: MTLRenderPipelineState
     private let cursorPipeline: MTLRenderPipelineState
     private let clickPipeline: MTLRenderPipelineState
@@ -94,13 +103,52 @@ final class MetalRenderer: NSObject {
         guard let queue = device.makeCommandQueue() else { return nil }
         guard let library = device.makeDefaultLibrary() else { return nil }
 
-        // Video pipeline (no blending — opaque passthrough)
+        // Background pipeline (full-screen gradient, no blending)
+        guard let bgVertex = library.makeFunction(name: "background_vertex"),
+              let bgFragment = library.makeFunction(name: "background_fragment") else { return nil }
+        let bgDesc = MTLRenderPipelineDescriptor()
+        bgDesc.vertexFunction = bgVertex
+        bgDesc.fragmentFunction = bgFragment
+        bgDesc.colorAttachments[0].pixelFormat = view.colorPixelFormat
+        bgDesc.label = "canvas.background"
+        guard let backgroundPipeline = try? device.makeRenderPipelineState(descriptor: bgDesc) else {
+            return nil
+        }
+
+        // Drop-shadow pipeline (full-screen with alpha blending over background)
+        guard let shadowVertex = library.makeFunction(name: "shadow_vertex"),
+              let shadowFragment = library.makeFunction(name: "shadow_fragment") else { return nil }
+        let shadowDesc = MTLRenderPipelineDescriptor()
+        shadowDesc.vertexFunction = shadowVertex
+        shadowDesc.fragmentFunction = shadowFragment
+        shadowDesc.colorAttachments[0].pixelFormat = view.colorPixelFormat
+        shadowDesc.colorAttachments[0].isBlendingEnabled = true
+        shadowDesc.colorAttachments[0].rgbBlendOperation = .add
+        shadowDesc.colorAttachments[0].alphaBlendOperation = .add
+        shadowDesc.colorAttachments[0].sourceRGBBlendFactor = .sourceAlpha
+        shadowDesc.colorAttachments[0].sourceAlphaBlendFactor = .one
+        shadowDesc.colorAttachments[0].destinationRGBBlendFactor = .oneMinusSourceAlpha
+        shadowDesc.colorAttachments[0].destinationAlphaBlendFactor = .oneMinusSourceAlpha
+        shadowDesc.label = "canvas.shadow"
+        guard let shadowPipeline = try? device.makeRenderPipelineState(descriptor: shadowDesc) else {
+            return nil
+        }
+
+        // Video pipeline — alpha blended so the rounded-corner mask in the
+        // fragment shader actually clips against the background pass.
         guard let videoVertex = library.makeFunction(name: "video_vertex"),
               let videoFragment = library.makeFunction(name: "video_fragment") else { return nil }
         let videoDesc = MTLRenderPipelineDescriptor()
         videoDesc.vertexFunction = videoVertex
         videoDesc.fragmentFunction = videoFragment
         videoDesc.colorAttachments[0].pixelFormat = view.colorPixelFormat
+        videoDesc.colorAttachments[0].isBlendingEnabled = true
+        videoDesc.colorAttachments[0].rgbBlendOperation = .add
+        videoDesc.colorAttachments[0].alphaBlendOperation = .add
+        videoDesc.colorAttachments[0].sourceRGBBlendFactor = .sourceAlpha
+        videoDesc.colorAttachments[0].sourceAlphaBlendFactor = .one
+        videoDesc.colorAttachments[0].destinationRGBBlendFactor = .oneMinusSourceAlpha
+        videoDesc.colorAttachments[0].destinationAlphaBlendFactor = .oneMinusSourceAlpha
         videoDesc.label = "video.passthrough"
         guard let videoPipeline = try? device.makeRenderPipelineState(descriptor: videoDesc) else {
             return nil
@@ -160,6 +208,8 @@ final class MetalRenderer: NSObject {
 
         self.device = device
         self.commandQueue = queue
+        self.backgroundPipeline = backgroundPipeline
+        self.shadowPipeline = shadowPipeline
         self.videoPipeline = videoPipeline
         self.cursorPipeline = cursorPipeline
         self.clickPipeline = clickPipeline
@@ -205,11 +255,14 @@ final class MetalRenderer: NSObject {
         }
 
         let style = canvasStyleProvider?() ?? .none
+        // Clear to the first gradient stop so the screen-edge gutter blends
+        // smoothly with the top-left of the gradient.
+        let clearColor = style.background.firstColor
         view.clearColor = MTLClearColor(
-            red: Double(style.backgroundColor.x),
-            green: Double(style.backgroundColor.y),
-            blue: Double(style.backgroundColor.z),
-            alpha: Double(style.backgroundColor.w)
+            red: Double(clearColor.x),
+            green: Double(clearColor.y),
+            blue: Double(clearColor.z),
+            alpha: Double(clearColor.w)
         )
 
         guard let drawable = view.currentDrawable,
@@ -227,6 +280,28 @@ final class MetalRenderer: NSObject {
             contentScale: SIMD2(1.0 - inset * 2.0, 1.0 - inset * 2.0),
             cornerRadius: max(0, min(0.3, style.cornerRadius))
         )
+
+        // 0. Background pass — full-screen gradient
+        var bgUniforms = BackgroundUniforms(style.background)
+        encoder.setRenderPipelineState(backgroundPipeline)
+        encoder.setFragmentBytes(&bgUniforms, length: MemoryLayout<BackgroundUniforms>.stride, index: 0)
+        encoder.drawPrimitives(type: .triangleStrip, vertexStart: 0, vertexCount: 4)
+
+        // 0.5 Drop shadow — only meaningful when padding > 0 (the video has
+        // canvas around it for the shadow to bleed into).
+        if style.dropShadow && style.padding > 0.005 {
+            let halfSize = aspect.scale * canvasUniforms.contentScale
+            var shadowUniforms = ShadowUniforms(
+                halfSize: halfSize,
+                cornerRadius: canvasUniforms.cornerRadius,
+                blur: 0.07,
+                yOffset: -0.025,
+                opacity: 0.55
+            )
+            encoder.setRenderPipelineState(shadowPipeline)
+            encoder.setFragmentBytes(&shadowUniforms, length: MemoryLayout<ShadowUniforms>.stride, index: 0)
+            encoder.drawPrimitives(type: .triangleStrip, vertexStart: 0, vertexCount: 4)
+        }
 
         // 1. Video pass
         if let texture = currentTexture {

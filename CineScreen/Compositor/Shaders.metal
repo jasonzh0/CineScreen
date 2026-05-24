@@ -48,6 +48,120 @@ constant float2 kUnitUV[4] = {
 };
 
 // =============================================================================
+// Canvas background pipeline (1- to 4-stop linear gradient, full-screen)
+// =============================================================================
+
+struct BackgroundUniforms {
+    float4 stop0;
+    float4 stop1;
+    float4 stop2;
+    float4 stop3;
+    float4 stopPositions;
+    float angleRadians;
+    int stopCount;
+    float pad0;
+    float pad1;
+};
+
+vertex VertexOut background_vertex(uint vid [[vertex_id]]) {
+    float2 positions[4] = {
+        float2(-1.0, -1.0),
+        float2( 1.0, -1.0),
+        float2(-1.0,  1.0),
+        float2( 1.0,  1.0)
+    };
+    VertexOut out;
+    out.position = float4(positions[vid], 0.0, 1.0);
+    out.uv = positions[vid] * 0.5 + 0.5;
+    return out;
+}
+
+fragment float4 background_fragment(
+    VertexOut in [[stage_in]],
+    constant BackgroundUniforms &u [[buffer(0)]]
+) {
+    if (u.stopCount <= 1) {
+        return u.stop0;
+    }
+
+    // Rotate uv around centre by angle, project onto the gradient axis, and
+    // remap to 0..1 across the diagonal so the gradient reaches every corner.
+    float2 centred = in.uv - 0.5;
+    float c = cos(u.angleRadians);
+    float s = sin(u.angleRadians);
+    float t = centred.x * c + centred.y * s;
+    float maxT = 0.5 * (abs(c) + abs(s));
+    float normT = clamp((t + maxT) / (2.0 * maxT), 0.0, 1.0);
+
+    float4 stops[4] = { u.stop0, u.stop1, u.stop2, u.stop3 };
+    float positions[4] = {
+        u.stopPositions.x,
+        u.stopPositions.y,
+        u.stopPositions.z,
+        u.stopPositions.w
+    };
+    int count = u.stopCount;
+
+    if (normT <= positions[0])           return stops[0];
+    if (normT >= positions[count - 1])   return stops[count - 1];
+
+    for (int i = 0; i < count - 1; i++) {
+        if (normT >= positions[i] && normT <= positions[i + 1]) {
+            float span = max(0.0001, positions[i + 1] - positions[i]);
+            float local = (normT - positions[i]) / span;
+            return mix(stops[i], stops[i + 1], local);
+        }
+    }
+    return stops[count - 1];
+}
+
+// =============================================================================
+// Drop-shadow pipeline (soft black halo beneath the video quad)
+// =============================================================================
+
+struct ShadowUniforms {
+    float2 halfSize;     // video quad half-size in NDC (= aspect.scale * contentScale)
+    float cornerRadius;  // matches the video quad's UV-space radius
+    float blur;          // shadow blur radius in NDC (0.02..0.1 typical)
+    float yOffset;       // downward offset in NDC (negative y)
+    float opacity;       // peak alpha at the quad's edge
+    float pad0;
+    float pad1;
+};
+
+vertex VertexOut shadow_vertex(uint vid [[vertex_id]]) {
+    float2 positions[4] = {
+        float2(-1.0, -1.0),
+        float2( 1.0, -1.0),
+        float2(-1.0,  1.0),
+        float2( 1.0,  1.0)
+    };
+    VertexOut out;
+    out.position = float4(positions[vid], 0.0, 1.0);
+    out.uv = positions[vid];
+    return out;
+}
+
+fragment float4 shadow_fragment(
+    VertexOut in [[stage_in]],
+    constant ShadowUniforms &u [[buffer(0)]]
+) {
+    // Translate the sample point so the shadow centre sits below the quad.
+    float2 p = float2(in.uv.x, in.uv.y - u.yOffset);
+
+    // SDF to the inset rounded rectangle.
+    float r = u.cornerRadius * min(u.halfSize.x, u.halfSize.y);
+    float2 d = abs(p) - (u.halfSize - r);
+    float dist = length(max(d, float2(0.0))) - r;
+
+    // Alpha only outside the rect (we don't want shadow under the video).
+    float outside = step(0.0, dist);
+    float falloff = smoothstep(u.blur, 0.0, dist);
+    float alpha = outside * falloff * u.opacity;
+    return float4(0.0, 0.0, 0.0, alpha);
+}
+
+// =============================================================================
 // Video passthrough pipeline
 // =============================================================================
 
