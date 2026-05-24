@@ -150,19 +150,42 @@ struct TimelineView: View {
     private func trimHandle(width: CGFloat, duration: Double, isStart: Bool) -> some View {
         let position = isStart ? vm.trimStartMs : vm.trimEndMs
         let x = CGFloat(position / duration) * width
+        let hitWidth: CGFloat = 18  // generous hit zone so it's easy to grab
+        let barWidth: CGFloat = 5
         return ZStack {
-            Rectangle().fill(Color.clear).frame(width: 16)
+            // Hit zone — invisible but full height + width so the grip is
+            // forgiving. Matches the zoom-edge feel.
             Rectangle()
-                .fill(Self.videoTint.opacity(0.95))
-                .frame(width: 3)
-            VStack(spacing: 2) {
+                .fill(Color.clear)
+                .frame(width: hitWidth)
+                .contentShape(Rectangle())
+            // Visible bar — a touch wider than before, with subtle inner
+            // highlight so it reads as a tactile grip rather than a hairline.
+            RoundedRectangle(cornerRadius: 1.5)
+                .fill(Self.videoTint)
+                .frame(width: barWidth)
+                .overlay(
+                    RoundedRectangle(cornerRadius: 1.5)
+                        .stroke(Color.white.opacity(0.35), lineWidth: 0.5)
+                )
+                .shadow(color: .black.opacity(0.35), radius: 2, x: 0, y: 1)
+            // Dots in the centre as a "drag this" affordance.
+            VStack(spacing: 3) {
                 Circle().fill(.white).frame(width: 3, height: 3)
                 Circle().fill(.white).frame(width: 3, height: 3)
                 Circle().fill(.white).frame(width: 3, height: 3)
             }
+            .allowsHitTesting(false)
         }
         .frame(maxHeight: .infinity)
-        .offset(x: x - 8)
+        .offset(x: x - hitWidth / 2)
+        .onHover { hovering in
+            if hovering {
+                NSCursor.resizeLeftRight.push()
+            } else {
+                NSCursor.pop()
+            }
+        }
         .gesture(
             DragGesture(minimumDistance: 0)
                 .onChanged { value in

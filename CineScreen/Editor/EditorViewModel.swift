@@ -24,10 +24,31 @@ final class EditorViewModel {
 
     // Canvas styling (Phase 4) — backgrounds + padding + drop shadow.
     // Defaults give a polished out-of-the-box look so new recordings already
-    // feel "designed".
-    var canvasPadding: Double = 0.05
-    var canvasBackground: CanvasBackground = .solid("#1a1a1a")
-    var canvasDropShadow: Bool = true
+    // feel "designed". Mutations push into metadata so they survive Save.
+    var canvasPadding: Double = 0.05 {
+        didSet { syncCanvasToMetadata() }
+    }
+    var canvasBackground: CanvasBackground = .solid("#1a1a1a") {
+        didSet { syncCanvasToMetadata() }
+    }
+    var canvasDropShadow: Bool = true {
+        didSet { syncCanvasToMetadata() }
+    }
+    var canvasShadowStrength: Double = 0.45 {
+        didSet { syncCanvasToMetadata() }
+    }
+
+    private var suppressCanvasSync: Bool = false
+
+    private func syncCanvasToMetadata() {
+        guard !suppressCanvasSync else { return }
+        metadata?.canvas = CanvasStyleConfig(
+            background: canvasBackground,
+            padding: canvasPadding,
+            dropShadow: canvasDropShadow,
+            shadowStrength: canvasShadowStrength
+        )
+    }
 
     /// User-editable webcam overlay layout. Mirrored from metadata so the
     /// drag overlay can read/write through a single binding; persisted back
@@ -45,7 +66,8 @@ final class EditorViewModel {
         CanvasStyle(
             padding: Float(canvasPadding),
             background: canvasBackground,
-            dropShadow: canvasDropShadow
+            dropShadow: canvasDropShadow,
+            shadowStrength: Float(canvasShadowStrength)
         )
     }
 
@@ -118,6 +140,16 @@ final class EditorViewModel {
             }
             if let layout = metadata?.webcam {
                 webcamLayout = layout
+            }
+            if let saved = metadata?.canvas {
+                suppressCanvasSync = true
+                canvasPadding = saved.padding
+                canvasBackground = saved.background
+                canvasDropShadow = saved.dropShadow
+                if let strength = saved.shadowStrength {
+                    canvasShadowStrength = strength
+                }
+                suppressCanvasSync = false
             }
             Log.editor.info("Loaded metadata: \(url.lastPathComponent)")
         } catch {

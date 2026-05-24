@@ -17,9 +17,24 @@ struct RecordingMetadata: Codable, Equatable {
     /// sibling webcam.mp4 — and for older recordings made before the webcam
     /// editor controls landed.
     var webcam: WebcamLayout?
+    /// User-selected canvas styling (background, padding, drop shadow).
+    /// Absent for projects saved before this field existed; in that case the
+    /// editor falls back to its default style.
+    var canvas: CanvasStyleConfig?
     var createdAt: TimeInterval
 
     static let currentVersion = "1.0.0"
+}
+
+/// Persistable subset of CanvasStyle so the user's chosen background +
+/// padding + shadow survive close/reopen.
+struct CanvasStyleConfig: Codable, Equatable {
+    var background: CanvasBackground
+    var padding: Double
+    var dropShadow: Bool
+    /// 0..1 strength of the drop shadow. Optional because older saves
+    /// predate it; the editor falls back to its default when missing.
+    var shadowStrength: Double?
 }
 
 /// User-editable layout for the circular webcam overlay. Coordinates are

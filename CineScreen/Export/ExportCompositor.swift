@@ -212,14 +212,15 @@ final class ExportCompositor {
         encoder.setFragmentBytes(&bgUniforms, length: MemoryLayout<BackgroundUniforms>.stride, index: 0)
         encoder.drawPrimitives(type: .triangleStrip, vertexStart: 0, vertexCount: 4)
 
-        // 0.5 Drop shadow
-        if canvas.dropShadow && canvas.padding > 0.005 {
-            let halfSize = aspect.scale * canvasUniforms.contentScale
-            var shadowUniforms = ShadowUniforms(
-                halfSize: halfSize,
-                blur: 0.18,
-                yOffset: -0.03,
-                opacity: 0.42
+        // 0.5 Drop shadow — share the live preview's math so the rendered
+        // file matches what the editor showed (post-zoom translate + scale,
+        // rounded corners, proportional blur).
+        if canvas.dropShadow && canvas.padding > 0.005 && canvas.shadowStrength > 0.001 {
+            var shadowUniforms = MetalRenderer.makeShadowUniforms(
+                aspect: aspect.scale,
+                canvasContentScale: canvasUniforms.contentScale,
+                zoom: zoom,
+                strength: canvas.shadowStrength
             )
             encoder.setRenderPipelineState(shadowPipeline)
             encoder.setFragmentBytes(&shadowUniforms, length: MemoryLayout<ShadowUniforms>.stride, index: 0)

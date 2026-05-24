@@ -340,6 +340,18 @@ struct SidebarView: View {
             .controlSize(.small)
 
             HStack {
+                Text("Shadow Strength")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+                Spacer()
+                Text("\(Int(vm.canvasShadowStrength * 100))%")
+                    .font(.system(.caption, design: .monospaced))
+            }
+            Slider(value: $vm.canvasShadowStrength, in: 0...1)
+                .disabled(!vm.canvasDropShadow)
+                .opacity(vm.canvasDropShadow ? 1.0 : 0.5)
+
+            HStack {
                 Text("Background")
                     .font(.caption)
                     .foregroundStyle(.secondary)
@@ -465,7 +477,9 @@ struct SidebarView: View {
 
     private func saveEdits() {
         guard let url = vm.metadataURL else { return }
-        // Write current trim + cursor config back into metadata.
+        // Write current trim back into metadata. Canvas style, webcam
+        // layout, and zoom sections are already in vm.metadata thanks to
+        // their respective didSet/mutation paths.
         vm.metadata?.trim = TrimRange(startMs: vm.trimStartMs, endMs: vm.trimEndMs)
         do {
             try vm.metadata?.write(to: url)

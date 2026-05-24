@@ -63,11 +63,14 @@ struct CanvasStyle {
     var background: CanvasBackground
     /// Soft drop shadow underneath the video quad.
     var dropShadow: Bool = true
+    /// Strength of the drop shadow, 0..1. 0 = off, 1 = very dark halo.
+    var shadowStrength: Float = 0.45
 
     static let none = CanvasStyle(
         padding: 0,
         background: .solid("#000000"),
-        dropShadow: false
+        dropShadow: false,
+        shadowStrength: 0
     )
 }
 
@@ -334,15 +337,15 @@ final class MetalRenderer: NSObject {
         encoder.setFragmentBytes(&bgUniforms, length: MemoryLayout<BackgroundUniforms>.stride, index: 0)
         encoder.drawPrimitives(type: .triangleStrip, vertexStart: 0, vertexCount: 4)
 
-        // 0.5 Drop shadow — only meaningful when padding > 0 (the video has
-        // canvas around it for the shadow to bleed into).
-        if style.dropShadow && style.padding > 0.005 {
-            let halfSize = aspect.scale * canvasUniforms.contentScale
-            var shadowUniforms = ShadowUniforms(
-                halfSize: halfSize,
-                blur: 0.18,
-                yOffset: -0.03,
-                opacity: 0.42
+        // 0.5 Drop shadow — tracks the recording's post-zoom geometry so
+        // it scales and translates with the recording. Rounded corners on
+        // the shadow match the video's rounded corner mask in video_fragment.
+        if style.dropShadow && style.padding > 0.005 && style.shadowStrength > 0.001 {
+            var shadowUniforms = Self.makeShadowUniforms(
+                aspect: aspect.scale,
+                canvasContentScale: canvasUniforms.contentScale,
+                zoom: zoom,
+                strength: style.shadowStrength
             )
             encoder.setRenderPipelineState(shadowPipeline)
             encoder.setFragmentBytes(&shadowUniforms, length: MemoryLayout<ShadowUniforms>.stride, index: 0)
@@ -499,6 +502,46 @@ final class MetalRenderer: NSObject {
             textureUVOffset: SIMD2(0.5, 0.5),
             ringColor: SIMD4(1.0, 1.0, 1.0, 0.55),
             ringWidthNorm: 0.022
+        )
+    }
+
+    /// Computes ShadowUniforms tracking the recording's post-zoom geometry.
+    /// Both the live preview and the export call this so they produce the
+    /// same shadow shape, size, and position.
+    static func makeShadowUniforms(
+        aspect: SIMD2<Float>,
+        canvasContentScale: SIMD2<Float>,
+        zoom: ZoomState,
+        strength: Float
+    ) -> ShadowUniforms {
+        let safeScale = Float(max(0.01, zoom.scale))
+        // Recording's NDC half-size after zoom.
+        let halfSize = aspect * canvasContentScale * safeScale
+        // Centre of the recording after the geometric zoom translate.
+        let centerInQuad = SIMD2<Float>(
+            zoom.centerUV.x * 2.0 - 1.0,
+            1.0 - zoom.centerUV.y * 2.0
+        )
+        let centerNDC = -centerInQuad * safeScale * aspect * canvasContentScale
+
+        let shortSide = min(halfSize.x, halfSize.y)
+        let cornerRadius = 0.036 * shortSide
+
+        // Drop-shadow style: shadow rect shifted DOWN by ~8% of the
+        // recording's short side. Because the shader now keeps full
+        // opacity inside the shifted rect, the shadow appears as a soft
+        // halo flush with the recording's bottom edge — no dead-zone band
+        // of pure gradient between the recording and the shadow.
+        let yOffset = -0.08 * shortSide - 0.010
+        let blur = 0.10 * shortSide + 0.020
+
+        return ShadowUniforms(
+            centerNDC: centerNDC,
+            halfSize: halfSize,
+            blur: blur,
+            yOffset: yOffset,
+            cornerRadius: cornerRadius,
+            opacity: max(0, min(1, strength))
         )
     }
 

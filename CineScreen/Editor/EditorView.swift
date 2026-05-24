@@ -23,10 +23,12 @@ struct EditorView: View {
                 .padding(.horizontal, 16)
                 .padding(.vertical, 10)
 
-            // Canvas surface with subtle rounded frame, breathing room around it.
+            // Canvas surface — the Metal compositor's own background + drop
+            // shadow handle the card aesthetic, so we let the gradient fill
+            // the full preview rectangle instead of clipping to a rounded
+            // shape (which exposed the editor's dark background in the
+            // corners when the recording was zoomed in).
             ZStack {
-                RoundedRectangle(cornerRadius: 14)
-                    .fill(Color.black)
                 MetalPreviewView(
                     player: vm.player,
                     webcamPlayer: vm.webcamPlayer,
@@ -36,10 +38,8 @@ struct EditorView: View {
                     canvasStyleProvider: { [weak vm] in vm?.canvasStyle ?? .none },
                     webcamLayoutProvider: { [weak vm] in vm?.webcamLayout ?? .default }
                 )
-                .clipShape(RoundedRectangle(cornerRadius: 14))
 
                 WebcamHandleOverlay(vm: vm)
-                    .clipShape(RoundedRectangle(cornerRadius: 14))
             }
             .padding(.horizontal, 24)
             .padding(.top, 4)

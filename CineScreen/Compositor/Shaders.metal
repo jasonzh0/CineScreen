@@ -117,11 +117,12 @@ fragment float4 background_fragment(
 // =============================================================================
 
 struct ShadowUniforms {
-    float2 halfSize;     // video quad half-size in NDC (= aspect.scale * contentScale)
-    float blur;          // shadow blur radius in NDC (0.02..0.2 typical)
-    float yOffset;       // downward offset in NDC (negative y)
-    float opacity;       // peak alpha at the quad's edge
-    float pad0;
+    float2 centerNDC;    // recording centre in NDC (post-zoom translate)
+    float2 halfSize;     // recording half-size in NDC (post-zoom scale)
+    float blur;          // shadow blur radius in NDC
+    float yOffset;       // downward offset in NDC (negative y = down)
+    float cornerRadius;  // rounded-corner radius in NDC, matching the video
+    float opacity;       // peak alpha at the recording's edge
 };
 
 vertex VertexOut shadow_vertex(uint vid [[vertex_id]]) {
@@ -141,22 +142,50 @@ fragment float4 shadow_fragment(
     VertexOut in [[stage_in]],
     constant ShadowUniforms &u [[buffer(0)]]
 ) {
-    // Shift the sample point so the shadow sits slightly below the quad.
-    float2 p = float2(in.uv.x, in.uv.y - u.yOffset);
+    // Sample in the shifted shadow rect's local frame.
+    float2 p = in.uv - u.centerNDC;
+    p.y -= u.yOffset;
 
-    // SDF to the sharp video rectangle (no corner radius).
-    float2 d = abs(p) - u.halfSize;
-    float dist = length(max(d, float2(0.0)));
+    // SDF to a rounded rectangle centred at the shifted position.
+    float2 inner = max(u.halfSize - float2(u.cornerRadius), float2(0.0));
+    float2 d = abs(p) - inner;
+    float dist = length(max(d, float2(0.0))) + min(max(d.x, d.y), 0.0) - u.cornerRadius;
 
-    // Alpha is zero inside the rect, peaks at the edge, fades over `blur`.
-    float falloff = smoothstep(u.blur, 0.0, dist);
-    float alpha = step(0.0, dist) * falloff * u.opacity;
+    // Proper drop shadow: solid `opacity` everywhere inside the shifted
+    // shadow rect, falling off over `blur` outside it. The recording is
+    // composited on top in a later pass, so the part of the shadow that
+    // overlaps the recording is hidden — what's visible is the shifted
+    // portion extending past the recording's silhouette (mostly below).
+    //
+    // The previous version used step(0, dist) to KILL alpha inside the
+    // rect; combined with the downward offset that produced a "dead zone"
+    // band of pure gradient between the recording's bottom edge and where
+    // the shadow's outer falloff started.
+    float alpha = u.opacity * smoothstep(u.blur, 0.0, max(dist, 0.0));
     return float4(0.0, 0.0, 0.0, alpha);
 }
 
 // =============================================================================
 // Video passthrough pipeline
 // =============================================================================
+//
+// Camera model: the recording is a finite rectangle that scales and
+// translates as one object. The canvas is a camera frame looking at it.
+// `zoom.scale` is inverse camera distance; `zoom.centerUV` is the point
+// on the recording the camera is pointed at.
+//
+//   scale = 1   : recording fills the canvas content rect (the padded
+//                 inner region). The gradient padding is visible around it.
+//   scale > 1   : recording grows past the content rect into the padding
+//                 region — eventually filling the whole canvas (and beyond,
+//                 where Metal auto-clips at NDC [-1, 1]). The recording is
+//                 not limited by the padding "frame".
+//   scale < 1   : recording shrinks below the content rect, gradient
+//                 padding takes over more of the canvas.
+//
+// No fragment discard: the recording's geometry is its own bounds; outside
+// the quad we don't render the video at all, so the gradient pass that ran
+// underneath remains visible.
 
 vertex VertexOut video_vertex(
     uint vid [[vertex_id]],
@@ -166,11 +195,19 @@ vertex VertexOut video_vertex(
     constant CanvasUniforms &canvas [[buffer(3)]]
 ) {
     float4 v = vertices[vid];
-    float2 zoomedUV = zoom.centerUV + (v.zw - 0.5) / zoom.scale;
+
+    // Map the focal point (source UV, top-left origin) into the quad's
+    // coordinate system (NDC-style, y-up).
+    float2 centerInQuad = float2(zoom.centerUV.x * 2.0 - 1.0,
+                                 1.0 - zoom.centerUV.y * 2.0);
+
+    // Scale the quad around the focal point so it lands at canvas centre.
+    // Multiply by aspect + contentScale to position within the canvas.
+    float2 scaledQuad = (v.xy - centerInQuad) * zoom.scale;
+
     VertexOut out;
-    // Apply aspect-fit, then canvas contentScale to inset into the background.
-    out.position = float4(v.xy * aspect.scale * canvas.contentScale, 0.0, 1.0);
-    out.uv = zoomedUV;
+    out.position = float4(scaledQuad * aspect.scale * canvas.contentScale, 0.0, 1.0);
+    out.uv = v.zw;
     return out;
 }
 
@@ -179,6 +216,18 @@ fragment float4 video_fragment(
     constant CanvasUniforms &canvas [[buffer(0)]],
     texture2d<float> tex [[texture(1)]]
 ) {
+    // Round the recording's own corners. Source recordings of macOS windows
+    // have black/transparent pixels in their rounded-corner area — without
+    // this mask those would render as solid black wedges at the recording
+    // corners. Radius is in UV space so it scales with the source size.
+    float radius = 0.018;
+    float2 distFromEdge = min(in.uv, 1.0 - in.uv);
+    if (distFromEdge.x < radius && distFromEdge.y < radius) {
+        float2 toCorner = float2(radius) - distFromEdge;
+        if (length(toCorner) > radius) {
+            discard_fragment();
+        }
+    }
     constexpr sampler s(mag_filter::linear, min_filter::linear, address::clamp_to_edge);
     return tex.sample(s, in.uv);
 }

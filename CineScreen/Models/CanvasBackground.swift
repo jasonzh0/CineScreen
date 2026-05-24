@@ -2,15 +2,42 @@ import Foundation
 import simd
 
 /// A color stop on a canvas gradient. `position` is 0..1 along the gradient axis.
-struct GradientStop: Hashable, Sendable {
+struct GradientStop: Hashable, Sendable, Codable {
     var color: SIMD4<Float>
     var position: Float
+
+    // SIMD4<Float> isn't Codable out of the box — encode/decode as four floats.
+    enum CodingKeys: String, CodingKey { case r, g, b, a, position }
+
+    init(color: SIMD4<Float>, position: Float) {
+        self.color = color
+        self.position = position
+    }
+
+    init(from decoder: Decoder) throws {
+        let c = try decoder.container(keyedBy: CodingKeys.self)
+        let r = try c.decode(Float.self, forKey: .r)
+        let g = try c.decode(Float.self, forKey: .g)
+        let b = try c.decode(Float.self, forKey: .b)
+        let a = try c.decode(Float.self, forKey: .a)
+        self.color = SIMD4(r, g, b, a)
+        self.position = try c.decode(Float.self, forKey: .position)
+    }
+
+    func encode(to encoder: Encoder) throws {
+        var c = encoder.container(keyedBy: CodingKeys.self)
+        try c.encode(color.x, forKey: .r)
+        try c.encode(color.y, forKey: .g)
+        try c.encode(color.z, forKey: .b)
+        try c.encode(color.w, forKey: .a)
+        try c.encode(position, forKey: .position)
+    }
 }
 
 /// Canvas background — supports 1-stop (solid) through 4-stop linear gradients.
 /// `angleDegrees` is the gradient direction: 0 = left→right, 90 = top→bottom,
 /// 135 = top-left → bottom-right.
-struct CanvasBackground: Hashable, Sendable {
+struct CanvasBackground: Hashable, Sendable, Codable {
     var stops: [GradientStop]
     var angleDegrees: Float
 
@@ -60,11 +87,12 @@ extension CanvasBackground {
 
 /// Flat Swift layout matching the Metal `ShadowUniforms` struct.
 struct ShadowUniforms {
+    var centerNDC: SIMD2<Float>
     var halfSize: SIMD2<Float>
     var blur: Float
     var yOffset: Float
+    var cornerRadius: Float
     var opacity: Float
-    var pad0: Float = 0
 }
 
 /// Flat Swift layout matching the Metal `BackgroundUniforms` struct.

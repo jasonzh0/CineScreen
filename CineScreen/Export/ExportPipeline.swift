@@ -213,6 +213,8 @@ final class ExportPipeline {
                     webcamSource: webcamSource,
                     webcamLayout: input.webcamLayout,
                     timeRangeStart: startTime,
+                    timeRangeEnd: endTime,
+                    outputFPS: Int(fps),
                     trimmedSeconds: trimmedSeconds,
                     onProgress: onProgress
                 )
@@ -253,36 +255,90 @@ final class ExportPipeline {
         webcamSource: WebcamFrameSource?,
         webcamLayout: WebcamLayout,
         timeRangeStart: CMTime,
+        timeRangeEnd: CMTime,
+        outputFPS: Int,
         trimmedSeconds: Double,
         onProgress: @Sendable @escaping (Progress) -> Void
     ) async throws {
         let processingQueue = DispatchQueue(label: "com.cinescreen.export.video", qos: .userInitiated)
 
         let frameCounter = FrameCounter()
+        // Output emits at a uniform cadence — the source recording's actual
+        // PTS values are irregular (captured at 60fps target but achieved
+        // ~50fps with variable gaps). Inheriting those gaps caused choppy
+        // playback AND made cursor/zoom animations look jagged because
+        // they were sampled at irregular intervals. Re-time both video and
+        // overlay states to a uniform `outputFPS` cadence.
+        let outputDelta = CMTime(value: 1, timescale: CMTimeScale(outputFPS))
+        // Per-source-frame cache: we advance the source reader to keep the
+        // "latest source frame with PTS ≤ nextOutputPTS" in `currentSource`.
+        // Where source is sparser than output, we reuse the cached frame.
+        var nextOutputPTS = timeRangeStart
+        var currentSourceBuffer: CVPixelBuffer? = nil
+        var currentSourcePTS: CMTime = .negativeInfinity
+        var peekedSourceBuffer: CVPixelBuffer? = nil
+        var peekedSourcePTS: CMTime = .negativeInfinity
+        var sourceExhausted = false
+
         try await withCheckedThrowingContinuation { (continuation: CheckedContinuation<Void, Error>) in
             writerInput.requestMediaDataWhenReady(on: processingQueue) {
                 while writerInput.isReadyForMoreMediaData {
-                    guard reader.status == .reading,
-                          let sample = readerOutput.copyNextSampleBuffer() else {
+                    // Stop once we've emitted every output frame in the
+                    // trim range.
+                    if CMTimeCompare(nextOutputPTS, timeRangeEnd) >= 0 {
                         writerInput.markAsFinished()
-                        Log.app.info("Export: video loop finished at frame \(frameCounter.count), reader.status=\(reader.status.rawValue)")
-                        if reader.status == .failed {
-                            continuation.resume(throwing: ExportError.readError(
-                                reader.error?.localizedDescription ?? "unknown"
-                            ))
-                        } else {
-                            continuation.resume(returning: ())
-                        }
+                        Log.app.info("Export: video loop finished at frame \(frameCounter.count), reached end of trim range")
+                        continuation.resume(returning: ())
                         return
                     }
-                    guard let sourceBuffer = CMSampleBufferGetImageBuffer(sample) else {
-                        continue
+
+                    // Advance the source reader until the cached frame is
+                    // the latest one whose PTS ≤ nextOutputPTS. Uses the
+                    // same peek-and-promote pattern as WebcamFrameSource:
+                    // a frame whose PTS overshoots the target is stashed
+                    // in `peeked*` so it gets promoted on a later iteration
+                    // instead of being discarded.
+                    while !sourceExhausted {
+                        if let peek = peekedSourceBuffer,
+                           CMTimeCompare(peekedSourcePTS, nextOutputPTS) <= 0 {
+                            currentSourceBuffer = peek
+                            currentSourcePTS = peekedSourcePTS
+                            peekedSourceBuffer = nil
+                        }
+                        if peekedSourceBuffer != nil { break }
+                        guard reader.status == .reading,
+                              let sample = readerOutput.copyNextSampleBuffer(),
+                              let buf = CMSampleBufferGetImageBuffer(sample) else {
+                            sourceExhausted = true
+                            break
+                        }
+                        let pts = CMSampleBufferGetPresentationTimeStamp(sample)
+                        if CMTimeCompare(pts, nextOutputPTS) <= 0 {
+                            currentSourceBuffer = buf
+                            currentSourcePTS = pts
+                        } else {
+                            peekedSourceBuffer = buf
+                            peekedSourcePTS = pts
+                            if currentSourceBuffer == nil {
+                                currentSourceBuffer = buf
+                                currentSourcePTS = pts
+                            }
+                        }
                     }
-                    let pts = CMSampleBufferGetPresentationTimeStamp(sample)
-                    let cursorTimeMs = pts.seconds * 1000
-                    let cursorState = cursorAt(cursorTimeMs)
-                    let clickStates = clicksAt(cursorTimeMs)
-                    let zoom = zoomAt(cursorTimeMs)
+
+                    guard let sourceBuffer = currentSourceBuffer else {
+                        // Source exhausted before producing any frame —
+                        // unusual; finalize cleanly.
+                        writerInput.markAsFinished()
+                        Log.app.warning("Export: source had no frames before output range; finishing")
+                        continuation.resume(returning: ())
+                        return
+                    }
+
+                    let outputTimeMs = nextOutputPTS.seconds * 1000
+                    let cursorState = cursorAt(outputTimeMs)
+                    let clickStates = clicksAt(outputTimeMs)
+                    let zoom = zoomAt(outputTimeMs)
 
                     guard let pool = adaptor.pixelBufferPool else {
                         continuation.resume(throwing: ExportError.pixelBufferPoolMissing)
@@ -295,7 +351,7 @@ final class ExportPipeline {
                         return
                     }
 
-                    let webcamFrame = webcamLayout.enabled ? webcamSource?.frame(at: pts) : nil
+                    let webcamFrame = webcamLayout.enabled ? webcamSource?.frame(at: nextOutputPTS) : nil
                     let ok = compositor.render(
                         source: sourceBuffer,
                         cursor: cursorState,
@@ -307,12 +363,12 @@ final class ExportPipeline {
                         destination: dest
                     )
                     if !ok {
-                        Log.app.error("Export: compositor.render returned false at frame \(frameCounter.count), pts=\(pts.seconds)s")
+                        Log.app.error("Export: compositor.render returned false at frame \(frameCounter.count), output pts=\(nextOutputPTS.seconds)s")
                         continuation.resume(throwing: ExportError.compositeFailed)
                         return
                     }
-                    if !adaptor.append(dest, withPresentationTime: pts) {
-                        Log.app.error("Export: adaptor.append failed at frame \(frameCounter.count), pts=\(pts.seconds)s, writer.status=\(writer.status.rawValue), writer.error=\(writer.error?.localizedDescription ?? "nil")")
+                    if !adaptor.append(dest, withPresentationTime: nextOutputPTS) {
+                        Log.app.error("Export: adaptor.append failed at frame \(frameCounter.count), pts=\(nextOutputPTS.seconds)s, writer.status=\(writer.status.rawValue), writer.error=\(writer.error?.localizedDescription ?? "nil")")
                         continuation.resume(throwing: ExportError.appendFailed(
                             reader.error?.localizedDescription ?? "video append failed"
                         ))
@@ -321,11 +377,13 @@ final class ExportPipeline {
 
                     let n = frameCounter.increment()
                     if n % 60 == 0 {
-                        Log.app.info("Export: frame \(n) at \(pts.seconds, format: .fixed(precision: 2))s")
+                        Log.app.info("Export: frame \(n) at \(nextOutputPTS.seconds, format: .fixed(precision: 2))s")
                     }
-                    let elapsed = (pts.seconds - timeRangeStart.seconds)
+                    let elapsed = (nextOutputPTS.seconds - timeRangeStart.seconds)
                     let fraction = min(1.0, max(0.0, elapsed / trimmedSeconds))
                     onProgress(.running(fraction: fraction))
+
+                    nextOutputPTS = CMTimeAdd(nextOutputPTS, outputDelta)
                 }
             }
         }
