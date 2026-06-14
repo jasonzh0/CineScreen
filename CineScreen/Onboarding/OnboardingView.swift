@@ -39,32 +39,15 @@ struct OnboardingView: View {
             }
         }
         .frame(minWidth: 720, minHeight: 540)
+        .tint(CTheme.accent)
         .onReceive(pollTimer) { _ in appState.refreshPermissions() }
     }
 
     // MARK: - Chrome
 
     private var backdrop: some View {
-        ZStack {
-            LinearGradient(
-                colors: [
-                    Color(red: 0.075, green: 0.065, blue: 0.075),
-                    Color(red: 0.035, green: 0.030, blue: 0.040)
-                ],
-                startPoint: .top, endPoint: .bottom
-            )
-            // Soft red glow behind the content to echo the record button.
-            RadialGradient(
-                colors: [
-                    Color(red: 0.95, green: 0.25, blue: 0.25).opacity(0.18),
-                    .clear
-                ],
-                center: .top, startRadius: 0, endRadius: 520
-            )
-            .blendMode(.plusLighter)
-            .allowsHitTesting(false)
-        }
-        .ignoresSafeArea()
+        CineBackdrop()
+            .ignoresSafeArea()
     }
 
     private var progressBar: some View {
@@ -73,8 +56,8 @@ struct OnboardingView: View {
                 ForEach(OnboardingState.Step.allCases, id: \.self) { step in
                     Capsule()
                         .fill(step.rawValue <= onboarding.step.rawValue
-                              ? Color(red: 0.95, green: 0.30, blue: 0.27)
-                              : Color.white.opacity(0.10))
+                              ? CTheme.accent
+                              : CTheme.stroke)
                         .frame(height: 3)
                         .animation(.easeInOut(duration: 0.25), value: onboarding.step)
                 }
@@ -83,11 +66,11 @@ struct OnboardingView: View {
                 Text(onboarding.step.title.uppercased())
                     .font(.system(size: 10, weight: .bold))
                     .tracking(2)
-                    .foregroundStyle(.white.opacity(0.45))
+                    .foregroundStyle(CTheme.textTertiary)
                 Spacer()
                 Text("Step \(onboarding.step.rawValue + 1) of \(OnboardingState.Step.allCases.count)")
                     .font(.system(size: 10, weight: .medium))
-                    .foregroundStyle(.white.opacity(0.35))
+                    .foregroundStyle(CTheme.textTertiary)
             }
         }
         .padding(.horizontal, 36)
@@ -113,23 +96,15 @@ private struct WelcomeStep: View {
 
             ZStack {
                 Circle()
-                    .stroke(Color.white.opacity(0.10), lineWidth: 1)
+                    .stroke(CTheme.stroke, lineWidth: 1)
                     .frame(width: 132, height: 132)
                 Circle()
-                    .stroke(Color.white.opacity(0.06), lineWidth: 1)
+                    .stroke(CTheme.surface, lineWidth: 1)
                     .frame(width: 168, height: 168)
                 Circle()
-                    .fill(
-                        LinearGradient(
-                            colors: [
-                                Color(red: 0.95, green: 0.30, blue: 0.27),
-                                Color(red: 0.62, green: 0.13, blue: 0.18)
-                            ],
-                            startPoint: .top, endPoint: .bottom
-                        )
-                    )
+                    .fill(CTheme.brandGradient)
                     .frame(width: 92, height: 92)
-                    .shadow(color: Color(red: 0.95, green: 0.20, blue: 0.20).opacity(0.55),
+                    .shadow(color: CTheme.brand.opacity(0.55),
                             radius: 30, x: 0, y: 12)
                 Image(systemName: "video.fill")
                     .font(.system(size: 38, weight: .bold))
@@ -140,11 +115,11 @@ private struct WelcomeStep: View {
                 Text("Welcome to CineScreen")
                     .font(.system(size: 30, weight: .heavy))
                     .tracking(-0.5)
-                    .foregroundStyle(.white)
+                    .foregroundStyle(CTheme.textPrimary)
                 Text("Cinematic screen recording for macOS.\nLet's get you set up in under a minute.")
                     .multilineTextAlignment(.center)
                     .font(.system(size: 14))
-                    .foregroundStyle(.white.opacity(0.6))
+                    .foregroundStyle(CTheme.textSecondary)
                     .fixedSize(horizontal: false, vertical: true)
             }
 
@@ -155,7 +130,7 @@ private struct WelcomeStep: View {
                 Button("Skip for now") { onSkip() }
                     .buttonStyle(.plain)
                     .font(.system(size: 12))
-                    .foregroundStyle(.white.opacity(0.45))
+                    .foregroundStyle(CTheme.textTertiary)
             }
             .padding(.bottom, 48)
         }
@@ -274,21 +249,14 @@ private struct LibraryStep: View {
         ) {
             VStack(spacing: 12) {
                 HStack(alignment: .top, spacing: 14) {
-                    Image(systemName: "folder.fill")
-                        .font(.system(size: 22))
-                        .foregroundStyle(Color(red: 0.95, green: 0.78, blue: 0.32))
-                        .frame(width: 36, height: 36)
-                        .background(
-                            RoundedRectangle(cornerRadius: 8)
-                                .fill(Color(red: 0.95, green: 0.78, blue: 0.32).opacity(0.12))
-                        )
+                    CineIconChip(symbol: "folder.fill", tint: CTheme.accent, size: 36)
                     VStack(alignment: .leading, spacing: 4) {
                         Text("Projects folder")
                             .font(.system(size: 14, weight: .semibold))
-                            .foregroundStyle(.white.opacity(0.92))
+                            .foregroundStyle(CTheme.textPrimary)
                         Text(appState.projectsDirectory.path)
                             .font(.system(size: 11, design: .monospaced))
-                            .foregroundStyle(.white.opacity(0.5))
+                            .foregroundStyle(CTheme.textSecondary)
                             .lineLimit(2)
                             .truncationMode(.middle)
                     }
@@ -297,18 +265,11 @@ private struct LibraryStep: View {
                         .buttonStyle(SecondaryButtonStyle())
                 }
                 .padding(16)
-                .background(
-                    RoundedRectangle(cornerRadius: 12)
-                        .fill(Color.white.opacity(0.04))
-                        .overlay(
-                            RoundedRectangle(cornerRadius: 12)
-                                .strokeBorder(Color.white.opacity(0.08), lineWidth: 1)
-                        )
-                )
+                .cineCard(radius: CTheme.Radius.lg)
 
                 Text("Tip: pick somewhere with plenty of free space — a minute of 4K capture is roughly 200 MB.")
                     .font(.system(size: 11))
-                    .foregroundStyle(.white.opacity(0.4))
+                    .foregroundStyle(CTheme.textTertiary)
                     .frame(maxWidth: .infinity, alignment: .leading)
             }
         }
@@ -338,17 +299,9 @@ private struct DoneStep: View {
 
             ZStack {
                 Circle()
-                    .fill(
-                        LinearGradient(
-                            colors: [
-                                Color(red: 0.40, green: 0.85, blue: 0.55),
-                                Color(red: 0.22, green: 0.62, blue: 0.38)
-                            ],
-                            startPoint: .top, endPoint: .bottom
-                        )
-                    )
+                    .fill(CTheme.positive)
                     .frame(width: 84, height: 84)
-                    .shadow(color: Color(red: 0.30, green: 0.85, blue: 0.50).opacity(0.45),
+                    .shadow(color: CTheme.positive.opacity(0.45),
                             radius: 24, x: 0, y: 10)
                 Image(systemName: "checkmark")
                     .font(.system(size: 32, weight: .black))
@@ -359,11 +312,11 @@ private struct DoneStep: View {
                 Text("You're all set")
                     .font(.system(size: 26, weight: .heavy))
                     .tracking(-0.5)
-                    .foregroundStyle(.white)
+                    .foregroundStyle(CTheme.textPrimary)
                 Text("Press the red button — or ⌘N — to start your first recording.")
                     .multilineTextAlignment(.center)
                     .font(.system(size: 13))
-                    .foregroundStyle(.white.opacity(0.6))
+                    .foregroundStyle(CTheme.textSecondary)
             }
 
             VStack(alignment: .leading, spacing: 12) {
@@ -373,18 +326,12 @@ private struct DoneStep: View {
             }
             .padding(18)
             .frame(maxWidth: 420)
-            .background(
-                RoundedRectangle(cornerRadius: 12)
-                    .fill(Color.white.opacity(0.04))
-                    .overlay(
-                        RoundedRectangle(cornerRadius: 12)
-                            .strokeBorder(Color.white.opacity(0.08), lineWidth: 1)
-                    )
-            )
+            .cineCard(radius: CTheme.Radius.lg)
 
             Spacer()
 
-            PrimaryButton(title: "Start Using CineScreen", action: onFinish)
+            Button(action: onFinish) { Text("Start Using CineScreen") }
+                .buttonStyle(CineFilledButtonStyle(palette: .accent))
                 .padding(.bottom, 48)
         }
         .frame(maxWidth: .infinity)
@@ -409,10 +356,10 @@ private struct StepShell<Content: View>: View {
                 Text(title)
                     .font(.system(size: 24, weight: .heavy))
                     .tracking(-0.4)
-                    .foregroundStyle(.white)
+                    .foregroundStyle(CTheme.textPrimary)
                 Text(subtitle)
                     .font(.system(size: 13))
-                    .foregroundStyle(.white.opacity(0.55))
+                    .foregroundStyle(CTheme.textSecondary)
                     .multilineTextAlignment(.center)
                     .fixedSize(horizontal: false, vertical: true)
                     .frame(maxWidth: 460)
@@ -452,39 +399,28 @@ private struct PermissionCard: View {
 
     var body: some View {
         HStack(alignment: .center, spacing: 14) {
-            ZStack {
-                RoundedRectangle(cornerRadius: 8)
-                    .fill(isGranted
-                          ? Color(red: 0.30, green: 0.70, blue: 0.45).opacity(0.18)
-                          : Color.white.opacity(0.06))
-                Image(systemName: icon)
-                    .font(.system(size: 18, weight: .medium))
-                    .foregroundStyle(isGranted
-                                     ? Color(red: 0.55, green: 0.90, blue: 0.65)
-                                     : .white.opacity(0.75))
-            }
-            .frame(width: 40, height: 40)
+            CineIconChip(symbol: icon, tint: isGranted ? CTheme.positive : CTheme.accent, size: 40)
 
             VStack(alignment: .leading, spacing: 3) {
                 HStack(spacing: 6) {
                     Text(title)
                         .font(.system(size: 14, weight: .semibold))
-                        .foregroundStyle(.white.opacity(0.95))
+                        .foregroundStyle(CTheme.textPrimary)
                     if required {
                         Text("Required")
                             .font(.system(size: 9, weight: .bold))
                             .tracking(0.5)
-                            .foregroundStyle(Color(red: 0.95, green: 0.78, blue: 0.32))
+                            .foregroundStyle(CTheme.warning)
                             .padding(.horizontal, 6)
                             .padding(.vertical, 2)
                             .background(
-                                Capsule().fill(Color(red: 0.95, green: 0.78, blue: 0.32).opacity(0.14))
+                                Capsule().fill(CTheme.warning.opacity(0.14))
                             )
                     }
                 }
                 Text(detail)
                     .font(.system(size: 11.5))
-                    .foregroundStyle(.white.opacity(0.55))
+                    .foregroundStyle(CTheme.textSecondary)
                     .fixedSize(horizontal: false, vertical: true)
             }
 
@@ -497,7 +433,7 @@ private struct PermissionCard: View {
                     Text("Granted")
                         .font(.system(size: 12, weight: .semibold))
                 }
-                .foregroundStyle(Color(red: 0.55, green: 0.90, blue: 0.65))
+                .foregroundStyle(CTheme.positive)
                 .transition(.scale(scale: 0.85).combined(with: .opacity))
             } else {
                 Button("Grant", action: onGrant)
@@ -505,18 +441,9 @@ private struct PermissionCard: View {
             }
         }
         .padding(14)
-        .background(
-            RoundedRectangle(cornerRadius: 12)
-                .fill(Color.white.opacity(0.04))
-                .overlay(
-                    RoundedRectangle(cornerRadius: 12)
-                        .strokeBorder(
-                            isGranted
-                            ? Color(red: 0.30, green: 0.70, blue: 0.45).opacity(0.35)
-                            : Color.white.opacity(0.08),
-                            lineWidth: 1
-                        )
-                )
+        .cineCard(
+            radius: CTheme.Radius.lg,
+            stroke: isGranted ? CTheme.positive.opacity(0.35) : CTheme.stroke
         )
         .animation(.spring(response: 0.35, dampingFraction: 0.85), value: isGranted)
     }
@@ -530,21 +457,21 @@ private struct TipRow: View {
         HStack(spacing: 12) {
             Text(kbd)
                 .font(.system(size: 11, weight: .bold, design: .monospaced))
-                .foregroundStyle(.white.opacity(0.85))
+                .foregroundStyle(CTheme.textPrimary)
                 .frame(minWidth: 36)
                 .padding(.horizontal, 8)
                 .padding(.vertical, 4)
                 .background(
-                    RoundedRectangle(cornerRadius: 5)
-                        .fill(Color.white.opacity(0.08))
+                    RoundedRectangle(cornerRadius: CTheme.Radius.xs)
+                        .fill(CTheme.surface)
                         .overlay(
-                            RoundedRectangle(cornerRadius: 5)
-                                .strokeBorder(Color.white.opacity(0.12), lineWidth: 1)
+                            RoundedRectangle(cornerRadius: CTheme.Radius.xs)
+                                .strokeBorder(CTheme.stroke, lineWidth: 1)
                         )
                 )
             Text(text)
                 .font(.system(size: 12))
-                .foregroundStyle(.white.opacity(0.7))
+                .foregroundStyle(CTheme.textSecondary)
             Spacer()
         }
     }
@@ -559,23 +486,17 @@ private struct PrimaryButton: View {
         Button(action: action) {
             Text(title)
                 .font(.system(size: 13.5, weight: .semibold))
-                .foregroundStyle(.white)
+                .foregroundStyle(Color.black.opacity(0.88))
                 .padding(.horizontal, 22)
                 .padding(.vertical, 12)
                 .background(
-                    LinearGradient(
-                        colors: [
-                            Color(red: 0.95, green: 0.32, blue: 0.28),
-                            Color(red: 0.76, green: 0.17, blue: 0.20)
-                        ],
-                        startPoint: .top, endPoint: .bottom
-                    ),
+                    CTheme.accentGradient,
                     in: Capsule()
                 )
                 .overlay(
-                    Capsule().strokeBorder(Color.white.opacity(0.18), lineWidth: 1)
+                    Capsule().strokeBorder(Color.white.opacity(0.22), lineWidth: 1)
                 )
-                .shadow(color: Color(red: 0.95, green: 0.20, blue: 0.20).opacity(hovering ? 0.55 : 0.35),
+                .shadow(color: CTheme.accent.opacity(hovering ? 0.55 : 0.35),
                         radius: hovering ? 22 : 14, x: 0, y: hovering ? 10 : 6)
                 .scaleEffect(hovering ? 1.02 : 1.0)
                 .animation(.spring(response: 0.3, dampingFraction: 0.8), value: hovering)
@@ -589,14 +510,14 @@ private struct SecondaryButtonStyle: ButtonStyle {
     func makeBody(configuration: Configuration) -> some View {
         configuration.label
             .font(.system(size: 12.5, weight: .medium))
-            .foregroundStyle(.white.opacity(0.85))
+            .foregroundStyle(CTheme.textPrimary)
             .padding(.horizontal, 14)
             .padding(.vertical, 8)
             .background(
                 Capsule()
-                    .fill(Color.white.opacity(configuration.isPressed ? 0.12 : 0.06))
+                    .fill(configuration.isPressed ? CTheme.surfaceHi : CTheme.surface)
                     .overlay(
-                        Capsule().strokeBorder(Color.white.opacity(0.12), lineWidth: 1)
+                        Capsule().strokeBorder(CTheme.stroke, lineWidth: 1)
                     )
             )
     }

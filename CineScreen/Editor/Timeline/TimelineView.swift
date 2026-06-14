@@ -32,7 +32,7 @@ struct TimelineView: View {
                     trackLabel("Zoom")
                 }
                 .frame(width: labelWidth)
-                .background(Color.black.opacity(0.25))
+                .background(CTheme.panel)
 
                 // Scrolling content
                 GeometryReader { geo in
@@ -67,8 +67,9 @@ struct TimelineView: View {
 
             zoomControls
         }
-        .background(Color(nsColor: .underPageBackgroundColor))
-        .clipShape(RoundedRectangle(cornerRadius: 8))
+        .background(CTheme.panelDeep)
+        .clipShape(RoundedRectangle(cornerRadius: CTheme.Radius.sm))
+        .tint(CTheme.accent)
     }
 
     private var timelineHeight: CGFloat {
@@ -78,7 +79,7 @@ struct TimelineView: View {
     private func trackLabel(_ title: String) -> some View {
         Text(title.uppercased())
             .font(.system(size: 9, weight: .semibold))
-            .foregroundStyle(.secondary)
+            .foregroundStyle(CTheme.textSecondary)
             .tracking(0.5)
             .frame(width: labelWidth, height: trackHeight, alignment: .center)
     }
@@ -86,7 +87,7 @@ struct TimelineView: View {
     // MARK: - Backgrounds + ruler
 
     private var background: some View {
-        Color(nsColor: .controlBackgroundColor)
+        CTheme.panelDeep
     }
 
     private func ruler(width: CGFloat) -> some View {
@@ -99,11 +100,11 @@ struct TimelineView: View {
                 let x = CGFloat(seconds / duration) * width
                 VStack(alignment: .leading, spacing: 2) {
                     Rectangle()
-                        .fill(Color.secondary.opacity(0.4))
+                        .fill(CTheme.textTertiary)
                         .frame(width: 1, height: 6)
                     Text(formatSeconds(seconds))
                         .font(.system(size: 9, design: .monospaced))
-                        .foregroundStyle(.secondary)
+                        .foregroundStyle(CTheme.textTertiary)
                 }
                 .offset(x: x, y: 2)
             }
@@ -113,8 +114,8 @@ struct TimelineView: View {
 
     // MARK: - Video (main) track with trim handles
 
-    private static let videoTint = Color(red: 0.95, green: 0.62, blue: 0.20)   // warm amber
-    private static let zoomTint  = Color(red: 0.51, green: 0.39, blue: 0.95)   // indigo
+    private static let videoTint = CTheme.accent   // warm gold
+    private static let zoomTint  = CTheme.teal      // cool teal
 
     private func videoTrack(width: CGFloat, duration: Double) -> some View {
         let startX = CGFloat(vm.trimStartMs / duration) * width
@@ -210,10 +211,10 @@ struct TimelineView: View {
         let sections = vm.effectiveZoomSections
         return ZStack(alignment: .topLeading) {
             RoundedRectangle(cornerRadius: 4)
-                .fill(Color.black.opacity(0.25))
+                .fill(CTheme.panel)
                 .overlay(
                     RoundedRectangle(cornerRadius: 4)
-                        .stroke(Color.secondary.opacity(0.15), lineWidth: 1)
+                        .stroke(CTheme.stroke, lineWidth: 1)
                 )
 
             ForEach(Array(sections.enumerated()), id: \.offset) { index, section in
@@ -412,12 +413,14 @@ struct TimelineView: View {
 
     private func playhead(width: CGFloat, duration: Double) -> some View {
         let x = CGFloat(vm.currentTimeMs / duration) * width
+        // Crisp white "now" marker — high contrast against the gold video
+        // track and teal zoom blocks, with a soft dark halo for separation.
         return Rectangle()
-            .fill(Color.accentColor)
+            .fill(Color.white)
             .frame(width: 2)
             .frame(maxHeight: .infinity)
             .offset(x: x - 1)
-            .shadow(color: Color.accentColor.opacity(0.4), radius: 2)
+            .shadow(color: .black.opacity(0.55), radius: 2.5)
             .allowsHitTesting(false)
     }
 
@@ -452,11 +455,13 @@ struct TimelineView: View {
                 Image(systemName: "minus.magnifyingglass")
             }
             .buttonStyle(.plain)
+            .foregroundStyle(CTheme.textSecondary)
             .disabled(vm.timelineZoom <= 1.0)
 
             Slider(value: $vm.timelineZoom, in: 1.0...20.0)
                 .controlSize(.small)
                 .frame(maxWidth: 220)
+                .tint(CTheme.accent)
 
             Button {
                 vm.timelineZoom = min(20.0, vm.timelineZoom * 1.5)
@@ -464,11 +469,12 @@ struct TimelineView: View {
                 Image(systemName: "plus.magnifyingglass")
             }
             .buttonStyle(.plain)
+            .foregroundStyle(CTheme.textSecondary)
             .disabled(vm.timelineZoom >= 20.0)
 
             Text("\(Int(vm.timelineZoom * 100))%")
                 .font(.system(.caption, design: .monospaced))
-                .foregroundStyle(.secondary)
+                .foregroundStyle(CTheme.textSecondary)
                 .frame(width: 50, alignment: .trailing)
 
             Spacer()
@@ -476,11 +482,11 @@ struct TimelineView: View {
             Button("Fit") { vm.timelineZoom = 1.0 }
                 .buttonStyle(.plain)
                 .font(.caption)
-                .foregroundStyle(.secondary)
+                .foregroundStyle(CTheme.textSecondary)
         }
         .padding(.horizontal, 12)
         .padding(.vertical, 6)
-        .background(Color.black.opacity(0.15))
+        .background(CTheme.panelDeep)
     }
 
     // MARK: - Tick spacing

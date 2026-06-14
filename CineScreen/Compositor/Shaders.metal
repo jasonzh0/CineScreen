@@ -237,10 +237,11 @@ fragment float4 video_fragment(
 // =============================================================================
 
 struct CursorUniforms {
-    float2 cursorPos;     // in video pixels (top-left origin)
-    float size;           // sprite size in video pixels
+    float2 cursorPos;     // pointer hot-spot in video pixels (top-left origin)
     float2 videoSize;
     float2 aspectScale;
+    float2 hotspot;       // hot spot as a fraction of the sprite, [0,1]², top-left
+    float size;           // sprite size in video pixels
     float opacity;
 };
 
@@ -250,9 +251,9 @@ vertex VertexOut cursor_vertex(
     constant ZoomUniforms &zoom [[buffer(1)]],
     constant CanvasUniforms &canvas [[buffer(2)]]
 ) {
-    // Cursor position normalized to UV space.
+    // `cursorPos` is the pointer's hot spot (where the real cursor pointed).
+    // Normalize it to UV space, then to zoom-scaled NDC.
     float2 posUV = u.cursorPos / u.videoSize;
-    // Distance from zoom center in UV, then to NDC scaled by zoom.
     float2 centerOffsetUV = posUV - zoom.centerUV;
     float2 cursorNDC = float2(
         centerOffsetUV.x * 2.0 * zoom.scale,
@@ -263,7 +264,17 @@ vertex VertexOut cursor_vertex(
     float2 quadHalfNDC = float2(u.size, u.size) / u.videoSize * zoom.scale;
     float2 offset = kUnitQuad[vid] * float2(quadHalfNDC.x * 2.0, -quadHalfNDC.y * 2.0);
 
-    float2 pos = (cursorNDC + offset) * u.aspectScale * canvas.contentScale;
+    // Shift the whole sprite so its hot spot (not its centre) lands on
+    // `cursorNDC`. In the sprite's normalized space the centre is (0.5,0.5);
+    // moving it by (centre - hotspot) brings the hot spot onto the pointer
+    // location. X is right-positive, Y is flipped because NDC is y-up while
+    // the hot spot is measured top-down.
+    float2 hotspotShift = float2(
+         (0.5 - u.hotspot.x) * quadHalfNDC.x * 2.0,
+        -(0.5 - u.hotspot.y) * quadHalfNDC.y * 2.0
+    );
+
+    float2 pos = (cursorNDC + hotspotShift + offset) * u.aspectScale * canvas.contentScale;
 
     VertexOut out;
     out.position = float4(pos, 0.0, 1.0);

@@ -1,4 +1,5 @@
 import Foundation
+import simd
 
 // MARK: - Top-level
 
@@ -141,6 +142,47 @@ enum CursorShape: String, Codable, CaseIterable {
     case screenshot
     case zoomin
     case zoomout
+}
+
+extension CursorShape {
+    /// The cursor's *hot spot* expressed as a normalized fraction of its sprite
+    /// artwork, top-left origin, in `[0, 1]²`. macOS reports the pointer's
+    /// location as the hot spot (e.g. the very tip of the arrow), so the sprite
+    /// must be positioned so this point lands on the recorded location — drawing
+    /// the sprite *centered* on it (the old behaviour) made the rendered cursor
+    /// sit ~half a sprite down-and-right of where the real pointer was, and
+    /// click rings (which are centered on the true click point) didn't line up
+    /// with the arrow tip.
+    ///
+    /// Values were measured from each 128px asset's opaque artwork: tip-style
+    /// cursors anchor on their pointing apex, everything else on its centre.
+    var hotspotUV: SIMD2<Float> {
+        switch self {
+        // Arrow-family — anchor on the tip in the upper-left of the artwork.
+        case .arrow:                 return SIMD2(0.313, 0.230)
+        case .contextmenu:           return SIMD2(0.250, 0.230)
+        case .copy, .dragcopy:       return SIMD2(0.230, 0.075)
+        case .draglink:              return SIMD2(0.340, 0.285)
+        // Pointing hand — anchor on the index fingertip.
+        case .pointer:               return SIMD2(0.406, 0.255)
+        // Open/closed hands (pan/grab) — anchor on the palm centre.
+        case .hand, .openhand:       return SIMD2(0.470, 0.445)
+        case .closedhand:            return SIMD2(0.480, 0.500)
+        // Symmetric cursors — the active point is the geometric centre.
+        case .ibeam:                 return SIMD2(0.500, 0.500)
+        case .ibeamvertical:         return SIMD2(0.500, 0.485)
+        case .crosshair:             return SIMD2(0.500, 0.500)
+        case .move:                  return SIMD2(0.500, 0.500)
+        case .resize, .resizeleft, .resizeright, .resizeleftright,
+             .resizeup, .resizedown, .resizeupdown:
+                                     return SIMD2(0.500, 0.500)
+        case .notallowed:            return SIMD2(0.500, 0.500)
+        case .help:                  return SIMD2(0.500, 0.500)
+        case .poof:                  return SIMD2(0.500, 0.500)
+        case .screenshot:            return SIMD2(0.500, 0.500)
+        case .zoomin, .zoomout:      return SIMD2(0.430, 0.430)
+        }
+    }
 }
 
 struct CursorConfig: Codable, Equatable {

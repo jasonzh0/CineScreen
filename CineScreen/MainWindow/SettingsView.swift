@@ -15,6 +15,7 @@ struct SettingsView: View {
             permissionsTab
                 .tabItem { Label("Permissions", systemImage: "lock.shield") }
         }
+        .tint(CTheme.accent)
         .frame(width: 520, height: 420)
         .padding(20)
     }
@@ -199,7 +200,7 @@ struct SettingsView: View {
                             .foregroundStyle(.secondary)
                             .padding(.horizontal, 6)
                             .padding(.vertical, 2)
-                            .background(Color.secondary.opacity(0.15), in: Capsule())
+                            .background(CTheme.surfaceHi, in: Capsule())
                     }
                 }
                 Text(detail)
@@ -208,7 +209,7 @@ struct SettingsView: View {
             }
             Spacer()
             if state == .granted {
-                Text("Granted").font(.caption).foregroundStyle(.green)
+                Text("Granted").font(.caption).foregroundStyle(CTheme.positive)
             } else {
                 Button("Grant", action: action)
             }
@@ -218,9 +219,9 @@ struct SettingsView: View {
 
     private func color(for s: PermissionState) -> Color {
         switch s {
-        case .granted: return .green
-        case .denied, .restricted: return .red
-        case .notDetermined, .unavailable: return .secondary
+        case .granted: return CTheme.positive
+        case .denied, .restricted: return CTheme.danger
+        case .notDetermined, .unavailable: return CTheme.textTertiary
         }
     }
 

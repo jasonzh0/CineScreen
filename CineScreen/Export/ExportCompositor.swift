@@ -265,9 +265,10 @@ final class ExportCompositor {
         if let cursor = cursor, let texture = cursorTexture(for: cursor.shape) {
             var uniforms = CursorUniforms(
                 cursorPos: cursor.positionInVideoPixels,
-                size: cursor.size,
                 videoSize: videoSize,
                 aspectScale: aspect.scale,
+                hotspot: cursor.hotspotUV,
+                size: cursor.size,
                 opacity: cursor.opacity
             )
             encoder.setRenderPipelineState(cursorPipeline)
@@ -405,14 +406,15 @@ final class ExportCompositor {
     // MARK: - Uniforms (must match the layouts in MetalRenderer.swift)
 
     private struct AspectUniforms { var scale: SIMD2<Float> }
+    // Field order + sizes must match `CursorUniforms` in Shaders.metal (and
+    // the mirror in MetalRenderer). Trailing floats pack into one 8-byte slot.
     private struct CursorUniforms {
         var cursorPos: SIMD2<Float>
-        var size: Float
-        var _pad0: Float = 0
         var videoSize: SIMD2<Float>
         var aspectScale: SIMD2<Float>
+        var hotspot: SIMD2<Float>
+        var size: Float
         var opacity: Float
-        var _pad1: SIMD3<Float> = .zero
     }
     private struct ClickUniforms {
         var centerInVideoPixels: SIMD2<Float>

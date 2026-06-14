@@ -28,7 +28,10 @@ final class ControlBarController {
         let onDismiss: () -> Void = { [weak self] in self?.hide() }
         let onStartRecording: () -> Void = { [weak self] in
             self?.hide()
-            RecordingStatusController.shared.show(state: state)
+            // Floating recording HUD (timer + Stop/Cancel). It's excluded from
+            // the capture by ScreenCaptureService, so it can safely float over
+            // the screen — unlike the old menu-bar dot, it's impossible to miss.
+            RecordingBarController.shared.show(state: state)
         }
         let content = ControlBarView(
             state: state,

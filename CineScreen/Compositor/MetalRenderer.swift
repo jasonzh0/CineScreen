@@ -7,13 +7,18 @@ import AppKit
 
 /// What the renderer needs to draw a cursor overlay this frame.
 struct CursorRenderState {
-    /// Cursor centre in **video pixel** coordinates (top-left origin).
+    /// The pointer's hot-spot location in **video pixel** coordinates
+    /// (top-left origin) — i.e. where the real cursor actually pointed.
     var positionInVideoPixels: SIMD2<Float>
     /// Cursor sprite size in video pixels.
     var size: Float
     /// Opacity multiplier, 0..1.
     var opacity: Float
     var shape: CursorShape
+    /// The sprite's hot spot as a normalized fraction of its artwork
+    /// (top-left origin, `[0,1]²`). The sprite is positioned so this point
+    /// lands on `positionInVideoPixels`, instead of the sprite centre.
+    var hotspotUV: SIMD2<Float> = SIMD2(0.5, 0.5)
     /// The coordinate space `positionInVideoPixels` is normalised against —
     /// usually `(metadata.video.width, metadata.video.height)`. The renderer
     /// uses this so the cursor can be drawn even before the first video frame
@@ -400,9 +405,10 @@ final class MetalRenderer: NSObject {
             if let texture = cursorTexture(for: cursor.shape) {
                 var uniforms = CursorUniforms(
                     cursorPos: cursor.positionInVideoPixels,
-                    size: cursor.size,
                     videoSize: videoSize,
                     aspectScale: aspect.scale,
+                    hotspot: cursor.hotspotUV,
+                    size: cursor.size,
                     opacity: cursor.opacity
                 )
                 encoder.setRenderPipelineState(cursorPipeline)
@@ -694,14 +700,16 @@ final class MetalRenderer: NSObject {
     private struct CanvasUniforms {
         var contentScale: SIMD2<Float>
     }
+    // Field order + sizes must match `CursorUniforms` in Shaders.metal. All
+    // SIMD2<Float> are 8-byte aligned, so the two trailing floats pack into a
+    // single 8-byte slot — no explicit padding needed.
     private struct CursorUniforms {
         var cursorPos: SIMD2<Float>
-        var size: Float
-        var _pad0: Float = 0
         var videoSize: SIMD2<Float>
         var aspectScale: SIMD2<Float>
+        var hotspot: SIMD2<Float>
+        var size: Float
         var opacity: Float
-        var _pad1: SIMD3<Float> = .zero
     }
     private struct ClickUniforms {
         var centerInVideoPixels: SIMD2<Float>

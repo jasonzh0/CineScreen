@@ -57,9 +57,10 @@ struct ControlBarView: View {
         )
         .overlay(
             RoundedRectangle(cornerRadius: 18, style: .continuous)
-                .stroke(Color.white.opacity(0.08), lineWidth: 1)
+                .stroke(CTheme.stroke, lineWidth: 1)
         )
         .padding(8)
+        .tint(CTheme.accent)
     }
 
     // MARK: - Sections
@@ -67,7 +68,7 @@ struct ControlBarView: View {
     private var closeButton: some View {
         Button(action: onDismiss) {
             ZStack {
-                Circle().fill(Color.white.opacity(0.1))
+                Circle().fill(CTheme.surfaceHi)
                 Image(systemName: "xmark")
                     .font(.system(size: 11, weight: .bold))
                     .foregroundStyle(.primary.opacity(0.8))
@@ -103,8 +104,8 @@ struct ControlBarView: View {
             .opacity(enabled ? 1.0 : 0.45)
             .frame(width: 64, height: 46)
             .background(
-                RoundedRectangle(cornerRadius: 10)
-                    .fill(isHovered && enabled ? Color.white.opacity(0.08) : Color.clear)
+                RoundedRectangle(cornerRadius: CTheme.Radius.sm, style: .continuous)
+                    .fill(isHovered && enabled ? CTheme.accent.opacity(0.12) : Color.clear)
             )
         }
         .buttonStyle(.plain)
@@ -174,10 +175,10 @@ struct ControlBarView: View {
             .padding(.horizontal, 12)
             .padding(.vertical, 8)
             .background(
-                RoundedRectangle(cornerRadius: 10)
-                    .fill(isOn ? Color.white.opacity(0.18) : Color.white.opacity(0.05))
+                RoundedRectangle(cornerRadius: CTheme.Radius.sm, style: .continuous)
+                    .fill(isOn ? CTheme.accent.opacity(0.22) : CTheme.surfaceLo)
             )
-            .foregroundStyle(isOn ? .primary : .secondary)
+            .foregroundStyle(isOn ? AnyShapeStyle(CTheme.accent) : AnyShapeStyle(.secondary))
             .opacity(disabled ? 0.5 : 1.0)
         }
         .buttonStyle(.plain)
@@ -224,7 +225,7 @@ struct ControlBarView: View {
 
     private var separator: some View {
         Rectangle()
-            .fill(Color.white.opacity(0.08))
+            .fill(CTheme.stroke)
             .frame(width: 1, height: 32)
             .padding(.horizontal, 4)
     }

@@ -83,6 +83,7 @@ struct RenderSnapshot: Sendable {
             size: size,
             opacity: 1.0,
             shape: shape,
+            hotspotUV: shape.hotspotUV,
             videoSize: videoSize
         )
     }

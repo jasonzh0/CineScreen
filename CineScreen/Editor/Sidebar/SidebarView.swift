@@ -28,25 +28,26 @@ struct SidebarView: View {
 
             if isExporting {
                 VStack(alignment: .leading, spacing: 4) {
-                    Text("Exporting…").font(.caption).foregroundStyle(.secondary)
+                    Text("Exporting…").font(.caption).foregroundStyle(CTheme.textSecondary)
                     ProgressView(value: exportFraction, total: 1.0)
                 }
             }
             if let exportError = exportError {
                 Text(exportError)
                     .font(.caption)
-                    .foregroundStyle(.red)
+                    .foregroundStyle(CTheme.danger)
                     .fixedSize(horizontal: false, vertical: true)
             }
             if let saveMessage = saveMessage {
                 Text(saveMessage)
                     .font(.caption2)
-                    .foregroundStyle(.secondary)
+                    .foregroundStyle(CTheme.textSecondary)
             }
         }
         .padding(14)
         .frame(width: 304)
-        .background(Color(white: 0.09))
+        .background(CTheme.panel)
+        .tint(CTheme.accent)
     }
 
     // MARK: - Top export row
@@ -59,8 +60,15 @@ struct SidebarView: View {
                 Image(systemName: "checkmark.circle.fill")
                     .font(.system(size: 13, weight: .medium))
                     .frame(width: 36, height: 32)
-                    .foregroundStyle(.secondary)
-                    .background(Color.white.opacity(0.08), in: RoundedRectangle(cornerRadius: 8))
+                    .foregroundStyle(CTheme.textSecondary)
+                    .background(
+                        RoundedRectangle(cornerRadius: CTheme.Radius.sm, style: .continuous)
+                            .fill(CTheme.surface)
+                    )
+                    .overlay(
+                        RoundedRectangle(cornerRadius: CTheme.Radius.sm, style: .continuous)
+                            .strokeBorder(CTheme.stroke, lineWidth: 1)
+                    )
             }
             .buttonStyle(.plain)
             .disabled(vm.metadataURL == nil || vm.metadata == nil)
@@ -77,18 +85,9 @@ struct SidebarView: View {
                     Text("Export")
                         .font(.system(size: 13, weight: .semibold))
                 }
-                .padding(.horizontal, 14)
                 .frame(height: 32)
-                .foregroundStyle(.white)
-                .background(
-                    LinearGradient(
-                        colors: [Color(red: 0.55, green: 0.31, blue: 0.97), Color(red: 0.43, green: 0.21, blue: 0.85)],
-                        startPoint: .top, endPoint: .bottom
-                    ),
-                    in: RoundedRectangle(cornerRadius: 8)
-                )
             }
-            .buttonStyle(.plain)
+            .buttonStyle(CineFilledButtonStyle(palette: .accent, shape: .rounded(CTheme.Radius.sm), font: .system(size: 13, weight: .semibold), hPad: 14, vPad: 0, glow: true))
             .disabled(isExporting || vm.metadata == nil)
         }
     }
@@ -99,23 +98,17 @@ struct SidebarView: View {
     private func card<Content: View>(title: String, icon: String, @ViewBuilder content: () -> Content) -> some View {
         VStack(alignment: .leading, spacing: 10) {
             HStack(spacing: 6) {
-                Image(systemName: icon)
-                    .font(.system(size: 11, weight: .semibold))
-                    .foregroundStyle(.secondary)
+                CineIconChip(symbol: icon, tint: CTheme.accent, size: 20)
                 Text(title)
                     .font(.system(size: 12, weight: .semibold))
-                    .foregroundStyle(.primary)
+                    .foregroundStyle(CTheme.textPrimary)
                 Spacer()
             }
             content()
         }
         .padding(12)
         .frame(maxWidth: .infinity, alignment: .leading)
-        .background(Color.white.opacity(0.04), in: RoundedRectangle(cornerRadius: 10))
-        .overlay(
-            RoundedRectangle(cornerRadius: 10)
-                .stroke(Color.white.opacity(0.06), lineWidth: 1)
-        )
+        .cineCard(radius: CTheme.Radius.md)
     }
 
     private var info: some View {
@@ -129,7 +122,7 @@ struct SidebarView: View {
             } else if vm.loadError != nil {
                 Text(vm.loadError ?? "")
                     .font(.caption)
-                    .foregroundStyle(.red)
+                    .foregroundStyle(CTheme.danger)
                     .fixedSize(horizontal: false, vertical: true)
             }
         }
@@ -144,10 +137,11 @@ struct SidebarView: View {
                 HStack {
                     Text("Size")
                         .font(.caption)
-                        .foregroundStyle(.secondary)
+                        .foregroundStyle(CTheme.textSecondary)
                     Spacer()
                     Text("\(Int(metadata.cursor.config.size)) px")
                         .font(.system(.caption, design: .monospaced))
+                        .foregroundStyle(CTheme.textSecondary)
                 }
                 Slider(
                     value: Binding(
@@ -156,29 +150,31 @@ struct SidebarView: View {
                     ),
                     in: 16...256, step: 1
                 )
+                .tint(CTheme.accent)
                 HStack {
                     Text("Keyframes")
                         .font(.caption)
-                        .foregroundStyle(.secondary)
+                        .foregroundStyle(CTheme.textSecondary)
                     Spacer()
                     Text("\(metadata.cursor.keyframes.count)")
                         .font(.system(.caption, design: .monospaced))
+                        .foregroundStyle(CTheme.textSecondary)
                 }
             } else if vm.metadata == nil {
                 Label("No metadata loaded", systemImage: "exclamationmark.triangle.fill")
                     .font(.caption)
-                    .foregroundStyle(.yellow)
+                    .foregroundStyle(CTheme.warning)
                 Text("This recording is missing its `recording.json` sidecar — the cursor track can't be rendered. Try recording a new project.")
                     .font(.caption)
-                    .foregroundStyle(.secondary)
+                    .foregroundStyle(CTheme.textSecondary)
                     .fixedSize(horizontal: false, vertical: true)
             } else {
                 Label("No cursor keyframes", systemImage: "exclamationmark.triangle.fill")
                     .font(.caption)
-                    .foregroundStyle(.yellow)
+                    .foregroundStyle(CTheme.warning)
                 Text("Accessibility permission may not have been granted during recording, so no mouse events were captured.")
                     .font(.caption)
-                    .foregroundStyle(.secondary)
+                    .foregroundStyle(CTheme.textSecondary)
                     .fixedSize(horizontal: false, vertical: true)
             }
 
@@ -215,13 +211,13 @@ struct SidebarView: View {
             if sections.isEmpty {
                 Text("No zoom sections. Click Add to insert one at the playhead.")
                     .font(.caption2)
-                    .foregroundStyle(.tertiary)
+                    .foregroundStyle(CTheme.textTertiary)
                     .fixedSize(horizontal: false, vertical: true)
             } else {
                 if vm.isAutoZoomMode {
                     Text("Auto-generated from clicks. Add or delete any section to start editing manually.")
                         .font(.caption2)
-                        .foregroundStyle(.secondary)
+                        .foregroundStyle(CTheme.textSecondary)
                         .fixedSize(horizontal: false, vertical: true)
                 }
                 VStack(spacing: 4) {
@@ -256,33 +252,37 @@ struct SidebarView: View {
 
             // Scale
             HStack {
-                Text("Scale").font(.caption).foregroundStyle(.secondary)
+                Text("Scale").font(.caption).foregroundStyle(CTheme.textSecondary)
                 Spacer()
                 Text(String(format: "%.2fx", section.scale))
                     .font(.system(.caption, design: .monospaced))
+                    .foregroundStyle(CTheme.textSecondary)
             }
             Slider(value: scaleBinding, in: 1.0...4.0, step: 0.05)
+                .tint(CTheme.accent)
 
             // Length
             HStack {
-                Text("Length").font(.caption).foregroundStyle(.secondary)
+                Text("Length").font(.caption).foregroundStyle(CTheme.textSecondary)
                 Spacer()
                 Text(format(section.endTime - section.startTime))
                     .font(.system(.caption, design: .monospaced))
+                    .foregroundStyle(CTheme.textSecondary)
             }
             Slider(value: lengthBinding,
                    in: 100...max(500, vm.metadata?.video.duration ?? 1000),
                    step: 50)
+                .tint(CTheme.accent)
 
             Text("Pan is auto-framed to follow the cursor with rule-of-thirds smoothing — no manual focal point needed.")
                 .font(.caption2)
-                .foregroundStyle(.secondary)
+                .foregroundStyle(CTheme.textSecondary)
                 .fixedSize(horizontal: false, vertical: true)
                 .padding(.top, 2)
 
             Text("Drag the block on the timeline to move it; drag the 3-pt edges to resize.")
                 .font(.caption2)
-                .foregroundStyle(.tertiary)
+                .foregroundStyle(CTheme.textTertiary)
                 .fixedSize(horizontal: false, vertical: true)
         }
     }
@@ -293,24 +293,24 @@ struct SidebarView: View {
             Text(String(format: "%.1fx", section.scale))
                 .font(.system(.caption, design: .monospaced))
                 .frame(width: 36, alignment: .leading)
-                .foregroundStyle(.primary)
+                .foregroundStyle(CTheme.textPrimary)
             Text("\(format(section.startTime)) → \(format(section.endTime))")
                 .font(.system(.caption2, design: .monospaced))
-                .foregroundStyle(.secondary)
+                .foregroundStyle(CTheme.textSecondary)
             Spacer()
             Button {
                 vm.removeZoomSection(at: index)
             } label: {
                 Image(systemName: "xmark.circle.fill")
-                    .foregroundStyle(.secondary)
+                    .foregroundStyle(CTheme.brand)
             }
             .buttonStyle(.plain)
         }
         .padding(.horizontal, 8)
         .padding(.vertical, 5)
         .background(
-            RoundedRectangle(cornerRadius: 4)
-                .fill(selected ? Color.accentColor.opacity(0.18) : Color.clear)
+            RoundedRectangle(cornerRadius: CTheme.Radius.xs)
+                .fill(selected ? CTheme.accent.opacity(0.18) : Color.clear)
         )
         .contentShape(Rectangle())
         .onTapGesture {
@@ -324,17 +324,19 @@ struct SidebarView: View {
             HStack {
                 Text("Padding")
                     .font(.caption)
-                    .foregroundStyle(.secondary)
+                    .foregroundStyle(CTheme.textSecondary)
                 Spacer()
                 Text("\(Int(vm.canvasPadding * 200))%")
                     .font(.system(.caption, design: .monospaced))
+                    .foregroundStyle(CTheme.textSecondary)
             }
             Slider(value: $vm.canvasPadding, in: 0...0.25)
+                .tint(CTheme.accent)
 
             Toggle(isOn: $vm.canvasDropShadow) {
                 Text("Drop Shadow")
                     .font(.caption)
-                    .foregroundStyle(.secondary)
+                    .foregroundStyle(CTheme.textSecondary)
             }
             .toggleStyle(.switch)
             .controlSize(.small)
@@ -342,19 +344,21 @@ struct SidebarView: View {
             HStack {
                 Text("Shadow Strength")
                     .font(.caption)
-                    .foregroundStyle(.secondary)
+                    .foregroundStyle(CTheme.textSecondary)
                 Spacer()
                 Text("\(Int(vm.canvasShadowStrength * 100))%")
                     .font(.system(.caption, design: .monospaced))
+                    .foregroundStyle(CTheme.textSecondary)
             }
             Slider(value: $vm.canvasShadowStrength, in: 0...1)
+                .tint(CTheme.accent)
                 .disabled(!vm.canvasDropShadow)
                 .opacity(vm.canvasDropShadow ? 1.0 : 0.5)
 
             HStack {
                 Text("Background")
                     .font(.caption)
-                    .foregroundStyle(.secondary)
+                    .foregroundStyle(CTheme.textSecondary)
                 Spacer()
             }
             LazyVGrid(
@@ -369,7 +373,7 @@ struct SidebarView: View {
                             .frame(height: 32)
                             .overlay(
                                 RoundedRectangle(cornerRadius: 6)
-                                    .stroke(vm.canvasBackground == preset.bg ? Color.accentColor : Color.white.opacity(0.08), lineWidth: vm.canvasBackground == preset.bg ? 2 : 1)
+                                    .stroke(vm.canvasBackground == preset.bg ? CTheme.accent : CTheme.stroke, lineWidth: vm.canvasBackground == preset.bg ? 2 : 1)
                             )
                             .help(preset.name)
                     }
@@ -425,11 +429,11 @@ struct SidebarView: View {
             // Size slider — the diameter is clamped 5%..60% in the model.
             VStack(alignment: .leading, spacing: 4) {
                 HStack {
-                    Text("Size").font(.caption).foregroundStyle(.secondary)
+                    Text("Size").font(.caption).foregroundStyle(CTheme.textSecondary)
                     Spacer()
                     Text("\(Int(vm.webcamLayout.diameterNorm * 100))%")
                         .font(.caption.monospacedDigit())
-                        .foregroundStyle(.secondary)
+                        .foregroundStyle(CTheme.textSecondary)
                 }
                 Slider(
                     value: Binding(
@@ -442,6 +446,7 @@ struct SidebarView: View {
                     ),
                     in: 0.05...0.6
                 )
+                .tint(CTheme.accent)
             }
             .disabled(!vm.webcamLayout.enabled)
             .opacity(vm.webcamLayout.enabled ? 1.0 : 0.5)
@@ -452,7 +457,7 @@ struct SidebarView: View {
 
             Text("Drag the circle in the preview to reposition; drag the corner handle to resize.")
                 .font(.caption2)
-                .foregroundStyle(.secondary)
+                .foregroundStyle(CTheme.textSecondary)
                 .fixedSize(horizontal: false, vertical: true)
         }
     }
@@ -461,9 +466,9 @@ struct SidebarView: View {
 
     private func row(_ label: String, _ value: String) -> some View {
         HStack {
-            Text(label).font(.caption).foregroundStyle(.secondary)
+            Text(label).font(.caption).foregroundStyle(CTheme.textSecondary)
             Spacer()
-            Text(value).font(.system(.caption, design: .monospaced))
+            Text(value).font(.system(.caption, design: .monospaced)).foregroundStyle(CTheme.textSecondary)
         }
     }
 

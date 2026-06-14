@@ -106,8 +106,6 @@ final class ScreenCaptureService: NSObject {
 
     private var frameCount: Int64 = 0
 
-    private var cursorHidden = false
-
     // MARK: - Discovery
 
     /// List on-screen windows large enough to record (≥100×100). Used by the
@@ -230,6 +228,20 @@ final class ScreenCaptureService: NSObject {
             }
             if let window = window {
                 return SCContentFilter(desktopIndependentWindow: window)
+            }
+            // Full-display capture: exclude CineScreen's own windows (the
+            // floating recording bar, projects window, etc.) so our UI never
+            // bleeds into the recording. This is what lets us show an on-screen
+            // recording bar without it appearing in the captured video.
+            let ownApp = content.applications.first {
+                $0.processID == ProcessInfo.processInfo.processIdentifier
+            }
+            if let ownApp = ownApp {
+                return SCContentFilter(
+                    display: display,
+                    excludingApplications: [ownApp],
+                    exceptingWindows: []
+                )
             }
             return SCContentFilter(display: display, excludingWindows: [])
         }()
@@ -365,9 +377,12 @@ final class ScreenCaptureService: NSObject {
         }
         session?.startRunning()
 
-        // 7. Hide cursor (ref-counted; matched in stop())
-        CGDisplayHideCursor(display.displayID)
-        cursorHidden = true
+        // NOTE: we intentionally do NOT hide the system cursor. `showsCursor`
+        // is false above, so the real pointer is already excluded from the
+        // recorded frames (the editor composites its own synthetic cursor from
+        // the mouse track). Calling CGDisplayHideCursor here additionally hid
+        // the pointer from the *user* mid-recording — they couldn't see where
+        // they were aiming. The user must always see their own cursor.
 
         // Commit state
         self.stream = scStream
@@ -412,12 +427,6 @@ final class ScreenCaptureService: NSObject {
             Log.capture.debug("SCStream stopped")
         }
         micSession?.stopRunning()
-
-        // Show cursor (single decrement matching the single hide call).
-        if cursorHidden {
-            CGDisplayShowCursor(CGMainDisplayID())
-            cursorHidden = false
-        }
 
         // Mark inputs finished and finalize.
         videoInput?.markAsFinished()

@@ -13,7 +13,8 @@ struct EditorView: View {
             SidebarView(vm: vm)
         }
         .frame(minWidth: 1100, minHeight: 720)
-        .background(Color(white: 0.06))
+        .background(CTheme.panelDeep)
+        .tint(CTheme.accent)
         .preferredColorScheme(.dark)
     }
 
@@ -64,7 +65,7 @@ struct EditorView: View {
             // toolbar below it for editor-specific actions.
             Text(vm.videoURL.deletingPathExtension().lastPathComponent)
                 .font(.system(size: 13, weight: .medium))
-                .foregroundStyle(.secondary)
+                .foregroundStyle(CTheme.textSecondary)
 
             Spacer()
 
@@ -80,8 +81,8 @@ struct EditorView: View {
             Image(systemName: systemName)
                 .font(.system(size: 13, weight: .medium))
                 .frame(width: 32, height: 28)
-                .foregroundStyle(.secondary)
-                .background(Color.white.opacity(0.06), in: RoundedRectangle(cornerRadius: 7))
+                .foregroundStyle(CTheme.textSecondary)
+                .background(CTheme.surface, in: RoundedRectangle(cornerRadius: CTheme.Radius.sm))
         }
         .buttonStyle(.plain)
     }
@@ -92,7 +93,7 @@ struct EditorView: View {
         HStack(spacing: 14) {
             Text(format(vm.currentTimeMs))
                 .font(.system(.callout, design: .monospaced))
-                .foregroundStyle(.primary)
+                .foregroundStyle(CTheme.textPrimary)
                 .frame(width: 78, alignment: .leading)
 
             Spacer()
@@ -105,8 +106,8 @@ struct EditorView: View {
                     Image(systemName: vm.isPlaying ? "pause.fill" : "play.fill")
                         .font(.system(size: 14, weight: .semibold))
                         .frame(width: 44, height: 32)
-                        .foregroundStyle(.white)
-                        .background(Color.white.opacity(0.14), in: RoundedRectangle(cornerRadius: 8))
+                        .foregroundStyle(Color.black.opacity(0.88))
+                        .background(CTheme.accentGradient, in: RoundedRectangle(cornerRadius: CTheme.Radius.sm))
                 }
                 .buttonStyle(.plain)
                 .keyboardShortcut(.space, modifiers: [])
@@ -117,7 +118,7 @@ struct EditorView: View {
 
             Text(format(vm.durationMs))
                 .font(.system(.callout, design: .monospaced))
-                .foregroundStyle(.secondary)
+                .foregroundStyle(CTheme.textSecondary)
                 .frame(width: 78, alignment: .trailing)
         }
     }
@@ -127,8 +128,8 @@ struct EditorView: View {
             Image(systemName: systemName)
                 .font(.system(size: 12, weight: .medium))
                 .frame(width: 32, height: 32)
-                .foregroundStyle(.secondary)
-                .background(Color.white.opacity(0.06), in: RoundedRectangle(cornerRadius: 8))
+                .foregroundStyle(CTheme.textSecondary)
+                .background(CTheme.surface, in: RoundedRectangle(cornerRadius: CTheme.Radius.sm))
         }
         .buttonStyle(.plain)
     }
