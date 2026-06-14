@@ -268,6 +268,7 @@ final class ExportCompositor {
                 videoSize: videoSize,
                 aspectScale: aspect.scale,
                 hotspot: cursor.hotspotUV,
+                motionBlur: cursor.motionBlurUV,
                 size: cursor.size,
                 opacity: cursor.opacity
             )
@@ -413,6 +414,7 @@ final class ExportCompositor {
         var videoSize: SIMD2<Float>
         var aspectScale: SIMD2<Float>
         var hotspot: SIMD2<Float>
+        var motionBlur: SIMD2<Float>
         var size: Float
         var opacity: Float
     }

@@ -100,6 +100,13 @@ struct MetalPreviewView: NSViewRepresentable {
             let attributes: [String: Any] = [
                 kCVPixelBufferPixelFormatTypeKey as String: kCVPixelFormatType_32BGRA,
             ]
+            // Detach the previous output from its item so it stops receiving
+            // frames; otherwise the old AVPlayerItemVideoOutput leaks and keeps
+            // pulling pixel buffers. Guard against removing from the same item
+            // we're about to re-add to.
+            if let oldOutput = videoOutput, let oldItem = observedItem, oldItem !== item {
+                oldItem.remove(oldOutput)
+            }
             let output = AVPlayerItemVideoOutput(pixelBufferAttributes: attributes)
             output.suppressesPlayerRendering = true
             item.add(output)
@@ -125,7 +132,12 @@ struct MetalPreviewView: NSViewRepresentable {
 
         func attachWebcamVideoOutput(to player: AVPlayer?) {
             self.webcamPlayer = player
-            // Tear down old subscription if the player changed.
+            // Tear down old subscription if the player changed. Remove the
+            // existing output from its item first so it stops receiving frames
+            // instead of leaking.
+            if let oldOutput = webcamVideoOutput, let oldItem = observedWebcamItem {
+                oldItem.remove(oldOutput)
+            }
             observedWebcamItem = nil
             webcamVideoOutput = nil
             guard let player = player else { return }
@@ -144,6 +156,12 @@ struct MetalPreviewView: NSViewRepresentable {
             let attributes: [String: Any] = [
                 kCVPixelBufferPixelFormatTypeKey as String: kCVPixelFormatType_32BGRA,
             ]
+            // Detach the previous webcam output from its item so it stops
+            // receiving frames; otherwise it leaks. Guard against removing from
+            // the same item we're about to re-add to.
+            if let oldOutput = webcamVideoOutput, let oldItem = observedWebcamItem, oldItem !== item {
+                oldItem.remove(oldOutput)
+            }
             let output = AVPlayerItemVideoOutput(pixelBufferAttributes: attributes)
             // Webcam has no AVPlayerLayer either — same suppression logic as
             // the main player so VRP doesn't try to draw it.

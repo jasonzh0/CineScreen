@@ -529,6 +529,13 @@ final class ScreenCaptureService: NSObject {
                 return screen.backingScaleFactor
             }
         }
+        // No matching NSScreen — derive the scale from THIS display's own mode
+        // (native pixels ÷ points) rather than assuming the main display's
+        // factor. Assuming main misaligned the cursor when capturing a
+        // secondary display with a different pixel density.
+        if let mode = CGDisplayCopyDisplayMode(displayID), mode.width > 0 {
+            return CGFloat(mode.pixelWidth) / CGFloat(mode.width)
+        }
         return NSScreen.main?.backingScaleFactor ?? 2.0
     }
 

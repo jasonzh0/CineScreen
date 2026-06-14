@@ -15,10 +15,16 @@ final class RecordingBarController {
 
     private var panel: NSPanel?
     private weak var state: AppState?
+    /// Local + global keyDown monitors so ESC stops the recording from
+    /// anywhere (the user is usually in another app while recording).
+    private var keyMonitors: [Any] = []
+    /// Guards stop/cancel against double-firing (e.g. mashing ESC).
+    private var finishing = false
 
     func show(state: AppState) {
         self.state = state
         hide()  // clear any stale panel first
+        finishing = false
 
         let view = RecordingBarView(
             startedAt: Date(),
@@ -59,12 +65,42 @@ final class RecordingBarController {
         self.panel = panel
         positionAtBottomCenter(panel)
         panel.orderFrontRegardless()
+        installEscMonitor()
         Log.app.info("Recording bar shown")
     }
 
     func hide() {
+        removeEscMonitor()
         panel?.orderOut(nil)
         panel = nil
+    }
+
+    // MARK: - ESC-to-stop
+
+    /// Installs keyDown monitors for the Escape key (keyCode 53). The global
+    /// monitor fires when another app is frontmost (the usual case while
+    /// recording) and is observe-only, so ESC still reaches that app; the local
+    /// monitor covers the case where CineScreen itself is frontmost.
+    private func installEscMonitor() {
+        removeEscMonitor()
+        let onKey: (NSEvent) -> Void = { [weak self] event in
+            guard event.keyCode == 53 else { return }
+            self?.performStop()
+        }
+        if let global = NSEvent.addGlobalMonitorForEvents(matching: .keyDown, handler: onKey) {
+            keyMonitors.append(global)
+        }
+        if let local = NSEvent.addLocalMonitorForEvents(matching: .keyDown, handler: { event in
+            onKey(event)
+            return event
+        }) {
+            keyMonitors.append(local)
+        }
+    }
+
+    private func removeEscMonitor() {
+        for monitor in keyMonitors { NSEvent.removeMonitor(monitor) }
+        keyMonitors.removeAll()
     }
 
     private func positionAtBottomCenter(_ panel: NSPanel) {
@@ -80,6 +116,9 @@ final class RecordingBarController {
     // MARK: - Actions (mirror RecordingStatusController so behavior is identical)
 
     private func performStop() {
+        guard !finishing else { return }
+        finishing = true
+        removeEscMonitor()
         guard let state = state else { hide(); return }
         Log.app.info("Recording bar: stop requested")
         Task { @MainActor in
@@ -100,6 +139,9 @@ final class RecordingBarController {
     }
 
     private func performCancel() {
+        guard !finishing else { return }
+        finishing = true
+        removeEscMonitor()
         guard let state = state else { hide(); return }
         Log.app.info("Recording bar: cancel requested")
         Task { @MainActor in

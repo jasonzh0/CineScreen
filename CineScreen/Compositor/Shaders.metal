@@ -241,6 +241,7 @@ struct CursorUniforms {
     float2 videoSize;
     float2 aspectScale;
     float2 hotspot;       // hot spot as a fraction of the sprite, [0,1]², top-left
+    float2 motionBlur;    // directional blur vector in sprite-UV units (0 = none)
     float size;           // sprite size in video pixels
     float opacity;
 };
@@ -288,7 +289,25 @@ fragment float4 cursor_fragment(
     texture2d<float> tex [[texture(0)]]
 ) {
     constexpr sampler s(mag_filter::linear, min_filter::linear, address::clamp_to_edge);
-    float4 c = tex.sample(s, in.uv);
+
+    // Directional motion blur: average several taps along the blur vector so
+    // the sprite smears in the direction of travel. The sprite's transparent
+    // border + clamp_to_edge means taps that fall outside the sprite read as
+    // transparent, so the smear fades out cleanly.
+    float blurLen = length(u.motionBlur);
+    float4 c;
+    if (blurLen < 0.001) {
+        c = tex.sample(s, in.uv);
+    } else {
+        const int kTaps = 9;
+        float4 acc = float4(0.0);
+        for (int i = 0; i < kTaps; i++) {
+            float t = (float(i) / float(kTaps - 1)) - 0.5;  // -0.5 … 0.5
+            acc += tex.sample(s, in.uv + u.motionBlur * t);
+        }
+        c = acc / float(kTaps);
+    }
+
     c.a *= u.opacity;
     return c;
 }

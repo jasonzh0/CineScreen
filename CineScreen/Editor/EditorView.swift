@@ -68,23 +68,7 @@ struct EditorView: View {
                 .foregroundStyle(CTheme.textSecondary)
 
             Spacer()
-
-            iconButton("arrow.uturn.backward") {}
-                .disabled(true)
-            iconButton("arrow.uturn.forward") {}
-                .disabled(true)
         }
-    }
-
-    private func iconButton(_ systemName: String, action: @escaping () -> Void) -> some View {
-        Button(action: action) {
-            Image(systemName: systemName)
-                .font(.system(size: 13, weight: .medium))
-                .frame(width: 32, height: 28)
-                .foregroundStyle(CTheme.textSecondary)
-                .background(CTheme.surface, in: RoundedRectangle(cornerRadius: CTheme.Radius.sm))
-        }
-        .buttonStyle(.plain)
     }
 
     // MARK: - Transport

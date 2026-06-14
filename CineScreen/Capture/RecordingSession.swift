@@ -150,6 +150,11 @@ final class RecordingSession {
         do {
             try metadata.write(to: metadataURL)
         } catch {
+            // The editor can't open a recording without its sidecar metadata,
+            // so a write failure here would leave an un-openable orphan .mov on
+            // disk. Discard the video too (mirrors cancel()'s discard) rather
+            // than leaving a broken half-project behind.
+            try? FileManager.default.removeItem(at: videoURL)
             state = .error(error.localizedDescription)
             throw SessionError.writeFailed(error.localizedDescription)
         }

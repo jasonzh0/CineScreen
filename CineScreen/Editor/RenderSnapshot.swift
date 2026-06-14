@@ -78,14 +78,64 @@ struct RenderSnapshot: Sendable {
         )
         let size = baseSize * Self.clickPopFactor(atMilliseconds: t, clicks: metadata.clicks)
         let videoSize = SIMD2(Float(metadata.video.width), Float(metadata.video.height))
+        let cfg = metadata.cursor.config
+
+        // --- Cursor velocity (video px/sec), sampled over a small window.
+        // Kept as explicit Float locals so the type-checker stays fast. ---
+        let lookbackMs = 16.0
+        let prev = Self.rawCursorPosition(atMilliseconds: t - lookbackMs, metadata: metadata) ?? raw
+        let dx: Float = raw.x - prev.x
+        let dy: Float = raw.y - prev.y
+        let dist: Float = (dx * dx + dy * dy).squareRoot()
+        let speed: Float = dist / Float(lookbackMs / 1000.0)
+
+        // --- Motion blur: smear the sprite along its per-frame travel ---
+        var motionBlurUV = SIMD2<Float>(0, 0)
+        if let mb = cfg.motionBlur, mb.enabled, speed > 1, size > 0 {
+            let den: Float = dist > 0.0001 ? dist : 0.0001
+            let dirX: Float = dx / den
+            let dirY: Float = dy / den
+            let exposure: Float = 1.0 / 60.0          // ~one frame of travel
+            let amplify: Float = 2.0
+            let strength: Float = Float(mb.strength)
+            let rawLen: Float = speed * exposure * strength * amplify
+            let lenPx: Float = min(rawLen, 0.4 * size)
+            let uv: Float = lenPx / size               // sprite-UV units
+            motionBlurUV = SIMD2<Float>(dirX * uv, dirY * uv)
+        }
+
+        // --- Hide-when-static: fade the cursor out once it's been idle ---
+        var opacity: Float = 1.0
+        if cfg.hideWhenStatic == true {
+            let idleMs = t - Self.lastKeyframeTimestamp(atMilliseconds: t, keyframes: metadata.cursor.keyframes)
+            let holdMs = 1400.0, fadeMs = 450.0
+            if idleMs > holdMs {
+                opacity = 1.0 - Float(min(1.0, (idleMs - holdMs) / fadeMs))
+            }
+        }
+
         return CursorRenderState(
             positionInVideoPixels: raw,
             size: size,
-            opacity: 1.0,
+            opacity: opacity,
             shape: shape,
             hotspotUV: shape.hotspotUV,
+            motionBlurUV: motionBlurUV,
             videoSize: videoSize
         )
+    }
+
+    /// Timestamp of the last keyframe at or before `t`. Because the recorder
+    /// only emits keyframes on movement, the gap since this timestamp is how
+    /// long the cursor has been stationary — used for hide-when-static.
+    static func lastKeyframeTimestamp(atMilliseconds t: Double, keyframes: [CursorKeyframe]) -> Double {
+        guard !keyframes.isEmpty else { return t }
+        var lo = 0, hi = keyframes.count - 1
+        while lo < hi {
+            let mid = (lo + hi + 1) / 2
+            if keyframes[mid].timestamp <= t { lo = mid } else { hi = mid - 1 }
+        }
+        return keyframes[lo].timestamp
     }
 
     /// Brief size dip when a mouse-down happens — fast scale down, slower

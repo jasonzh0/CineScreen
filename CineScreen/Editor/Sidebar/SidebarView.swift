@@ -160,6 +160,44 @@ struct SidebarView: View {
                         .font(.system(.caption, design: .monospaced))
                         .foregroundStyle(CTheme.textSecondary)
                 }
+
+                Divider().padding(.vertical, 2)
+
+                // Glide style — drives the cursor + camera smoothing time.
+                HStack {
+                    Text("Glide").font(.caption).foregroundStyle(CTheme.textSecondary)
+                    Spacer()
+                    Picker("", selection: Binding(
+                        get: { vm.metadata?.zoom.config.animationStyle ?? .slow },
+                        set: { vm.metadata?.zoom.config.animationStyle = $0 }
+                    )) {
+                        Text("Slow").tag(ZoomConfig.AnimationStyle.slow)
+                        Text("Mellow").tag(ZoomConfig.AnimationStyle.mellow)
+                        Text("Quick").tag(ZoomConfig.AnimationStyle.quick)
+                        Text("Rapid").tag(ZoomConfig.AnimationStyle.rapid)
+                    }
+                    .labelsHidden()
+                    .pickerStyle(.menu)
+                    .controlSize(.small)
+                    .fixedSize()
+                }
+
+                Toggle(isOn: motionBlurEnabled) {
+                    Text("Motion Blur").font(.caption).foregroundStyle(CTheme.textSecondary)
+                }
+                .toggleStyle(.switch)
+                .controlSize(.small)
+
+                if vm.metadata?.cursor.config.motionBlur?.enabled == true {
+                    Slider(value: motionBlurStrength, in: 0...1)
+                        .tint(CTheme.accent)
+                }
+
+                Toggle(isOn: hideWhenStatic) {
+                    Text("Hide When Idle").font(.caption).foregroundStyle(CTheme.textSecondary)
+                }
+                .toggleStyle(.switch)
+                .controlSize(.small)
             } else if vm.metadata == nil {
                 Label("No metadata loaded", systemImage: "exclamationmark.triangle.fill")
                     .font(.caption)
@@ -408,12 +446,42 @@ struct SidebarView: View {
     }
 
     private var trimControls: some View {
-        VStack(alignment: .leading, spacing: 6) {
-            row("Start", format(vm.trimStartMs))
-            row("End", format(vm.trimEndMs))
+        VStack(alignment: .leading, spacing: 8) {
+            trimStepperRow(
+                "Start",
+                value: $vm.trimStartMs,
+                range: 0...max(0, vm.trimEndMs - 100)
+            )
+            trimStepperRow(
+                "End",
+                value: $vm.trimEndMs,
+                range: (vm.trimStartMs + 100)...max(vm.trimStartMs + 100, vm.durationMs)
+            )
             row("Length", format(vm.trimEndMs - vm.trimStartMs))
-        }
 
+            Button("Reset to full clip") {
+                vm.trimStartMs = 0
+                vm.trimEndMs = vm.durationMs
+            }
+            .buttonStyle(CineGhostButtonStyle(
+                shape: .rounded(CTheme.Radius.sm),
+                font: .system(size: 11, weight: .medium), hPad: 10, vPad: 5
+            ))
+            .disabled(vm.trimStartMs == 0 && vm.trimEndMs == vm.durationMs)
+        }
+    }
+
+    private func trimStepperRow(_ label: String, value: Binding<Double>, range: ClosedRange<Double>) -> some View {
+        HStack {
+            Text(label).font(.caption).foregroundStyle(CTheme.textSecondary)
+            Spacer()
+            Text(format(value.wrappedValue))
+                .font(.system(.caption, design: .monospaced))
+                .foregroundStyle(CTheme.textPrimary)
+            Stepper("", value: value, in: range, step: 100)
+                .labelsHidden()
+                .controlSize(.small)
+        }
     }
 
     // MARK: - Webcam
@@ -460,6 +528,32 @@ struct SidebarView: View {
                 .foregroundStyle(CTheme.textSecondary)
                 .fixedSize(horizontal: false, vertical: true)
         }
+    }
+
+    // MARK: - Cursor effect bindings
+
+    private var motionBlurEnabled: Binding<Bool> {
+        Binding(
+            get: { vm.metadata?.cursor.config.motionBlur?.enabled ?? false },
+            set: { on in
+                let strength = vm.metadata?.cursor.config.motionBlur?.strength ?? 0.5
+                vm.metadata?.cursor.config.motionBlur = CursorConfig.MotionBlur(enabled: on, strength: strength)
+            }
+        )
+    }
+
+    private var motionBlurStrength: Binding<Double> {
+        Binding(
+            get: { vm.metadata?.cursor.config.motionBlur?.strength ?? 0.5 },
+            set: { vm.metadata?.cursor.config.motionBlur = CursorConfig.MotionBlur(enabled: true, strength: $0) }
+        )
+    }
+
+    private var hideWhenStatic: Binding<Bool> {
+        Binding(
+            get: { vm.metadata?.cursor.config.hideWhenStatic ?? false },
+            set: { vm.metadata?.cursor.config.hideWhenStatic = $0 }
+        )
     }
 
     // MARK: - Helpers
@@ -570,7 +664,12 @@ struct SidebarView: View {
                         }
                     }
                 }
-                saveMessage = "Exported to \(outURL.lastPathComponent)"
+                // Only claim success if the pipeline didn't report a failure
+                // via the progress callback — otherwise we'd show both an error
+                // and "Exported to …" at once.
+                if exportError == nil {
+                    saveMessage = "Exported to \(outURL.lastPathComponent)"
+                }
                 isExporting = false
             } catch {
                 exportError = error.localizedDescription

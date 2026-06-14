@@ -196,6 +196,16 @@ final class EditorViewModel {
             MainActor.assumeIsolated {
                 guard let self else { return }
                 self.currentTimeMs = time.seconds * 1000
+                // Honor the trim range: loop playback within [trimStartMs, trimEndMs].
+                // When we run off the out-point, pause and seek back to the in-point.
+                // Require a positive range so a degenerate trim (start == end)
+                // can't pause playback the instant it begins.
+                if self.isPlaying,
+                   self.trimEndMs > self.trimStartMs,
+                   self.currentTimeMs >= self.trimEndMs {
+                    self.pause()
+                    self.seek(toMilliseconds: self.trimStartMs)
+                }
             }
         }
     }
@@ -228,6 +238,11 @@ final class EditorViewModel {
     // MARK: - Playback controls
 
     func play() {
+        // Always start playback inside the trimmed region. If the playhead is
+        // before the in-point or at/past the out-point, snap to trimStartMs.
+        if currentTimeMs < trimStartMs || currentTimeMs >= trimEndMs {
+            seek(toMilliseconds: trimStartMs)
+        }
         player.play()
         webcamPlayer?.play()
         isPlaying = true
@@ -249,7 +264,10 @@ final class EditorViewModel {
         let time = CMTime(seconds: clamped / 1000, preferredTimescale: 600)
         player.seek(to: time, toleranceBefore: .zero, toleranceAfter: .zero)
         webcamPlayer?.seek(to: time, toleranceBefore: .zero, toleranceAfter: .zero)
-        // Drop the smoother's history — otherwise it tries to catch up across the jump.
+        // Drop the smoother's history — otherwise it tries to catch up across
+        // the jump. Reset to the raw position when one exists; but always
+        // advance lastCursorSampleMs so an empty cursor track still resets the
+        // smoother's dt baseline on the next cursorState() call.
         if let snapshot = makeRenderSnapshot(),
            let raw = RenderSnapshot.rawCursorPosition(atMilliseconds: clamped, metadata: snapshot.metadata) {
             cursorSmoother.reset(toX: Double(raw.x), y: Double(raw.y))

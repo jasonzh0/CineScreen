@@ -19,6 +19,10 @@ struct CursorRenderState {
     /// (top-left origin, `[0,1]²`). The sprite is positioned so this point
     /// lands on `positionInVideoPixels`, instead of the sprite centre.
     var hotspotUV: SIMD2<Float> = SIMD2(0.5, 0.5)
+    /// Directional motion-blur vector in sprite-UV units (the fragment shader
+    /// smears the sprite along it). Zero = no blur. Magnitude ≈ how far the
+    /// cursor travels per frame, scaled by the user's motion-blur strength.
+    var motionBlurUV: SIMD2<Float> = .zero
     /// The coordinate space `positionInVideoPixels` is normalised against —
     /// usually `(metadata.video.width, metadata.video.height)`. The renderer
     /// uses this so the cursor can be drawn even before the first video frame
@@ -408,6 +412,7 @@ final class MetalRenderer: NSObject {
                     videoSize: videoSize,
                     aspectScale: aspect.scale,
                     hotspot: cursor.hotspotUV,
+                    motionBlur: cursor.motionBlurUV,
                     size: cursor.size,
                     opacity: cursor.opacity
                 )
@@ -708,6 +713,7 @@ final class MetalRenderer: NSObject {
         var videoSize: SIMD2<Float>
         var aspectScale: SIMD2<Float>
         var hotspot: SIMD2<Float>
+        var motionBlur: SIMD2<Float>
         var size: Float
         var opacity: Float
     }

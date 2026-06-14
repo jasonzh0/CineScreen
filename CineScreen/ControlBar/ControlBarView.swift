@@ -10,22 +10,18 @@ struct ControlBarView: View {
     var onStartRecording: () -> Void
 
     enum CaptureMode: String, CaseIterable, Identifiable {
-        case display, window, area, device
+        case display, window
         var id: String { rawValue }
         var label: String {
             switch self {
             case .display: return "Display"
             case .window:  return "Window"
-            case .area:    return "Area"
-            case .device:  return "Device"
             }
         }
         var symbol: String {
             switch self {
             case .display: return "display"
             case .window:  return "macwindow"
-            case .area:    return "viewfinder.rectangular"
-            case .device:  return "iphone"
             }
         }
     }
@@ -89,7 +85,8 @@ struct ControlBarView: View {
     }
 
     private func modeButton(_ mode: CaptureMode) -> some View {
-        let enabled = mode == .display || mode == .window
+        // Every remaining capture mode is enabled.
+        let enabled = true
         let isHovered = hoveredMode == mode
         return Button {
             select(mode)
@@ -139,8 +136,18 @@ struct ControlBarView: View {
                 label: micLabel,
                 systemImage: state.captureMic && state.permissions.microphone == .granted ? "mic.fill" : "mic.slash",
                 isOn: state.captureMic && state.permissions.microphone == .granted,
-                disabled: state.permissions.microphone != .granted,
+                disabled: false,
                 onChange: { value in
+                    if state.permissions.microphone != .granted {
+                        Task {
+                            _ = await Permissions.requestMicrophone()
+                            state.refreshPermissions()
+                            if state.permissions.microphone == .granted {
+                                state.saveCaptureMic(true)
+                            }
+                        }
+                        return
+                    }
                     state.saveCaptureMic(value)
                 }
             )
@@ -260,9 +267,6 @@ struct ControlBarView: View {
                 }
                 startNewProjectRecording(preBuiltFilter: filter)
             }
-        case .area, .device:
-            // v2.1 features
-            break
         }
     }
 
