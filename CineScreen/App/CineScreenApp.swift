@@ -25,6 +25,9 @@ struct CineScreenApp: App {
         .windowResizability(.contentMinSize)
         .defaultSize(width: 880, height: 640)
         .commands {
+            CommandGroup(after: .appInfo) {
+                CheckForUpdatesView(updater: UpdaterController.shared)
+            }
             CommandGroup(replacing: .newItem) {
                 Button("New Recording") {
                     state.refreshPermissions()

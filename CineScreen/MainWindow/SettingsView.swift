@@ -3,6 +3,7 @@ import AppKit
 
 struct SettingsView: View {
     @Environment(AppState.self) private var state
+    @ObservedObject private var updater = UpdaterController.shared
 
     var body: some View {
         @Bindable var state = state
@@ -40,6 +41,22 @@ struct SettingsView: View {
                     }
                 }
                 Text("CineScreen stores each recording as a folder inside this directory. Use Reveal to open it in Finder.")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+                    .fixedSize(horizontal: false, vertical: true)
+            }
+            Section("Updates") {
+                Toggle("Automatically check for updates", isOn: Binding(
+                    get: { updater.automaticallyChecksForUpdates },
+                    set: { updater.automaticallyChecksForUpdates = $0 }
+                ))
+                HStack {
+                    Text("Check now")
+                    Spacer()
+                    Button("Check for Updates…") { updater.checkForUpdates() }
+                        .disabled(!updater.canCheckForUpdates)
+                }
+                Text("Updates install in place, so CineScreen keeps the permissions you've already granted — you won't need to re-grant Accessibility or Screen Recording.")
                     .font(.caption)
                     .foregroundStyle(.secondary)
                     .fixedSize(horizontal: false, vertical: true)

@@ -42,6 +42,11 @@ final class RecordingBarController {
         )
         panel.isOpaque = false
         panel.backgroundColor = .clear
+        // Force dark appearance: the bar is a branded dark HUD whose text +
+        // buttons are designed for dark surfaces. Without this, `.regularMaterial`
+        // adapts to a light-mode system and renders a washed-out white pill with
+        // near-invisible white text.
+        panel.appearance = NSAppearance(named: .darkAqua)
         panel.hasShadow = false  // the SwiftUI bar draws its own shadow
         panel.level = .statusBar
         panel.collectionBehavior = [.canJoinAllSpaces, .stationary, .fullScreenAuxiliary]

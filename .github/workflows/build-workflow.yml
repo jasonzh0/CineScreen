@@ -29,6 +29,12 @@ on:
         required: false
       APPLE_TEAM_ID:
         required: false
+      SPARKLE_PRIVATE_KEY:
+        required: false
+
+env:
+  # Pin the Sparkle release whose CLI tools (generate_appcast) we download.
+  SPARKLE_VERSION: "2.6.4"
 
 jobs:
   build:
@@ -36,6 +42,11 @@ jobs:
 
     steps:
       - uses: actions/checkout@v4
+        with:
+          # Full history so make_release.sh can derive a monotonic build
+          # number from `git rev-list --count HEAD` (Sparkle needs an
+          # increasing CFBundleVersion).
+          fetch-depth: 0
 
       - name: Select latest stable Xcode
         uses: maxim-lobanov/setup-xcode@v1
@@ -116,6 +127,29 @@ jobs:
           echo "==> Identities visible in temp keychain:"
           security find-identity -v -p codesigning "$KEYCHAIN_PATH"
 
+      # ----- Sparkle appcast tooling (release only) -------------------------
+      - name: Set up Sparkle tools
+        if: inputs.release
+        env:
+          SPARKLE_PRIVATE_KEY: ${{ secrets.SPARKLE_PRIVATE_KEY }}
+        run: |
+          if [ -z "$SPARKLE_PRIVATE_KEY" ]; then
+            echo "SPARKLE_PRIVATE_KEY secret not set — appcast will be skipped." >&2
+            exit 0
+          fi
+          # Download the matching Sparkle release just for its CLI tools.
+          TARBALL="Sparkle-$SPARKLE_VERSION.tar.xz"
+          curl -sLO "https://github.com/sparkle-project/Sparkle/releases/download/$SPARKLE_VERSION/$TARBALL"
+          mkdir -p "$RUNNER_TEMP/sparkle"
+          tar -xf "$TARBALL" -C "$RUNNER_TEMP/sparkle"
+          echo "SPARKLE_BIN=$RUNNER_TEMP/sparkle/bin" >> "$GITHUB_ENV"
+
+          # Materialize the EdDSA private key into a file for generate_appcast.
+          KEY_FILE="$RUNNER_TEMP/sparkle_ed_private_key"
+          printf '%s' "$SPARKLE_PRIVATE_KEY" > "$KEY_FILE"
+          chmod 600 "$KEY_FILE"
+          echo "SPARKLE_PRIVATE_KEY_FILE=$KEY_FILE" >> "$GITHUB_ENV"
+
       - name: Build, sign, notarize, package
         if: inputs.release
         env:
@@ -123,6 +157,9 @@ jobs:
           APPLE_ID: ${{ secrets.APPLE_ID }}
           APPLE_APP_SPECIFIC_PASSWORD: ${{ secrets.APPLE_APP_SPECIFIC_PASSWORD }}
           # KEYCHAIN_NAME / KEYCHAIN_PASSWORD already exported by previous step
+          # SPARKLE_BIN / SPARKLE_PRIVATE_KEY_FILE exported by the step above
+          # Enclosure URLs in the appcast point at this tag's release assets.
+          SPARKLE_DOWNLOAD_URL_PREFIX: https://github.com/${{ github.repository }}/releases/download/${{ github.ref_name }}/
         run: |
           security unlock-keychain -p "$KEYCHAIN_PASSWORD" "$KEYCHAIN_NAME"
           DEVELOPER_ID_APPLICATION=$(security find-identity -v -p codesigning "$KEYCHAIN_NAME" \
@@ -143,4 +180,5 @@ jobs:
           path: |
             release/*.dmg
             release/*.zip
+            release/appcast.xml
           if-no-files-found: ignore

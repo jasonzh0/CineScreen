@@ -50,6 +50,9 @@ final class ControlBarController {
         )
         panel.isOpaque = false
         panel.backgroundColor = .clear
+        // Branded dark HUD — force dark appearance so `.regularMaterial` and the
+        // white-on-dark text don't wash out under a light-mode system.
+        panel.appearance = NSAppearance(named: .darkAqua)
         panel.hasShadow = true
         panel.level = .statusBar
         panel.collectionBehavior = [.canJoinAllSpaces, .stationary, .fullScreenAuxiliary]

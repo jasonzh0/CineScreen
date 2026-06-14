@@ -21,6 +21,7 @@ jobs:
       APPLE_ID: ${{ secrets.APPLE_ID }}
       APPLE_APP_SPECIFIC_PASSWORD: ${{ secrets.APPLE_APP_SPECIFIC_PASSWORD }}
       APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
+      SPARKLE_PRIVATE_KEY: ${{ secrets.SPARKLE_PRIVATE_KEY }}
 
   release:
     needs: build
@@ -39,3 +40,16 @@ jobs:
           files: |
             dist/*.dmg
             dist/*.zip
+
+      # Publish the Sparkle feed to GitHub Pages. The release above must come
+      # first so the appcast's enclosure URLs (this tag's release assets)
+      # resolve. keep_files preserves anything else already on the branch.
+      - name: Publish appcast to GitHub Pages
+        if: hashFiles('dist/appcast.xml') != ''
+        uses: peaceiris/actions-gh-pages@v4
+        with:
+          github_token: ${{ secrets.GITHUB_TOKEN }}
+          publish_dir: dist
+          publish_branch: gh-pages
+          keep_files: true
+          exclude_assets: '*.dmg,*.zip'

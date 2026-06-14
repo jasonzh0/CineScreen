@@ -11,7 +11,7 @@ options:
 settings:
   base:
     SWIFT_VERSION: "5.9"
-    MARKETING_VERSION: "2.3.2"
+    MARKETING_VERSION: "2.4.0"
     CURRENT_PROJECT_VERSION: "1"
     ENABLE_HARDENED_RUNTIME: YES
     CODE_SIGN_STYLE: Manual
@@ -29,6 +29,14 @@ settings:
       SWIFT_COMPILATION_MODE: wholemodule
       GCC_OPTIMIZATION_LEVEL: "s"
 
+packages:
+  # Sparkle powers in-place auto-updates. Updating the app at its existing
+  # path preserves its code-signing identity, so TCC keeps the user's granted
+  # Accessibility / Screen Recording permissions — no re-granting after updates.
+  Sparkle:
+    url: https://github.com/sparkle-project/Sparkle
+    from: "2.6.0"
+
 targets:
   CineScreen:
     type: application
@@ -38,6 +46,8 @@ targets:
         excludes:
           - "Info.plist"
           - "CineScreen.entitlements"
+    dependencies:
+      - package: Sparkle
     settings:
       base:
         PRODUCT_BUNDLE_IDENTIFIER: com.cinescreen.app.native

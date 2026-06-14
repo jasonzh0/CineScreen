@@ -50,6 +50,11 @@ EXPORT_PATH="$BUILD_DIR/export"
 APP_PATH="$EXPORT_PATH/CineScreen.app"
 
 VERSION="$(grep -E '^\s*MARKETING_VERSION:' project.yml | head -1 | sed 's/.*"\(.*\)".*/\1/')"
+# Sparkle decides "is this newer?" by comparing CFBundleVersion, so it must
+# increase every release. project.yml pins it to "1"; override with a
+# monotonic build number from the commit count. (Requires a full clone — CI
+# checks out with fetch-depth: 0.)
+BUILD_NUMBER="$(git rev-list --count HEAD 2>/dev/null || echo 1)"
 ARCH="$(uname -m)"
 DMG_PATH="$RELEASE_DIR/CineScreen-${VERSION}-${ARCH}.dmg"
 ZIP_PATH="$RELEASE_DIR/CineScreen-${VERSION}-${ARCH}.zip"
@@ -68,7 +73,9 @@ XCODEBUILD_ARGS=(
   -configuration Release
   -archivePath "$ARCHIVE_PATH"
   -destination "generic/platform=macOS"
+  "CURRENT_PROJECT_VERSION=$BUILD_NUMBER"
 )
+echo "    Marketing version: $VERSION  (build $BUILD_NUMBER)"
 
 if [[ -n "${DEVELOPER_ID_APPLICATION:-}" && -n "${APPLE_TEAM_ID:-}" ]]; then
   echo "    Signing identity: $DEVELOPER_ID_APPLICATION"
@@ -199,6 +206,47 @@ if [[ "$NOTARIZE" == "1" && -n "${DEVELOPER_ID_APPLICATION:-}" \
   xcrun stapler staple "$DMG_PATH"
 fi
 
+# ---------------------------------------------------------------------------
+# Sparkle appcast — describes this build to the auto-updater and EdDSA-signs
+# the ZIP so clients can verify it. Skipped unless the Sparkle tools and a
+# private key are available.
+#
+#   SPARKLE_BIN                 dir containing `generate_appcast` (default: PATH)
+#   SPARKLE_PRIVATE_KEY_FILE    file holding the EdDSA private key (base64)
+#   SPARKLE_DOWNLOAD_URL_PREFIX e.g. https://github.com/jasonzh0/CineScreen/releases/download/v2.3.2/
+#
+# Produces release/appcast.xml with enclosure URLs pointing at the published
+# release assets. The enclosure ZIP need not exist yet — only its URL is baked
+# in — so this can run before the GitHub Release is created.
+# ---------------------------------------------------------------------------
+GENERATE_APPCAST="${SPARKLE_BIN:+$SPARKLE_BIN/}generate_appcast"
+if command -v "$GENERATE_APPCAST" >/dev/null 2>&1; then
+  if [[ -z "${SPARKLE_PRIVATE_KEY_FILE:-}" ]]; then
+    echo "==> Skipping appcast (SPARKLE_PRIVATE_KEY_FILE not set)"
+  else
+    echo "==> Generating Sparkle appcast"
+    APPCAST_STAGE="$BUILD_DIR/appcast-stage"
+    rm -rf "$APPCAST_STAGE"
+    mkdir -p "$APPCAST_STAGE"
+    cp "$ZIP_PATH" "$APPCAST_STAGE/"
+
+    GENERATE_ARGS=(
+      --ed-key-file "$SPARKLE_PRIVATE_KEY_FILE"
+      --link "https://github.com/jasonzh0/CineScreen"
+    )
+    if [[ -n "${SPARKLE_DOWNLOAD_URL_PREFIX:-}" ]]; then
+      GENERATE_ARGS+=(--download-url-prefix "$SPARKLE_DOWNLOAD_URL_PREFIX")
+    fi
+
+    "$GENERATE_APPCAST" "${GENERATE_ARGS[@]}" "$APPCAST_STAGE"
+    cp "$APPCAST_STAGE/appcast.xml" "$RELEASE_DIR/appcast.xml"
+    echo "    Wrote $RELEASE_DIR/appcast.xml"
+  fi
+else
+  echo "==> Skipping appcast (generate_appcast not found; set SPARKLE_BIN)"
+fi
+
 echo
 echo "==> Done."
 ls -lh "$DMG_PATH" "$ZIP_PATH"
+[[ -f "$RELEASE_DIR/appcast.xml" ]] && ls -lh "$RELEASE_DIR/appcast.xml"

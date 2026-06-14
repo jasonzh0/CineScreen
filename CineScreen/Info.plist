@@ -40,5 +40,15 @@
     <string>CineScreen records your screen and system audio.</string>
     <key>NSAccessibilityUsageDescription</key>
     <string>CineScreen tracks cursor movement and clicks so it can render a smooth, animated cursor in your recordings.</string>
+
+    <!-- Sparkle auto-update. The feed is hosted on GitHub Pages; its enclosures
+         point at the versioned release ZIPs. SUPublicEDKey must be the EdDSA
+         public key printed by Sparkle's `generate_keys` tool (see
+         docs/UPDATES.md). The placeholder below MUST be replaced before
+         shipping or update checks will fail signature verification. -->
+    <key>SUFeedURL</key>
+    <string>https://jasonzh0.github.io/CineScreen/appcast.xml</string>
+    <key>SUPublicEDKey</key>
+    <string>XgEJRGLTZc63fJe4MteEknxUf7N1QLWrGSkui9/QCU8=</string>
 </dict>
 </plist>
