@@ -290,8 +290,8 @@ struct RenderSnapshot: Sendable {
         // cursor approaches the visible-frame edge (so a fast drag doesn't
         // leave the spring lagging out of frame). The cursor pre-smoothing
         // spring stays fast/static to kill trackpad jitter.
-        let cameraMaxSmoothTime: Double = 0.55
-        let cameraMinSmoothTime: Double = 0.12
+        let cameraMaxSmoothTime: Double = 0.60
+        let cameraMinSmoothTime: Double = 0.16
         let cursorSmoothTime: Double = 0.12
         // Maximum fraction of visible half-extent the cursor is allowed to
         // reach before we hard-clamp the camera. Keeps the cursor inside the
@@ -305,7 +305,9 @@ struct RenderSnapshot: Sendable {
         let integrationHz: Double = 240.0
         let dtSec: Double = 1.0 / integrationHz
         let dtMs: Double = dtSec * 1000.0
-        let outputIntervalMs: Double = 16.0
+        // ~125 Hz pan samples (was 60 Hz). The renderer interpolates linearly
+        // between samples, so a finer track means smoother sub-frame motion.
+        let outputIntervalMs: Double = 8.0
 
         var out: [PanSample] = []
         out.reserveCapacity(sections.count * 256)
@@ -387,14 +389,20 @@ struct RenderSnapshot: Sendable {
                 //    smoothTime tightens as the cursor approaches the visible
                 //    frame edge. Per-axis so a fast horizontal drag doesn't
                 //    also tighten the vertical follow (and vice versa).
-                let urgencyX = Float(min(1, max(0,
+                let rawUrgencyX = Float(min(1, max(0,
                     (Double(abs(smoothCursor.x - camera.x)) - Double(safeHalfX))
                     / Double(visHalfX - safeHalfX)
                 )))
-                let urgencyY = Float(min(1, max(0,
+                let rawUrgencyY = Float(min(1, max(0,
                     (Double(abs(smoothCursor.y - camera.y)) - Double(safeHalfY))
                     / Double(visHalfY - safeHalfY)
                 )))
+                // Smoothstep the urgency so the follow tightens GRADUALLY as the
+                // cursor nears the frame edge. A linear ramp made the camera
+                // visibly "kick" into its fast-follow mode; smoothstep is C1 at
+                // both ends, so the acceleration eases in and out.
+                let urgencyX = rawUrgencyX * rawUrgencyX * (3 - 2 * rawUrgencyX)
+                let urgencyY = rawUrgencyY * rawUrgencyY * (3 - 2 * rawUrgencyY)
                 let stX = cameraMaxSmoothTime
                     + (cameraMinSmoothTime - cameraMaxSmoothTime) * Double(urgencyX)
                 let stY = cameraMaxSmoothTime
@@ -418,10 +426,15 @@ struct RenderSnapshot: Sendable {
                 let maxOffY = visHalfY * frameEdgeFraction
                 let dcx = smoothCursor.x - camera.x
                 let dcy = smoothCursor.y - camera.y
-                if dcx > maxOffX { camera.x = smoothCursor.x - maxOffX; cameraVel.x = 0 }
-                else if dcx < -maxOffX { camera.x = smoothCursor.x + maxOffX; cameraVel.x = 0 }
-                if dcy > maxOffY { camera.y = smoothCursor.y - maxOffY; cameraVel.y = 0 }
-                else if dcy < -maxOffY { camera.y = smoothCursor.y + maxOffY; cameraVel.y = 0 }
+                // Clamp the camera so the cursor can't leave the frame, but
+                // only DAMP the velocity instead of zeroing it. Hard-zeroing
+                // made the camera dead-stop when a fast drag hit the edge (a
+                // visible jerk); keeping part of the catch-up momentum lets it
+                // ride the edge smoothly with the cursor.
+                if dcx > maxOffX { camera.x = smoothCursor.x - maxOffX; cameraVel.x *= 0.5 }
+                else if dcx < -maxOffX { camera.x = smoothCursor.x + maxOffX; cameraVel.x *= 0.5 }
+                if dcy > maxOffY { camera.y = smoothCursor.y - maxOffY; cameraVel.y *= 0.5 }
+                else if dcy < -maxOffY { camera.y = smoothCursor.y + maxOffY; cameraVel.y *= 0.5 }
                 clampCameraAndKillVelocity(pos: &camera, vel: &cameraVel)
 
                 if t - lastOutputMs >= outputIntervalMs {

@@ -264,12 +264,27 @@ final class EditorViewModel {
     // only the live-preview spring smoothing — everything else flows through
     // the snapshot.
 
+    /// Playback time sampled *fresh on every rendered frame*.
+    ///
+    /// The periodic time observer only refreshes `currentTimeMs` at 30 Hz (it
+    /// drives the timeline playhead UI), but the Metal preview renders at
+    /// 60 fps. Sampling the camera / cursor / clicks from the 30 Hz value made
+    /// the zoom and pan visibly stair-step — half the frames saw no time
+    /// advance at all. During playback we instead read the player's own clock
+    /// so the camera advances every rendered frame; when paused or scrubbing
+    /// we fall back to `currentTimeMs`, the authoritative seek target.
+    var renderTimeMs: Double {
+        guard isPlaying else { return currentTimeMs }
+        let secs = player.currentTime().seconds
+        return secs.isFinite ? secs * 1000 : currentTimeMs
+    }
+
     /// Live-preview cursor state — snapshot's base position with spring
     /// smoothing layered on top. The export uses the same snapshot + a
     /// separate `ExportCursorSmoother` instance.
     func cursorState(atMilliseconds ms: Double? = nil) -> CursorRenderState? {
         guard let snapshot = makeRenderSnapshot() else { return nil }
-        let t = ms ?? currentTimeMs
+        let t = ms ?? renderTimeMs
         guard var state = snapshot.cursorStateForExport(atMilliseconds: t) else { return nil }
 
         // Apply spring smoothing using the elapsed time since the last call.
@@ -296,13 +311,13 @@ final class EditorViewModel {
     /// Click ring states at the playhead — pure delegation.
     func clickRingStates(atMilliseconds ms: Double? = nil) -> [ClickRingState] {
         guard let snapshot = makeRenderSnapshot() else { return [] }
-        return snapshot.clickRingStates(atMilliseconds: ms ?? currentTimeMs)
+        return snapshot.clickRingStates(atMilliseconds: ms ?? renderTimeMs)
     }
 
     /// Zoom transform at the playhead — pure delegation.
     func zoomState(atMilliseconds ms: Double? = nil) -> ZoomState {
         guard let snapshot = makeRenderSnapshot() else { return .identity }
-        return snapshot.zoomState(atMilliseconds: ms ?? currentTimeMs)
+        return snapshot.zoomState(atMilliseconds: ms ?? renderTimeMs)
     }
 
     private func activeZoomSections(metadata: RecordingMetadata) -> [ZoomSection] {
