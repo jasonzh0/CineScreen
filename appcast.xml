@@ -1,0 +1,15 @@
+<?xml version="1.0" standalone="yes"?>
+<rss xmlns:sparkle="http://www.andymatuschak.org/xml-namespaces/sparkle" version="2.0">
+    <channel>
+        <title>CineScreen</title>
+        <item>
+            <title>2.4.0</title>
+            <pubDate>Sun, 14 Jun 2026 22:48:58 +0000</pubDate>
+            <link>https://github.com/jasonzh0/CineScreen</link>
+            <sparkle:version>137</sparkle:version>
+            <sparkle:shortVersionString>2.4.0</sparkle:shortVersionString>
+            <sparkle:minimumSystemVersion>14.0</sparkle:minimumSystemVersion>
+            <enclosure url="https://github.com/jasonzh0/CineScreen/releases/download/v2.4.0/CineScreen-2.4.0-arm64.zip" length="3668138" type="application/octet-stream" sparkle:edSignature="5R1uD2I3+bcxrE5TXLfMcPRvSn+xh6Rz1GSgiDV4kDpAOs9v9N/olEAN/EfpHzs+gYMC4Trf1YAsLaMGpfzdBQ=="/>
+        </item>
+    </channel>
+</rss>
