@@ -7,6 +7,9 @@ struct SidebarView: View {
     @State private var exportFraction: Double = 0
     @State private var isExporting: Bool = false
     @State private var exportError: String?
+    /// Live pipeline while an export runs — kept so the Cancel button can
+    /// reach it. Nil outside an export.
+    @State private var exportPipeline: ExportPipeline?
 
     var body: some View {
         VStack(alignment: .leading, spacing: 14) {
@@ -28,7 +31,15 @@ struct SidebarView: View {
 
             if isExporting {
                 VStack(alignment: .leading, spacing: 4) {
-                    Text("Exporting…").font(.caption).foregroundStyle(CTheme.textSecondary)
+                    HStack {
+                        Text("Exporting…").font(.caption).foregroundStyle(CTheme.textSecondary)
+                        Spacer()
+                        Button("Cancel") { exportPipeline?.cancel() }
+                            .buttonStyle(.plain)
+                            .font(.caption)
+                            .foregroundStyle(CTheme.textSecondary)
+                            .help("Stop the export and delete the partial file")
+                    }
                     ProgressView(value: exportFraction, total: 1.0)
                 }
             }
@@ -640,12 +651,31 @@ struct SidebarView: View {
         // and the source files' decoder pools, slowing exports and (in
         // some configs) stalling them entirely.
         vm.pause()
-        vm.webcamPlayer?.pause()
+
+        let pipeline = ExportPipeline()
+        exportPipeline = pipeline
+        let webcamLayout = vm.webcamLayout
+        // Progress events flow through one ordered stream consumed by a
+        // single task. The old per-event `Task { @MainActor }` fan-out could
+        // run events out of order — progress jumping backwards, or a late
+        // failure landing after the success toast.
+        let (progressStream, progressCont) = AsyncStream.makeStream(of: ExportPipeline.Progress.self)
         Task { @MainActor in
+            for await progress in progressStream {
+                switch progress {
+                case let .running(fraction): exportFraction = fraction
+                case .finished:              exportFraction = 1
+                }
+            }
+        }
+        Task { @MainActor in
+            defer {
+                progressCont.finish()
+                isExporting = false
+                exportPipeline = nil
+            }
             do {
-                let pipeline = ExportPipeline()
-                let webcamLayout = vm.webcamLayout
-                _ = try await pipeline.export(.init(
+                let out = try await pipeline.export(.init(
                     sourceVideoURL: vm.videoURL,
                     outputURL: outURL,
                     trimRangeMs: trimRange,
@@ -656,29 +686,13 @@ struct SidebarView: View {
                     webcamURL: vm.webcamURL,
                     webcamLayout: webcamLayout
                 )) { progress in
-                    Task { @MainActor in
-                        switch progress {
-                        case .starting:
-                            self.exportFraction = 0
-                        case let .running(fraction):
-                            self.exportFraction = fraction
-                        case .finished:
-                            self.exportFraction = 1
-                        case let .failed(message):
-                            self.exportError = message
-                        }
-                    }
+                    progressCont.yield(progress)
                 }
-                // Only claim success if the pipeline didn't report a failure
-                // via the progress callback — otherwise we'd show both an error
-                // and "Exported to …" at once.
-                if exportError == nil {
-                    saveMessage = "Exported to \(outURL.lastPathComponent)"
-                }
-                isExporting = false
+                saveMessage = "Exported to \(out.lastPathComponent)"
+            } catch ExportError.cancelled {
+                saveMessage = "Export cancelled"
             } catch {
                 exportError = error.localizedDescription
-                isExporting = false
             }
         }
     }

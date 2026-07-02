@@ -2,8 +2,45 @@ import Foundation
 import AVFoundation
 import CoreVideo
 
+/// Shared stop flags for one export run. The video/audio loops (each on its
+/// own DispatchQueue) consult it at every ready-callback; `cancel()` and the
+/// first recorded failure set it. Lock-protected — touched from arbitrary
+/// queues plus the main actor.
+private final class ExportSessionState: @unchecked Sendable {
+    private let lock = NSLock()
+    private var cancelled = false
+    private var failure: Error?
+
+    func cancel() {
+        lock.lock(); defer { lock.unlock() }
+        cancelled = true
+    }
+
+    /// Records the first failure; later ones are dropped (the first is the
+    /// root cause — everything after it is teardown noise).
+    func fail(_ error: Error) {
+        lock.lock(); defer { lock.unlock() }
+        if failure == nil { failure = error }
+    }
+
+    var shouldStop: Bool {
+        lock.lock(); defer { lock.unlock() }
+        return cancelled || failure != nil
+    }
+
+    var isCancelled: Bool {
+        lock.lock(); defer { lock.unlock() }
+        return cancelled
+    }
+}
+
 /// One-shot export job. Reads the source video + audio, runs each frame
 /// through `ExportCompositor`, and writes a new H.264 .mp4.
+///
+/// Failure/cancel safety: the writer targets a hidden temp file next to the
+/// destination and is promoted with an atomic replace only on success — a
+/// failed or cancelled export never destroys an existing file at the
+/// destination and never leaves a half-written .mp4 behind.
 @MainActor
 final class ExportPipeline {
     struct Input {
@@ -29,17 +66,18 @@ final class ExportPipeline {
     }
 
     enum Progress {
-        case starting
         case running(fraction: Double)
         case finished(URL)
-        case failed(String)
     }
 
-    private(set) var progress: Progress = .starting
+    private let session = ExportSessionState()
+
+    /// Stops the export at the next frame boundary. The run tears down its
+    /// reader/writer, deletes the temp file, and `export` throws
+    /// `ExportError.cancelled`.
+    func cancel() { session.cancel() }
 
     func export(_ input: Input, onProgress: @Sendable @escaping (Progress) -> Void) async throws -> URL {
-        try? FileManager.default.removeItem(at: input.outputURL)
-
         let asset = AVURLAsset(url: input.sourceVideoURL)
 
         // Load track + duration metadata
@@ -118,8 +156,13 @@ final class ExportPipeline {
             }
         }
 
-        // Writer
-        let writer = try AVAssetWriter(outputURL: input.outputURL, fileType: .mp4)
+        // Writer — targets a hidden sibling temp file, promoted on success.
+        // Writing straight to `outputURL` destroyed any existing file the
+        // moment the export started and left broken partials on failure.
+        let tempURL = input.outputURL
+            .deletingLastPathComponent()
+            .appendingPathComponent(".cinescreen-export-\(UUID().uuidString).mp4")
+        let writer = try AVAssetWriter(outputURL: tempURL, fileType: .mp4)
 
         let videoBitrate = Int(Double(Int(outputSize.width) * Int(outputSize.height)) * Double(fps) * 0.10)
         let videoSettings: [String: Any] = [
@@ -177,65 +220,96 @@ final class ExportPipeline {
         }
         writer.startSession(atSourceTime: startTime)
 
+        // From here on a file exists at `tempURL` — every failure path below
+        // must run `tearDown()` so no partial file or live writer survives.
+        func tearDown() {
+            if reader.status == .reading { reader.cancelReading() }
+            if writer.status == .writing { writer.cancelWriting() }
+            try? FileManager.default.removeItem(at: tempURL)
+        }
+
         guard reader.startReading() else {
-            throw ExportError.readerStartFailed(reader.error?.localizedDescription ?? "unknown")
+            let error = ExportError.readerStartFailed(reader.error?.localizedDescription ?? "unknown")
+            tearDown()
+            throw error
         }
 
         onProgress(.running(fraction: 0))
 
         // Optional webcam source — uses the same trim range so the overlay
         // stays in sync after trimming the head off the screen recording.
-        let webcamSource = try await WebcamFrameSource.open(
-            url: input.webcamURL,
-            timeRange: timeRange
-        )
-
-        // Run video AND audio loops concurrently. AVAssetWriter does
-        // cross-input synchronization: when you add multiple writer inputs,
-        // it expects you to append interleaved samples. If we ran video
-        // alone first, the writer would back off video input (isReady=false
-        // forever) waiting for audio that doesn't arrive until later —
-        // exactly the symptom we saw: writer stays in .writing state, video
-        // closure never re-invoked.
-        try await withThrowingTaskGroup(of: Void.self) { group in
-            group.addTask { [self] in
-                try await runVideoLoop(
-                    reader: reader,
-                    readerOutput: videoReaderOutput,
-                    writer: writer,
-                    writerInput: videoWriterInput,
-                    adaptor: adaptor,
-                    compositor: compositor,
-                    cursorAt: input.cursorAt,
-                    clicksAt: input.clicksAt,
-                    zoomAt: input.zoomAt,
-                    canvasStyle: input.canvas,
-                    webcamSource: webcamSource,
-                    webcamLayout: input.webcamLayout,
-                    timeRangeStart: startTime,
-                    timeRangeEnd: endTime,
-                    outputFPS: Int(fps),
-                    trimmedSeconds: trimmedSeconds,
-                    onProgress: onProgress
-                )
-            }
-            for (out, audioInput) in zip(audioReaderOutputs, audioWriterInputs) {
-                group.addTask { [self] in
-                    try await runAudioLoop(writerInput: audioInput, readerOutput: out)
-                }
-            }
-            try await group.waitForAll()
+        let webcamSource: WebcamFrameSource?
+        do {
+            webcamSource = try await WebcamFrameSource.open(
+                url: input.webcamURL,
+                timeRange: timeRange
+            )
+        } catch {
+            tearDown()
+            throw error
         }
 
-        await writer.finishWriting()
+        let session = self.session
+        do {
+            // Run video AND audio loops concurrently. AVAssetWriter does
+            // cross-input synchronization: when you add multiple writer inputs,
+            // it expects you to append interleaved samples. If we ran video
+            // alone first, the writer would back off video input (isReady=false
+            // forever) waiting for audio that doesn't arrive until later —
+            // exactly the symptom we saw: writer stays in .writing state, video
+            // closure never re-invoked.
+            //
+            // Loop failure protocol: a failing loop records its error in
+            // `session` and marks its own input finished — that unblocks the
+            // writer's interleaving wait so the *other* loops' callbacks fire,
+            // see `shouldStop`, and exit cleanly instead of hanging forever.
+            try await withTaskCancellationHandler {
+                try await withThrowingTaskGroup(of: Void.self) { group in
+                    group.addTask { [self] in
+                        try await runVideoLoop(
+                            reader: reader,
+                            readerOutput: videoReaderOutput,
+                            writer: writer,
+                            writerInput: videoWriterInput,
+                            adaptor: adaptor,
+                            compositor: compositor,
+                            cursorAt: input.cursorAt,
+                            clicksAt: input.clicksAt,
+                            zoomAt: input.zoomAt,
+                            canvasStyle: input.canvas,
+                            webcamSource: webcamSource,
+                            webcamLayout: input.webcamLayout,
+                            timeRangeStart: startTime,
+                            timeRangeEnd: endTime,
+                            outputFPS: Int(fps),
+                            trimmedSeconds: trimmedSeconds,
+                            onProgress: onProgress
+                        )
+                    }
+                    for (out, audioInput) in zip(audioReaderOutputs, audioWriterInputs) {
+                        group.addTask { [self] in
+                            try await runAudioLoop(reader: reader, writerInput: audioInput, readerOutput: out)
+                        }
+                    }
+                    try await group.waitForAll()
+                }
+            } onCancel: {
+                session.cancel()
+            }
 
-        if writer.status == .completed {
-            onProgress(.finished(input.outputURL))
-            return input.outputURL
-        } else {
-            let msg = writer.error?.localizedDescription ?? "status=\(writer.status.rawValue)"
-            onProgress(.failed(msg))
-            throw ExportError.writeFailed(msg)
+            if session.isCancelled { throw ExportError.cancelled }
+
+            await writer.finishWriting()
+            guard writer.status == .completed else {
+                throw ExportError.writeFailed(writer.error?.localizedDescription ?? "status=\(writer.status.rawValue)")
+            }
+
+            let output = try promote(tempURL, to: input.outputURL)
+            onProgress(.finished(output))
+            return output
+        } catch {
+            tearDown()
+            throw error
         }
     }
 
@@ -261,6 +335,7 @@ final class ExportPipeline {
         onProgress: @Sendable @escaping (Progress) -> Void
     ) async throws {
         let processingQueue = DispatchQueue(label: "com.cinescreen.export.video", qos: .userInitiated)
+        let session = self.session
 
         let frameCounter = FrameCounter()
         // Output emits at a uniform cadence — the source recording's actual
@@ -275,20 +350,43 @@ final class ExportPipeline {
         // Where source is sparser than output, we reuse the cached frame.
         var nextOutputPTS = timeRangeStart
         var currentSourceBuffer: CVPixelBuffer? = nil
-        var currentSourcePTS: CMTime = .negativeInfinity
         var peekedSourceBuffer: CVPixelBuffer? = nil
         var peekedSourcePTS: CMTime = .negativeInfinity
         var sourceExhausted = false
 
         try await withCheckedThrowingContinuation { (continuation: CheckedContinuation<Void, Error>) in
+            // AVFoundation re-invokes the ready-callback after failures (a
+            // failed writer forces isReadyForMoreMediaData true so clients can
+            // discover the error) — resuming the continuation twice traps.
+            // `finish` is resume-once (the serial queue makes the plain flag
+            // race-free), marks the input finished so the writer stops
+            // requesting media, and records failures in `session` so the
+            // sibling audio loops exit instead of hanging on the writer's
+            // interleaving wait.
+            var finished = false
+            func finish(_ result: Result<Void, Error>) {
+                guard !finished else { return }
+                finished = true
+                writerInput.markAsFinished()
+                if case let .failure(error) = result { session.fail(error) }
+                continuation.resume(with: result)
+            }
+
             writerInput.requestMediaDataWhenReady(on: processingQueue) {
+                guard !finished else { return }
                 while writerInput.isReadyForMoreMediaData {
+                    // Another loop failed, or the user cancelled — exit
+                    // quietly; export() decides what to throw.
+                    if session.shouldStop {
+                        finish(.success(()))
+                        return
+                    }
+
                     // Stop once we've emitted every output frame in the
                     // trim range.
                     if CMTimeCompare(nextOutputPTS, timeRangeEnd) >= 0 {
-                        writerInput.markAsFinished()
                         Log.app.info("Export: video loop finished at frame \(frameCounter.count), reached end of trim range")
-                        continuation.resume(returning: ())
+                        finish(.success(()))
                         return
                     }
 
@@ -302,26 +400,32 @@ final class ExportPipeline {
                         if let peek = peekedSourceBuffer,
                            CMTimeCompare(peekedSourcePTS, nextOutputPTS) <= 0 {
                             currentSourceBuffer = peek
-                            currentSourcePTS = peekedSourcePTS
                             peekedSourceBuffer = nil
                         }
                         if peekedSourceBuffer != nil { break }
                         guard reader.status == .reading,
                               let sample = readerOutput.copyNextSampleBuffer(),
                               let buf = CMSampleBufferGetImageBuffer(sample) else {
+                            // Distinguish end-of-media from a decoder failure.
+                            // Treating .failed as EOF used to freeze-frame the
+                            // remaining frames and report success.
+                            if reader.status == .failed {
+                                finish(.failure(ExportError.readError(
+                                    reader.error?.localizedDescription ?? "video decode failed mid-export"
+                                )))
+                                return
+                            }
                             sourceExhausted = true
                             break
                         }
                         let pts = CMSampleBufferGetPresentationTimeStamp(sample)
                         if CMTimeCompare(pts, nextOutputPTS) <= 0 {
                             currentSourceBuffer = buf
-                            currentSourcePTS = pts
                         } else {
                             peekedSourceBuffer = buf
                             peekedSourcePTS = pts
                             if currentSourceBuffer == nil {
                                 currentSourceBuffer = buf
-                                currentSourcePTS = pts
                             }
                         }
                     }
@@ -329,9 +433,8 @@ final class ExportPipeline {
                     guard let sourceBuffer = currentSourceBuffer else {
                         // Source exhausted before producing any frame —
                         // unusual; finalize cleanly.
-                        writerInput.markAsFinished()
                         Log.app.warning("Export: source had no frames before output range; finishing")
-                        continuation.resume(returning: ())
+                        finish(.success(()))
                         return
                     }
 
@@ -341,13 +444,13 @@ final class ExportPipeline {
                     let zoom = zoomAt(outputTimeMs)
 
                     guard let pool = adaptor.pixelBufferPool else {
-                        continuation.resume(throwing: ExportError.pixelBufferPoolMissing)
+                        finish(.failure(ExportError.pixelBufferPoolMissing))
                         return
                     }
                     var destBuffer: CVPixelBuffer?
                     let allocStatus = CVPixelBufferPoolCreatePixelBuffer(kCFAllocatorDefault, pool, &destBuffer)
                     guard allocStatus == kCVReturnSuccess, let dest = destBuffer else {
-                        continuation.resume(throwing: ExportError.pixelBufferAllocFailed)
+                        finish(.failure(ExportError.pixelBufferAllocFailed))
                         return
                     }
 
@@ -364,14 +467,14 @@ final class ExportPipeline {
                     )
                     if !ok {
                         Log.app.error("Export: compositor.render returned false at frame \(frameCounter.count), output pts=\(nextOutputPTS.seconds)s")
-                        continuation.resume(throwing: ExportError.compositeFailed)
+                        finish(.failure(ExportError.compositeFailed))
                         return
                     }
                     if !adaptor.append(dest, withPresentationTime: nextOutputPTS) {
                         Log.app.error("Export: adaptor.append failed at frame \(frameCounter.count), pts=\(nextOutputPTS.seconds)s, writer.status=\(writer.status.rawValue), writer.error=\(writer.error?.localizedDescription ?? "nil")")
-                        continuation.resume(throwing: ExportError.appendFailed(
-                            reader.error?.localizedDescription ?? "video append failed"
-                        ))
+                        finish(.failure(ExportError.appendFailed(
+                            writer.error?.localizedDescription ?? "video append failed"
+                        )))
                         return
                     }
 
@@ -390,20 +493,44 @@ final class ExportPipeline {
     }
 
     private func runAudioLoop(
+        reader: AVAssetReader,
         writerInput: AVAssetWriterInput,
         readerOutput: AVAssetReaderTrackOutput
     ) async throws {
         let queue = DispatchQueue(label: "com.cinescreen.export.audio", qos: .userInitiated)
+        let session = self.session
         try await withCheckedThrowingContinuation { (continuation: CheckedContinuation<Void, Error>) in
+            // Same resume-once + shared-stop protocol as the video loop.
+            var finished = false
+            func finish(_ result: Result<Void, Error>) {
+                guard !finished else { return }
+                finished = true
+                writerInput.markAsFinished()
+                if case let .failure(error) = result { session.fail(error) }
+                continuation.resume(with: result)
+            }
+
             writerInput.requestMediaDataWhenReady(on: queue) {
+                guard !finished else { return }
                 while writerInput.isReadyForMoreMediaData {
+                    if session.shouldStop {
+                        finish(.success(()))
+                        return
+                    }
                     guard let sample = readerOutput.copyNextSampleBuffer() else {
-                        writerInput.markAsFinished()
-                        continuation.resume(returning: ())
+                        // Distinguish end-of-media from a decoder failure so a
+                        // mid-stream failure doesn't silently truncate audio.
+                        if reader.status == .failed {
+                            finish(.failure(ExportError.readError(
+                                reader.error?.localizedDescription ?? "audio decode failed mid-export"
+                            )))
+                        } else {
+                            finish(.success(()))
+                        }
                         return
                     }
                     if !writerInput.append(sample) {
-                        continuation.resume(throwing: ExportError.appendFailed("audio append failed"))
+                        finish(.failure(ExportError.appendFailed("audio append failed")))
                         return
                     }
                 }
@@ -413,6 +540,19 @@ final class ExportPipeline {
 
     // MARK: - Helpers
 
+    /// Move the finished temp file into place. Uses an atomic replace when the
+    /// destination already exists (the user consented to overwriting it via
+    /// the save panel).
+    private func promote(_ tempURL: URL, to destination: URL) throws -> URL {
+        let fm = FileManager.default
+        if fm.fileExists(atPath: destination.path) {
+            _ = try fm.replaceItemAt(destination, withItemAt: tempURL)
+        } else {
+            try fm.moveItem(at: tempURL, to: destination)
+        }
+        return destination
+    }
+
     /// Apply a track's preferredTransform to its naturalSize so the output
     /// dimensions match what the user expects (e.g. portrait recordings).
     private func applyTransform(_ transform: CGAffineTransform, to size: CGSize) -> CGSize {
@@ -421,9 +561,8 @@ final class ExportPipeline {
     }
 }
 
-/// Simple atomic counter for diagnostic logging across the export's
-/// processing queue. Not thread-safe — the export's video loop is
-/// single-threaded so a plain Int is fine here.
+/// Frame counter for diagnostic logging. Only ever touched on the export's
+/// serial video queue, so a plain Int needs no synchronization.
 private final class FrameCounter: @unchecked Sendable {
     private(set) var count: Int = 0
     func increment() -> Int {
@@ -445,6 +584,7 @@ enum ExportError: LocalizedError {
     case appendFailed(String)
     case readError(String)
     case writeFailed(String)
+    case cancelled
 
     var errorDescription: String? {
         switch self {
@@ -460,6 +600,7 @@ enum ExportError: LocalizedError {
         case let .appendFailed(m):           return "Sample append failed: \(m)"
         case let .readError(m):              return "Read failed: \(m)"
         case let .writeFailed(m):            return "Write failed: \(m)"
+        case .cancelled:                     return "Export cancelled."
         }
     }
 }
