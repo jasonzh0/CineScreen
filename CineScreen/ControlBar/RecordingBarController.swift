@@ -133,6 +133,7 @@ final class RecordingBarController {
         Log.app.info("Recording bar: stop requested")
         Task { @MainActor in
             defer {
+                state.activeProject = nil
                 self.hide()
                 state.refreshProjects()
                 NSApp.activate(ignoringOtherApps: true)
@@ -161,6 +162,14 @@ final class RecordingBarController {
             let failure: String?
             if case let .error(message) = state.session.state { failure = message } else { failure = nil }
             await state.session.cancel()
+            if failure == nil, let folder = state.activeProject?.folderURL {
+                // Cancel discards: the session already deleted the media
+                // files; remove the folder too so no empty "Incomplete" tile
+                // lingers. On the failure-close path the folder holds the
+                // salvaged partial recording — keep it.
+                try? FileManager.default.removeItem(at: folder)
+            }
+            state.activeProject = nil
             self.hide()
             state.refreshProjects()
             NSApp.activate(ignoringOtherApps: true)

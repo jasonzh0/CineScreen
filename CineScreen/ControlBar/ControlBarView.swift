@@ -299,6 +299,11 @@ struct ControlBarView: View {
             } catch {
                 Log.app.error("ControlBar start failed: \(error.localizedDescription)")
                 state.statusMessage = error.localizedDescription
+                // The recording never started — remove the folder created for
+                // it so it doesn't linger as a permanent "Incomplete" tile.
+                try? FileManager.default.removeItem(at: project.folderURL)
+                state.activeProject = nil
+                state.refreshProjects()
             }
         }
     }
