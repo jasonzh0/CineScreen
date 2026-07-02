@@ -163,11 +163,23 @@ final class RecordingSession {
         let videoURL = captureResult.outputURL
         let metadataURL = videoURL.deletingPathExtension().appendingPathExtension("json")
 
+        // Camera warm-up delays the webcam's first frame 0.3–1.5s past the
+        // screen's. Both pipelines stamp host-clock PTS, so the difference is
+        // the exact track offset — persisted so editor and export can align
+        // the two files instead of playing the webcam early.
+        var webcamOffsetMs: Double?
+        if finalWebcamURL != nil,
+           let webcamFirst = webcam.lastFirstFramePTS,
+           let screenFirst = captureResult.firstFrameHostPTSSeconds {
+            webcamOffsetMs = (webcamFirst.seconds - screenFirst) * 1000
+        }
+
         let metadata = Self.buildMetadata(
             videoURL: videoURL,
             info: info,
             durationMs: durationMs,
-            samples: samples
+            samples: samples,
+            webcamOffsetMs: webcamOffsetMs
         )
 
         do {
@@ -245,7 +257,8 @@ final class RecordingSession {
         videoURL: URL,
         info: CaptureInfo,
         durationMs: Double,
-        samples: [MouseSample]
+        samples: [MouseSample],
+        webcamOffsetMs: Double? = nil
     ) -> RecordingMetadata {
         var keyframes: [CursorKeyframe] = []
         var clicks: [ClickEvent] = []
@@ -334,6 +347,7 @@ final class RecordingSession {
             clicks: clicks,
             effects: nil,
             trim: nil,
+            webcamOffsetMs: webcamOffsetMs,
             createdAt: Date().timeIntervalSince1970 * 1000
         )
     }

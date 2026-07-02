@@ -59,6 +59,10 @@ struct CaptureResult {
     /// Duration of the written file, derived from the last video frame's
     /// rebased PTS. nil if no frames landed.
     var capturedDurationMs: Double?
+    /// Raw host-clock PTS (seconds) of the first video frame — the file's
+    /// t=0. Compared against the webcam's first-frame PTS to derive the
+    /// camera warm-up offset.
+    var firstFrameHostPTSSeconds: Double?
 }
 
 enum CaptureError: LocalizedError {
@@ -491,7 +495,8 @@ final class ScreenCaptureService: NSObject {
                 outputURL: info.outputURL,
                 frames: frames,
                 info: info,
-                capturedDurationMs: capturedDurationMs
+                capturedDurationMs: capturedDurationMs,
+                firstFrameHostPTSSeconds: streamOutput?.sessionStartTime?.seconds
             )
         } else {
             // Surface as much detail as we can about the writer failure —

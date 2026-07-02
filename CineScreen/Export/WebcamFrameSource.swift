@@ -32,7 +32,12 @@ final class WebcamFrameSource: @unchecked Sendable {
     /// Returns nil if `url` is nil or the file can't be opened. In either
     /// case the export proceeds without an overlay, which is the safer
     /// behaviour than failing the whole render.
-    static func open(url: URL?, timeRange: CMTimeRange) async throws -> WebcamFrameSource? {
+    ///
+    /// `offsetMs` is the camera warm-up offset (screenT = webcamT + offset):
+    /// the read window is shifted into webcam time, and `frame(at:)` applies
+    /// the same mapping per query, so the overlay is time-aligned with the
+    /// screen instead of running early by the warm-up delay.
+    static func open(url: URL?, timeRange: CMTimeRange, offsetMs: Double = 0) async throws -> WebcamFrameSource? {
         guard let url = url else { return nil }
         guard FileManager.default.fileExists(atPath: url.path) else { return nil }
 
@@ -46,7 +51,10 @@ final class WebcamFrameSource: @unchecked Sendable {
         } catch {
             return nil
         }
-        reader.timeRange = timeRange
+        let offset = CMTime(seconds: offsetMs / 1000, preferredTimescale: 600)
+        let start = CMTimeMaximum(.zero, CMTimeSubtract(timeRange.start, offset))
+        let end = CMTimeMaximum(start, CMTimeSubtract(timeRange.end, offset))
+        reader.timeRange = CMTimeRange(start: start, end: end)
 
         let output = AVAssetReaderTrackOutput(
             track: track,
@@ -66,19 +74,24 @@ final class WebcamFrameSource: @unchecked Sendable {
         guard reader.canAdd(output) else { return nil }
         reader.add(output)
         guard reader.startReading() else { return nil }
-        return WebcamFrameSource(reader: reader, output: output)
+        return WebcamFrameSource(reader: reader, output: output, offset: offset)
     }
 
-    private init(reader: AVAssetReader, output: AVAssetReaderTrackOutput) {
+    private let offset: CMTime
+
+    private init(reader: AVAssetReader, output: AVAssetReaderTrackOutput, offset: CMTime) {
         self.reader = reader
         self.output = output
+        self.offset = offset
     }
 
-    /// Returns the latest webcam frame whose PTS is ≤ `targetPTS`. Caches a
-    /// one-frame lookahead so we can correctly advance when the target
-    /// crosses a webcam frame boundary, instead of perpetually discarding
-    /// future frames we've already read.
-    func frame(at targetPTS: CMTime) -> CVPixelBuffer? {
+    /// Returns the latest webcam frame for screen-timeline `targetPTS` —
+    /// i.e. the newest frame whose webcam PTS is ≤ targetPTS − offset.
+    /// Caches a one-frame lookahead so we can correctly advance when the
+    /// target crosses a webcam frame boundary, instead of perpetually
+    /// discarding future frames we've already read.
+    func frame(at screenPTS: CMTime) -> CVPixelBuffer? {
+        let targetPTS = CMTimeSubtract(screenPTS, offset)
         while true {
             // If our cached lookahead frame is now at or before the target,
             // promote it — it becomes the active frame.

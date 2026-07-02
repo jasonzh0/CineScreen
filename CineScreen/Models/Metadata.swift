@@ -18,6 +18,11 @@ struct RecordingMetadata: Codable, Equatable {
     /// sibling webcam.mp4 — and for older recordings made before the webcam
     /// editor controls landed.
     var webcam: WebcamLayout?
+    /// Milliseconds the webcam track's t=0 lags the screen recording's t=0
+    /// (camera warm-up is typically 0.3–1.5s). Both capture pipelines stamp
+    /// host-clock PTS, so screenT = webcamT + offset exactly. Absent on
+    /// older recordings and recordings without a webcam; treat missing as 0.
+    var webcamOffsetMs: Double?
     /// User-selected canvas styling (background, padding, drop shadow).
     /// Absent for projects saved before this field existed; in that case the
     /// editor falls back to its default style.

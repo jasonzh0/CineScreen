@@ -77,6 +77,11 @@ final class EditorViewModel {
     /// into `metadata.webcam` on every mutation.
     var webcamLayout: WebcamLayout = .default
 
+    /// Camera warm-up offset between the webcam file's t=0 and the screen
+    /// recording's t=0: screenT = webcamT + offset. 0 for recordings made
+    /// before the offset was captured.
+    private var webcamOffsetMs: Double { metadata?.webcamOffsetMs ?? 0 }
+
     /// Timeline horizontal zoom (1.0 = fit, >1 = zoomed in). Persists per
     /// editor instance only.
     var timelineZoom: Double = 1.0
@@ -300,6 +305,19 @@ final class EditorViewModel {
                     self.pause()
                     self.seek(toMilliseconds: self.trimStartMs)
                 }
+                // Deferred webcam start: play() leaves the webcam paused
+                // while the playhead is inside the camera warm-up gap (no
+                // webcam content exists there); roll it, aligned, once
+                // playback crosses the offset.
+                if self.isPlaying, self.webcamOffsetMs > 0,
+                   let webcam = self.webcamPlayer, webcam.rate == 0,
+                   self.currentTimeMs >= self.webcamOffsetMs {
+                    webcam.seek(
+                        to: CMTime(seconds: (self.currentTimeMs - self.webcamOffsetMs) / 1000, preferredTimescale: 600),
+                        toleranceBefore: .zero, toleranceAfter: .zero
+                    )
+                    webcam.play()
+                }
             }
         }
     }
@@ -343,7 +361,13 @@ final class EditorViewModel {
             seek(toMilliseconds: trimStartMs)
         }
         player.play()
-        webcamPlayer?.play()
+        if currentTimeMs >= webcamOffsetMs {
+            // seek() keeps the webcam aligned at screenT − offset; just roll.
+            webcamPlayer?.play()
+        }
+        // else: the playhead is inside the camera warm-up gap — no webcam
+        // content exists there yet. The periodic observer starts the webcam
+        // once playback crosses the offset.
         isPlaying = true
     }
 
@@ -362,7 +386,13 @@ final class EditorViewModel {
         currentTimeMs = clamped
         let time = CMTime(seconds: clamped / 1000, preferredTimescale: 600)
         player.seek(to: time, toleranceBefore: .zero, toleranceAfter: .zero)
-        webcamPlayer?.seek(to: time, toleranceBefore: .zero, toleranceAfter: .zero)
+        // Map into webcam time (screenT − warm-up offset) so the overlay
+        // shows the frame that was actually captured at this moment.
+        let webcamSeconds = max(0, clamped - webcamOffsetMs) / 1000
+        webcamPlayer?.seek(
+            to: CMTime(seconds: webcamSeconds, preferredTimescale: 600),
+            toleranceBefore: .zero, toleranceAfter: .zero
+        )
         // Drop the smoother's history — otherwise it tries to catch up across
         // the jump. Reset to the raw position when one exists; but always
         // advance lastCursorSampleMs so an empty cursor track still resets the

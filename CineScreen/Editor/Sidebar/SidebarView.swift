@@ -682,7 +682,8 @@ struct SidebarView: View {
                     zoomAt: zoomAt,
                     canvas: vm.canvasStyle,
                     webcamURL: vm.webcamURL,
-                    webcamLayout: webcamLayout
+                    webcamLayout: webcamLayout,
+                    webcamOffsetMs: vm.metadata?.webcamOffsetMs ?? 0
                 )) { progress in
                     progressCont.yield(progress)
                 }

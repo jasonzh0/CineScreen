@@ -12,6 +12,10 @@ import CoreMedia
 final class WebcamCaptureService: NSObject {
     private(set) var isRecording = false
     private(set) var outputURL: URL?
+    /// Raw host-clock PTS of the first frame of the finished recording —
+    /// captured in stop() before teardown so `RecordingSession` can derive
+    /// the webcam-vs-screen warm-up offset.
+    private(set) var lastFirstFramePTS: CMTime?
 
     private var session: AVCaptureSession?
     private var writer: AVAssetWriter?
@@ -150,6 +154,7 @@ final class WebcamCaptureService: NSObject {
 
         session.stopRunning()
         videoInput?.markAsFinished()
+        lastFirstFramePTS = delegate?.firstFramePTS
 
         // If no frames ever landed, finishWriting will fail — return nil so the
         // caller can clean up the empty file.
@@ -209,6 +214,12 @@ private final class WebcamFrameDelegate: NSObject, AVCaptureVideoDataOutputSampl
     var sessionStarted: Bool {
         stateLock.lock(); defer { stateLock.unlock() }
         return _sessionStart != nil
+    }
+
+    /// Raw host-clock PTS of the first written frame (the rebase base).
+    var firstFramePTS: CMTime? {
+        stateLock.lock(); defer { stateLock.unlock() }
+        return _sessionStart
     }
 
     init(writer: AVAssetWriter, input: AVAssetWriterInput) {

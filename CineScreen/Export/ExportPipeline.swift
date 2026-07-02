@@ -63,6 +63,9 @@ final class ExportPipeline {
         /// Position/size/visibility of the webcam circle. Ignored when
         /// `webcamURL` is nil.
         var webcamLayout: WebcamLayout = .default
+        /// Camera warm-up offset (screenT = webcamT + offsetMs) — shifts the
+        /// webcam read window so the overlay is time-aligned with the screen.
+        var webcamOffsetMs: Double = 0
     }
 
     enum Progress {
@@ -242,7 +245,8 @@ final class ExportPipeline {
         do {
             webcamSource = try await WebcamFrameSource.open(
                 url: input.webcamURL,
-                timeRange: timeRange
+                timeRange: timeRange,
+                offsetMs: input.webcamOffsetMs
             )
         } catch {
             tearDown()
