@@ -38,6 +38,34 @@ final class ProjectsLibraryTests: XCTestCase {
         XCTAssertEqual(listed.first?.name, "Real")
     }
 
+    @MainActor
+    func testRenameMovesFolderAndPreservesCreationDate() throws {
+        let original = try ProjectsLibrary.createNew(in: root, name: "Before")
+        let renamed = try ProjectsLibrary.rename(original, to: "After")
+        XCTAssertEqual(renamed.name, "After")
+        XCTAssertFalse(FileManager.default.fileExists(atPath: original.folderURL.path))
+        XCTAssertEqual(
+            renamed.createdAt.timeIntervalSince1970,
+            original.createdAt.timeIntervalSince1970,
+            accuracy: 0.01
+        )
+    }
+
+    @MainActor
+    func testDuplicateCopiesArtifactsAndAvoidsCollisions() throws {
+        let original = try ProjectsLibrary.createNew(in: root, name: "Take")
+        FileManager.default.createFile(
+            atPath: original.fallbackVideoURL.path,
+            contents: Data([1, 2, 3])
+        )
+        let copy = try ProjectsLibrary.duplicate(original)
+        let copy2 = try ProjectsLibrary.duplicate(original)
+        XCTAssertNotEqual(copy.folderURL, original.folderURL)
+        XCTAssertNotEqual(copy2.folderURL, copy.folderURL)
+        XCTAssertTrue(FileManager.default.fileExists(atPath: copy.fallbackVideoURL.path))
+        XCTAssertEqual(ProjectsLibrary.projects(in: root).count, 3)
+    }
+
     /// Pre-descriptor recordings (video only, no project.json) stay visible.
     @MainActor
     func testListingKeepsFoldersWithVideoButNoDescriptor() throws {

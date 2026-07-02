@@ -122,6 +122,43 @@ final class ProjectsLibrary {
         try encoder.encode(descriptor).write(to: url, options: .atomic)
     }
 
+    /// Renames the project folder and updates its descriptor, preserving the
+    /// original creation date. Throws if a folder with the new name already
+    /// exists. Note: renaming a project that's open in a Studio window leaves
+    /// that window pointing at the old path until it's reopened.
+    static func rename(_ project: Project, to newName: String) throws -> Project {
+        let trimmed = newName.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmed.isEmpty, trimmed != project.name else { return project }
+        let dest = project.folderURL.deletingLastPathComponent()
+            .appendingPathComponent(trimmed, isDirectory: true)
+        try FileManager.default.moveItem(at: project.folderURL, to: dest)
+        try writeDescriptor(
+            ProjectDescriptor(name: trimmed, createdAtMs: project.createdAt.timeIntervalSince1970 * 1000),
+            to: dest
+        )
+        return load(from: dest)
+    }
+
+    /// Copies the whole project folder as "Name copy" (then "copy 2", …).
+    static func duplicate(_ project: Project) throws -> Project {
+        let fm = FileManager.default
+        let parent = project.folderURL.deletingLastPathComponent()
+        var name = "\(project.name) copy"
+        var dest = parent.appendingPathComponent(name, isDirectory: true)
+        var counter = 2
+        while fm.fileExists(atPath: dest.path) {
+            name = "\(project.name) copy \(counter)"
+            dest = parent.appendingPathComponent(name, isDirectory: true)
+            counter += 1
+        }
+        try fm.copyItem(at: project.folderURL, to: dest)
+        try writeDescriptor(
+            ProjectDescriptor(name: name, createdAtMs: Date().timeIntervalSince1970 * 1000),
+            to: dest
+        )
+        return load(from: dest)
+    }
+
     /// Moves the project folder to the Trash — recoverable, unlike a hard
     /// delete. Deliberately no `removeItem` fallback: on volumes without a
     /// Trash this throws, and the caller surfaces the error, rather than

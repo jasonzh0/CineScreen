@@ -97,6 +97,11 @@ struct SettingsView: View {
                     Text("High").tag(CaptureRequest.Quality.high)
                 }
                 .onChange(of: state.quality) { _, new in state.saveQuality(new) }
+
+                Toggle("Global shortcut ⌥⌘R starts/stops recording", isOn: Binding(
+                    get: { state.enableGlobalHotkey },
+                    set: { state.saveEnableGlobalHotkey($0) }
+                ))
             }
             Section("Audio") {
                 Toggle("Record system audio by default", isOn: $state.captureSystemAudio)
@@ -108,6 +113,16 @@ struct SettingsView: View {
                     .onChange(of: state.captureMic) { _, new in
                         state.saveCaptureMic(new)
                     }
+                Picker("Microphone", selection: Binding(
+                    get: { state.selectedMicID ?? "" },
+                    set: { state.saveSelectedMicID($0.isEmpty ? nil : $0) }
+                )) {
+                    Text("System default").tag("")
+                    ForEach(ScreenCaptureService.availableMicrophones(), id: \.uniqueID) { device in
+                        Text(device.localizedName).tag(device.uniqueID)
+                    }
+                }
+                .disabled(state.permissions.microphone != .granted)
             }
             Section("Webcam") {
                 Toggle("Record webcam by default", isOn: $state.captureCamera)

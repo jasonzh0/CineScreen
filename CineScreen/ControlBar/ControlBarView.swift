@@ -10,18 +10,20 @@ struct ControlBarView: View {
     var onStartRecording: () -> Void
 
     enum CaptureMode: String, CaseIterable, Identifiable {
-        case display, window
+        case display, window, area
         var id: String { rawValue }
         var label: String {
             switch self {
             case .display: return "Display"
             case .window:  return "Window"
+            case .area:    return "Area"
             }
         }
         var symbol: String {
             switch self {
             case .display: return "display"
             case .window:  return "macwindow"
+            case .area:    return "rectangle.dashed"
             }
         }
     }
@@ -264,19 +266,31 @@ struct ControlBarView: View {
                 }
                 startNewProjectRecording(preBuiltFilter: filter)
             }
+        case .area:
+            Task { @MainActor in
+                onDismiss()  // hide the control bar behind the overlay
+                let region = await RegionPicker.shared.pick()
+                guard let region else {
+                    ControlBarController.shared.show(state: state)
+                    return
+                }
+                startNewProjectRecording(preBuiltFilter: nil, region: region)
+            }
         }
     }
 
-    private func startNewProjectRecording(preBuiltFilter: SCContentFilter?) {
+    private func startNewProjectRecording(preBuiltFilter: SCContentFilter?, region: CGRect? = nil) {
         guard let project = state.beginNewProject() else { return }
         let outputURL = project.fallbackVideoURL
         let request = CaptureRequest(
             outputURL: outputURL,
             preBuiltFilter: preBuiltFilter,
+            region: region,
             fps: state.frameRate,
             quality: state.quality,
             captureSystemAudio: state.captureSystemAudio,
             captureMic: state.captureMic && state.permissions.microphone == .granted,
+            micDeviceID: state.selectedMicID,
             captureCamera: state.captureCamera && state.permissions.camera == .granted,
             cameraDeviceID: state.selectedCameraID,
             webcamURL: project.fallbackWebcamURL

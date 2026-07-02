@@ -10,6 +10,12 @@ struct SidebarView: View {
     /// Live pipeline while an export runs — kept so the Cancel button can
     /// reach it. Nil outside an export.
     @State private var exportPipeline: ExportPipeline?
+    @State private var showExportOptions = false
+    /// Output size as a fraction of the source (1.0 = native).
+    @State private var exportScale: Double = 1.0
+    /// H.264 bits-per-pixel budget; 0.10 matches the previous fixed value.
+    @State private var exportBitsPerPixel: Double = 0.10
+    @State private var exportFormat: ExportPipeline.Format = .mp4
 
     var body: some View {
         VStack(alignment: .leading, spacing: 14) {
@@ -19,6 +25,7 @@ struct SidebarView: View {
                 VStack(alignment: .leading, spacing: 14) {
                     card(title: "Background", icon: "photo.on.rectangle.angled") { canvasControls }
                     card(title: "Cursor",     icon: "cursorarrow.rays")           { cursorControls }
+                    card(title: "Clicks",     icon: "hand.tap")                   { clickControls }
                     card(title: "Zoom",       icon: "plus.magnifyingglass")       { zoomControls }
                     if vm.webcamPlayer != nil {
                         card(title: "Webcam",  icon: "video.fill")                { webcamControls }
@@ -86,6 +93,57 @@ struct SidebarView: View {
             .help("Save edits to metadata")
 
             Spacer()
+
+            Button {
+                showExportOptions = true
+            } label: {
+                Image(systemName: "slider.horizontal.3")
+                    .font(.system(size: 12, weight: .medium))
+                    .frame(width: 32, height: 32)
+                    .foregroundStyle(CTheme.textSecondary)
+                    .background(
+                        RoundedRectangle(cornerRadius: CTheme.Radius.sm, style: .continuous)
+                            .fill(CTheme.surface)
+                    )
+                    .overlay(
+                        RoundedRectangle(cornerRadius: CTheme.Radius.sm, style: .continuous)
+                            .strokeBorder(CTheme.stroke, lineWidth: 1)
+                    )
+            }
+            .buttonStyle(.plain)
+            .disabled(isExporting)
+            .help("Export options")
+            .popover(isPresented: $showExportOptions, arrowEdge: .bottom) {
+                VStack(alignment: .leading, spacing: 12) {
+                    Picker("Format", selection: $exportFormat) {
+                        Text("MP4").tag(ExportPipeline.Format.mp4)
+                        Text("GIF").tag(ExportPipeline.Format.gif)
+                    }
+                    .pickerStyle(.segmented)
+                    Picker("Resolution", selection: $exportScale) {
+                        Text("Full").tag(1.0)
+                        Text("75%").tag(0.75)
+                        Text("50%").tag(0.5)
+                    }
+                    .pickerStyle(.segmented)
+                    .disabled(exportFormat == .gif)
+                    Picker("Quality", selection: $exportBitsPerPixel) {
+                        Text("Low").tag(0.05)
+                        Text("Medium").tag(0.10)
+                        Text("High").tag(0.16)
+                    }
+                    .pickerStyle(.segmented)
+                    .disabled(exportFormat == .gif)
+                    if exportFormat == .gif {
+                        Text("GIF exports at up to 15 fps, capped at 960 px, without audio.")
+                            .font(.caption2)
+                            .foregroundStyle(.secondary)
+                            .fixedSize(horizontal: false, vertical: true)
+                    }
+                }
+                .padding(14)
+                .frame(width: 240)
+            }
 
             Button {
                 startExport()
@@ -232,6 +290,66 @@ struct SidebarView: View {
     }
 
     @ViewBuilder
+    private var clickControls: some View {
+        VStack(alignment: .leading, spacing: 10) {
+            Toggle(isOn: $vm.clickRingsEnabled) {
+                Text("Click Rings").font(.caption).foregroundStyle(CTheme.textSecondary)
+            }
+            .toggleStyle(.switch)
+            .controlSize(.small)
+            .disabled(vm.metadata == nil)
+
+            if vm.clickRingsEnabled {
+                HStack {
+                    Text("Size").font(.caption).foregroundStyle(CTheme.textSecondary)
+                    Spacer()
+                    Text("\(Int(vm.clickRingSize)) px")
+                        .font(.system(.caption, design: .monospaced))
+                        .foregroundStyle(CTheme.textSecondary)
+                }
+                Slider(value: $vm.clickRingSize, in: 24...140, step: 1)
+                    .tint(CTheme.accent)
+
+                HStack {
+                    Text("Duration").font(.caption).foregroundStyle(CTheme.textSecondary)
+                    Spacer()
+                    Text("\(Int(vm.clickRingDuration)) ms")
+                        .font(.system(.caption, design: .monospaced))
+                        .foregroundStyle(CTheme.textSecondary)
+                }
+                Slider(value: $vm.clickRingDuration, in: 250...1200, step: 50)
+                    .tint(CTheme.accent)
+
+                HStack {
+                    Text("Color").font(.caption).foregroundStyle(CTheme.textSecondary)
+                    Spacer()
+                    ColorPicker("", selection: ringColorBinding, supportsOpacity: false)
+                        .labelsHidden()
+                        .controlSize(.small)
+                }
+            }
+        }
+    }
+
+    /// Bridges the metadata's hex string to SwiftUI's ColorPicker.
+    private var ringColorBinding: Binding<Color> {
+        Binding(
+            get: {
+                let v = RenderSnapshot.parseHexColor(vm.clickRingColorHex)
+                return Color(.sRGB, red: Double(v.x), green: Double(v.y), blue: Double(v.z))
+            },
+            set: { newColor in
+                let ns = NSColor(newColor).usingColorSpace(.sRGB) ?? .white
+                vm.clickRingColorHex = String(
+                    format: "#%02x%02x%02x",
+                    Int(round(ns.redComponent * 255)),
+                    Int(round(ns.greenComponent * 255)),
+                    Int(round(ns.blueComponent * 255))
+                )
+            }
+        )
+    }
+
     private var zoomControls: some View {
         VStack(alignment: .leading, spacing: 8) {
             HStack {
@@ -599,8 +717,9 @@ struct SidebarView: View {
 
     private func startExport() {
         let panel = NSSavePanel()
-        panel.allowedContentTypes = [.mpeg4Movie]
-        panel.nameFieldStringValue = vm.videoURL.deletingPathExtension().lastPathComponent + "_export.mp4"
+        let ext = exportFormat == .gif ? "gif" : "mp4"
+        panel.allowedContentTypes = exportFormat == .gif ? [.gif] : [.mpeg4Movie]
+        panel.nameFieldStringValue = vm.videoURL.deletingPathExtension().lastPathComponent + "_export.\(ext)"
         guard panel.runModal() == .OK, let outURL = panel.url else { return }
 
         let trimRange: Range<Double> =
@@ -683,7 +802,10 @@ struct SidebarView: View {
                     canvas: vm.canvasStyle,
                     webcamURL: vm.webcamURL,
                     webcamLayout: webcamLayout,
-                    webcamOffsetMs: vm.metadata?.webcamOffsetMs ?? 0
+                    webcamOffsetMs: vm.metadata?.webcamOffsetMs ?? 0,
+                    outputScale: exportScale,
+                    bitsPerPixel: exportBitsPerPixel,
+                    format: exportFormat
                 )) { progress in
                     progressCont.yield(progress)
                 }

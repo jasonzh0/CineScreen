@@ -43,6 +43,7 @@ struct CineScreenApp: App {
                 .frame(minWidth: 720, minHeight: 520)
                 .onAppear {
                     AppDelegate.state = state
+                    HotkeyController.shared.install(state: state)
                     state.refreshPermissions()
                     state.refreshProjects()
                 }

@@ -182,7 +182,53 @@ private struct PermissionsStep: View {
                     _ = Permissions.requestAccessibility()
                     appState.refreshPermissions()
                 }
+
+                // macOS applies a fresh Screen Recording grant only at the
+                // NEXT launch — without a relaunch path this step was a dead
+                // end: the indicator never turned green in-process no matter
+                // what the user did in System Settings.
+                if appState.permissions.screenRecording != .granted {
+                    VStack(spacing: 8) {
+                        Text("Already enabled it? macOS applies Screen Recording when the app launches — relaunch CineScreen to pick it up.")
+                            .font(.system(size: 11.5))
+                            .foregroundStyle(CTheme.textTertiary)
+                            .multilineTextAlignment(.center)
+                            .fixedSize(horizontal: false, vertical: true)
+                        HStack(spacing: 16) {
+                            Button("Open System Settings") {
+                                Permissions.openSystemSettings(pane: .screenRecording)
+                            }
+                            .buttonStyle(.plain)
+                            .font(.system(size: 12, weight: .medium))
+                            .foregroundStyle(CTheme.accent)
+                            Button("Relaunch CineScreen") { Self.relaunch() }
+                                .buttonStyle(.plain)
+                                .font(.system(size: 12, weight: .medium))
+                                .foregroundStyle(CTheme.accent)
+                        }
+                    }
+                    .padding(.top, 2)
+
+                    Button("Skip for now — grant later from Settings (⌘,)") {
+                        onboarding.advance()
+                    }
+                    .buttonStyle(.plain)
+                    .font(.system(size: 12))
+                    .foregroundStyle(CTheme.textTertiary)
+                }
             }
+        }
+    }
+
+    /// Spawns a fresh instance and quits — a new process is the only way a
+    /// just-granted Screen Recording permission takes effect.
+    private static func relaunch() {
+        let task = Process()
+        task.executableURL = URL(fileURLWithPath: "/usr/bin/open")
+        task.arguments = ["-n", Bundle.main.bundlePath]
+        try? task.run()
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.2) {
+            NSApp.terminate(nil)
         }
     }
 }

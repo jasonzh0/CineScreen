@@ -256,6 +256,50 @@ final class EditorViewModel {
         }
     }
 
+    // MARK: - Click effects
+
+    /// Defaults matching the renderer's fallbacks (RenderSnapshot falls back
+    /// to size 64 / duration 600 / white when fields are absent).
+    private static let defaultClickCircles = MouseEffectsConfig.ClickCircles(
+        enabled: true, size: 64, color: "#ffffff", duration: 600
+    )
+
+    var clickRingsEnabled: Bool {
+        get { metadata?.effects?.clickCircles.enabled ?? false }
+        set { withClickCircles { $0.enabled = newValue } }
+    }
+
+    var clickRingSize: Double {
+        get { metadata?.effects?.clickCircles.size ?? Self.defaultClickCircles.size }
+        set { withClickCircles { $0.size = newValue } }
+    }
+
+    var clickRingDuration: Double {
+        get { metadata?.effects?.clickCircles.duration ?? Self.defaultClickCircles.duration }
+        set { withClickCircles { $0.duration = newValue } }
+    }
+
+    var clickRingColorHex: String {
+        get { metadata?.effects?.clickCircles.color ?? Self.defaultClickCircles.color }
+        set { withClickCircles { $0.color = newValue } }
+    }
+
+    /// The recorder writes `effects: nil`, so the first edit materialises the
+    /// whole effects config (trail/highlight stay disabled — schema-only
+    /// features). Routing the write through `self.metadata` hits the didSet
+    /// hook (snapshot invalidation + autosave) like every other mutation.
+    private func withClickCircles(_ mutate: (inout MouseEffectsConfig.ClickCircles) -> Void) {
+        guard var metadata = metadata else { return }
+        var effects = metadata.effects ?? MouseEffectsConfig(
+            clickCircles: Self.defaultClickCircles,
+            trail: MouseEffectsConfig.Trail(enabled: false, length: 0, fadeSpeed: 0, color: "#ffffff"),
+            highlightRing: MouseEffectsConfig.HighlightRing(enabled: false, size: 0, color: "#ffffff", pulseSpeed: 0)
+        )
+        mutate(&effects.clickCircles)
+        metadata.effects = effects
+        self.metadata = metadata
+    }
+
     // MARK: - Webcam layout
 
     /// Persist a webcam layout change into the metadata model. The drag
@@ -377,6 +421,14 @@ final class EditorViewModel {
 
     func togglePlayPause() {
         if isPlaying { pause() } else { play() }
+    }
+
+    /// One-frame step at the recording's native rate; pauses playback so the
+    /// stepped frame stays visible.
+    func stepFrame(_ direction: Int) {
+        pause()
+        let fps = max(1.0, metadata?.video.frameRate ?? 60)
+        seek(toMilliseconds: currentTimeMs + Double(direction) * (1000.0 / fps))
     }
 
     func seek(toMilliseconds ms: Double) {

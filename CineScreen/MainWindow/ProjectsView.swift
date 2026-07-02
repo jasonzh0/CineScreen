@@ -9,6 +9,10 @@ struct ProjectsView: View {
     @State private var hoveredProject: Project.ID?
     /// Set when the user picks Delete — the confirmation dialog acts on it.
     @State private var projectPendingDeletion: Project?
+    /// Set when the user picks Rename… — the rename alert acts on it.
+    @State private var projectPendingRename: Project?
+    @State private var renameText = ""
+    @State private var searchText = ""
 
     var body: some View {
         ZStack(alignment: .top) {
@@ -62,6 +66,32 @@ struct ProjectsView: View {
         } message: {
             Text("The recording and its edits can be restored from the Trash.")
         }
+        .alert(
+            "Rename Recording",
+            isPresented: Binding(
+                get: { projectPendingRename != nil },
+                set: { if !$0 { projectPendingRename = nil } }
+            )
+        ) {
+            TextField("Name", text: $renameText)
+            Button("Rename") {
+                if let project = projectPendingRename {
+                    do {
+                        _ = try ProjectsLibrary.rename(project, to: renameText)
+                        state.refreshProjects()
+                    } catch {
+                        state.statusMessage = "Rename failed: \(error.localizedDescription)"
+                    }
+                }
+                projectPendingRename = nil
+            }
+            Button("Cancel", role: .cancel) { projectPendingRename = nil }
+        }
+    }
+
+    private var filteredProjects: [Project] {
+        guard !searchText.isEmpty else { return state.projects }
+        return state.projects.filter { $0.name.localizedCaseInsensitiveContains(searchText) }
     }
 
     // MARK: - Backdrop
@@ -86,6 +116,10 @@ struct ProjectsView: View {
                     .truncationMode(.head)
             }
             Spacer(minLength: 8)
+            TextField("Search", text: $searchText)
+                .textFieldStyle(.roundedBorder)
+                .controlSize(.small)
+                .frame(width: 180)
             newRecordingButton
         }
         .padding(.horizontal, 28)
@@ -124,7 +158,7 @@ struct ProjectsView: View {
                 columns: [GridItem(.adaptive(minimum: 260), spacing: 20)],
                 spacing: 20
             ) {
-                ForEach(state.projects) { project in
+                ForEach(filteredProjects) { project in
                     ProjectTile(
                         project: project,
                         isHovered: hoveredProject == project.id
@@ -136,6 +170,16 @@ struct ProjectsView: View {
                         ProjectsLibrary.reveal(project)
                     } onDelete: {
                         projectPendingDeletion = project
+                    } onRename: {
+                        renameText = project.name
+                        projectPendingRename = project
+                    } onDuplicate: {
+                        do {
+                            _ = try ProjectsLibrary.duplicate(project)
+                            state.refreshProjects()
+                        } catch {
+                            state.statusMessage = "Duplicate failed: \(error.localizedDescription)"
+                        }
                     }
                     .onHover { hovering in
                         hoveredProject = hovering ? project.id : nil
@@ -244,6 +288,8 @@ private struct ProjectTile: View {
     var onOpen: () -> Void
     var onReveal: () -> Void
     var onDelete: () -> Void
+    var onRename: () -> Void
+    var onDuplicate: () -> Void
 
     @State private var thumbnail: NSImage?
 
@@ -269,6 +315,8 @@ private struct ProjectTile: View {
         .contextMenu {
             Button("Open") { onOpen() }
                 .disabled(!project.isComplete)
+            Button("Rename…") { onRename() }
+            Button("Duplicate") { onDuplicate() }
             Button("Reveal in Finder") { onReveal() }
             Divider()
             Button("Delete", role: .destructive) { onDelete() }

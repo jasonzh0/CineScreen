@@ -17,6 +17,8 @@ struct CaptureRequest {
     var quality: Quality = .medium
     var captureSystemAudio: Bool = false
     var captureMic: Bool = false
+    /// AVCaptureDevice uniqueID for the microphone. `nil` = system default.
+    var micDeviceID: String? = nil
     var captureCamera: Bool = false
     /// AVCaptureDevice uniqueID. `nil` = system default camera.
     var cameraDeviceID: String? = nil
@@ -343,7 +345,7 @@ final class ScreenCaptureService: NSObject {
             }
             writer.add(m)
             mInput = m
-            (session, micDelegate) = try Self.makeMicSession(target: m, queue: micQueue, getSessionStart: { [weak self] in
+            (session, micDelegate) = try Self.makeMicSession(target: m, queue: micQueue, deviceID: request.micDeviceID, getSessionStart: { [weak self] in
                 self?.streamOutput?.sessionStartTime
             })
         }
@@ -575,14 +577,25 @@ final class ScreenCaptureService: NSObject {
         ]
     }
 
+    /// Discoverable microphones for the Settings picker.
+    static func availableMicrophones() -> [AVCaptureDevice] {
+        AVCaptureDevice.DiscoverySession(
+            deviceTypes: [.microphone],
+            mediaType: .audio,
+            position: .unspecified
+        ).devices
+    }
+
     private static func makeMicSession(
         target: AVAssetWriterInput,
         queue: DispatchQueue,
+        deviceID: String?,
         getSessionStart: @escaping () -> CMTime?
     ) throws -> (AVCaptureSession, MicOutputDelegate) {
         let session = AVCaptureSession()
         session.beginConfiguration()
-        guard let device = AVCaptureDevice.default(for: .audio) else {
+        let picked = deviceID.flatMap { AVCaptureDevice(uniqueID: $0) }
+        guard let device = picked ?? AVCaptureDevice.default(for: .audio) else {
             throw CaptureError.missingMicDevice
         }
         let input: AVCaptureDeviceInput

@@ -125,6 +125,9 @@ final class RecordingBarController {
 
     // MARK: - Actions
 
+    /// External stop entry point (global hotkey).
+    func requestStop() { performStop() }
+
     private func performStop() {
         guard !finishing else { return }
         finishing = true

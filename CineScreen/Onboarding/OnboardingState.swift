@@ -27,9 +27,21 @@ final class OnboardingState {
 
     private enum Keys {
         static let completed = "cs.onboarding.completed"
+        static let step = "cs.onboarding.step"
     }
 
-    var step: Step = .welcome
+    /// Persisted so the flow resumes where it left off after the relaunch
+    /// that a fresh Screen Recording grant requires.
+    var step: Step = .welcome {
+        didSet { UserDefaults.standard.set(step.rawValue, forKey: Keys.step) }
+    }
+
+    init() {
+        if !Self.hasCompleted,
+           let saved = Step(rawValue: UserDefaults.standard.integer(forKey: Keys.step)) {
+            step = saved
+        }
+    }
 
     static var hasCompleted: Bool {
         UserDefaults.standard.bool(forKey: Keys.completed)
@@ -37,15 +49,12 @@ final class OnboardingState {
 
     static func markCompleted() {
         UserDefaults.standard.set(true, forKey: Keys.completed)
+        UserDefaults.standard.removeObject(forKey: Keys.step)
     }
 
     static func reset() {
         UserDefaults.standard.set(false, forKey: Keys.completed)
-    }
-
-    var progress: Double {
-        let total = Double(Step.allCases.count - 1)
-        return total > 0 ? Double(step.rawValue) / total : 0
+        UserDefaults.standard.removeObject(forKey: Keys.step)
     }
 
     func advance() {

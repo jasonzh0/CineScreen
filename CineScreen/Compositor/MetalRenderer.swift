@@ -102,9 +102,7 @@ final class MetalRenderer: NSObject {
     private let videoVertexBuffer: MTLBuffer
     private let textureCache: CVMetalTextureCache
 
-    // Cached cursor textures, lazily loaded the first time a shape is used.
-    private var cursorTextures: [CursorShape: MTLTexture] = [:]
-    private let textureLoader: MTKTextureLoader
+    private let cursorTextureStore: CursorTextureStore
 
     /// The most recent video frame.
     private var currentTexture: MTLTexture?
@@ -135,123 +133,16 @@ final class MetalRenderer: NSObject {
         guard let queue = device.makeCommandQueue() else { return nil }
         guard let library = device.makeDefaultLibrary() else { return nil }
 
-        // Background pipeline (full-screen gradient, no blending)
-        guard let bgVertex = library.makeFunction(name: "background_vertex"),
-              let bgFragment = library.makeFunction(name: "background_fragment") else { return nil }
-        let bgDesc = MTLRenderPipelineDescriptor()
-        bgDesc.vertexFunction = bgVertex
-        bgDesc.fragmentFunction = bgFragment
-        bgDesc.colorAttachments[0].pixelFormat = view.colorPixelFormat
-        bgDesc.label = "canvas.background"
-        guard let backgroundPipeline = try? device.makeRenderPipelineState(descriptor: bgDesc) else {
-            return nil
-        }
-
-        // Drop-shadow pipeline (full-screen with alpha blending over background)
-        guard let shadowVertex = library.makeFunction(name: "shadow_vertex"),
-              let shadowFragment = library.makeFunction(name: "shadow_fragment") else { return nil }
-        let shadowDesc = MTLRenderPipelineDescriptor()
-        shadowDesc.vertexFunction = shadowVertex
-        shadowDesc.fragmentFunction = shadowFragment
-        shadowDesc.colorAttachments[0].pixelFormat = view.colorPixelFormat
-        shadowDesc.colorAttachments[0].isBlendingEnabled = true
-        shadowDesc.colorAttachments[0].rgbBlendOperation = .add
-        shadowDesc.colorAttachments[0].alphaBlendOperation = .add
-        shadowDesc.colorAttachments[0].sourceRGBBlendFactor = .sourceAlpha
-        shadowDesc.colorAttachments[0].sourceAlphaBlendFactor = .one
-        shadowDesc.colorAttachments[0].destinationRGBBlendFactor = .oneMinusSourceAlpha
-        shadowDesc.colorAttachments[0].destinationAlphaBlendFactor = .oneMinusSourceAlpha
-        shadowDesc.label = "canvas.shadow"
-        guard let shadowPipeline = try? device.makeRenderPipelineState(descriptor: shadowDesc) else {
-            return nil
-        }
-
-        // Video pipeline — alpha blended so the rounded-corner mask in the
-        // fragment shader actually clips against the background pass.
-        guard let videoVertex = library.makeFunction(name: "video_vertex"),
-              let videoFragment = library.makeFunction(name: "video_fragment") else { return nil }
-        let videoDesc = MTLRenderPipelineDescriptor()
-        videoDesc.vertexFunction = videoVertex
-        videoDesc.fragmentFunction = videoFragment
-        videoDesc.colorAttachments[0].pixelFormat = view.colorPixelFormat
-        videoDesc.colorAttachments[0].isBlendingEnabled = true
-        videoDesc.colorAttachments[0].rgbBlendOperation = .add
-        videoDesc.colorAttachments[0].alphaBlendOperation = .add
-        videoDesc.colorAttachments[0].sourceRGBBlendFactor = .sourceAlpha
-        videoDesc.colorAttachments[0].sourceAlphaBlendFactor = .one
-        videoDesc.colorAttachments[0].destinationRGBBlendFactor = .oneMinusSourceAlpha
-        videoDesc.colorAttachments[0].destinationAlphaBlendFactor = .oneMinusSourceAlpha
-        videoDesc.label = "video.passthrough"
-        guard let videoPipeline = try? device.makeRenderPipelineState(descriptor: videoDesc) else {
-            return nil
-        }
-
-        // Cursor pipeline (alpha blending)
-        guard let cursorVertex = library.makeFunction(name: "cursor_vertex"),
-              let cursorFragment = library.makeFunction(name: "cursor_fragment") else { return nil }
-        let cursorDesc = MTLRenderPipelineDescriptor()
-        cursorDesc.vertexFunction = cursorVertex
-        cursorDesc.fragmentFunction = cursorFragment
-        cursorDesc.colorAttachments[0].pixelFormat = view.colorPixelFormat
-        cursorDesc.colorAttachments[0].isBlendingEnabled = true
-        cursorDesc.colorAttachments[0].rgbBlendOperation = .add
-        cursorDesc.colorAttachments[0].alphaBlendOperation = .add
-        cursorDesc.colorAttachments[0].sourceRGBBlendFactor = .sourceAlpha
-        cursorDesc.colorAttachments[0].sourceAlphaBlendFactor = .one
-        cursorDesc.colorAttachments[0].destinationRGBBlendFactor = .oneMinusSourceAlpha
-        cursorDesc.colorAttachments[0].destinationAlphaBlendFactor = .oneMinusSourceAlpha
-        cursorDesc.label = "cursor.sprite"
-        guard let cursorPipeline = try? device.makeRenderPipelineState(descriptor: cursorDesc) else {
-            return nil
-        }
-
-        // Click pipeline shares the same blending setup; procedural ring.
-        guard let clickVertex = library.makeFunction(name: "click_vertex"),
-              let clickFragment = library.makeFunction(name: "click_fragment") else { return nil }
-        let clickDesc = MTLRenderPipelineDescriptor()
-        clickDesc.vertexFunction = clickVertex
-        clickDesc.fragmentFunction = clickFragment
-        clickDesc.colorAttachments[0].pixelFormat = view.colorPixelFormat
-        clickDesc.colorAttachments[0].isBlendingEnabled = true
-        clickDesc.colorAttachments[0].rgbBlendOperation = .add
-        clickDesc.colorAttachments[0].alphaBlendOperation = .add
-        clickDesc.colorAttachments[0].sourceRGBBlendFactor = .sourceAlpha
-        clickDesc.colorAttachments[0].sourceAlphaBlendFactor = .one
-        clickDesc.colorAttachments[0].destinationRGBBlendFactor = .oneMinusSourceAlpha
-        clickDesc.colorAttachments[0].destinationAlphaBlendFactor = .oneMinusSourceAlpha
-        clickDesc.label = "click.ring"
-        guard let clickPipeline = try? device.makeRenderPipelineState(descriptor: clickDesc) else { return nil }
-
-        // Webcam pipeline — same blend setup as the others. Identical shader
-        // pair as ExportCompositor so the editor preview matches the export
-        // pixel-for-pixel.
-        guard let webcamVertex = library.makeFunction(name: "webcam_vertex"),
-              let webcamFragment = library.makeFunction(name: "webcam_fragment") else { return nil }
-        let webcamDesc = MTLRenderPipelineDescriptor()
-        webcamDesc.vertexFunction = webcamVertex
-        webcamDesc.fragmentFunction = webcamFragment
-        webcamDesc.colorAttachments[0].pixelFormat = view.colorPixelFormat
-        webcamDesc.colorAttachments[0].isBlendingEnabled = true
-        webcamDesc.colorAttachments[0].rgbBlendOperation = .add
-        webcamDesc.colorAttachments[0].alphaBlendOperation = .add
-        webcamDesc.colorAttachments[0].sourceRGBBlendFactor = .sourceAlpha
-        webcamDesc.colorAttachments[0].sourceAlphaBlendFactor = .one
-        webcamDesc.colorAttachments[0].destinationRGBBlendFactor = .oneMinusSourceAlpha
-        webcamDesc.colorAttachments[0].destinationAlphaBlendFactor = .oneMinusSourceAlpha
-        webcamDesc.label = "webcam.circle"
-        guard let webcamPipeline = try? device.makeRenderPipelineState(descriptor: webcamDesc) else {
-            return nil
-        }
-
-        // Video vertex buffer: triangle strip covering [-1,1]² with UVs.
-        let quad: [SIMD4<Float>] = [
-            SIMD4(-1.0, -1.0, 0.0, 1.0),
-            SIMD4( 1.0, -1.0, 1.0, 1.0),
-            SIMD4(-1.0,  1.0, 0.0, 0.0),
-            SIMD4( 1.0,  1.0, 1.0, 0.0),
-        ]
-        let bufLen = MemoryLayout<SIMD4<Float>>.stride * quad.count
-        guard let buffer = device.makeBuffer(bytes: quad, length: bufLen, options: .storageModeShared) else {
+        // All six pipelines + the shared quad come from CompositorCore so the
+        // preview and export paths cannot drift in blend state or shader
+        // wiring.
+        guard let pipelines = CompositorCore.makePipelines(
+            device: device,
+            library: library,
+            pixelFormat: view.colorPixelFormat,
+            labelPrefix: "preview"
+        ) else { return nil }
+        guard let buffer = CompositorCore.makeQuadBuffer(device: device) else {
             return nil
         }
 
@@ -267,15 +158,15 @@ final class MetalRenderer: NSObject {
 
         self.device = device
         self.commandQueue = queue
-        self.backgroundPipeline = backgroundPipeline
-        self.shadowPipeline = shadowPipeline
-        self.videoPipeline = videoPipeline
-        self.cursorPipeline = cursorPipeline
-        self.clickPipeline = clickPipeline
-        self.webcamPipeline = webcamPipeline
+        self.backgroundPipeline = pipelines.background
+        self.shadowPipeline = pipelines.shadow
+        self.videoPipeline = pipelines.video
+        self.cursorPipeline = pipelines.cursor
+        self.clickPipeline = pipelines.click
+        self.webcamPipeline = pipelines.webcam
         self.videoVertexBuffer = buffer
         self.textureCache = cache
-        self.textureLoader = MTKTextureLoader(device: device)
+        self.cursorTextureStore = CursorTextureStore(device: device)
         super.init()
 
         view.device = device
@@ -406,7 +297,7 @@ final class MetalRenderer: NSObject {
             } else {
                 videoSize = SIMD2(1920, 1080)
             }
-            if let texture = cursorTexture(for: cursor.shape) {
+            if let texture = cursorTextureStore.texture(for: cursor.shape) {
                 var uniforms = CursorUniforms(
                     cursorPos: cursor.positionInVideoPixels,
                     videoSize: videoSize,
@@ -572,159 +463,7 @@ final class MetalRenderer: NSObject {
 
     // MARK: - Cursor textures
 
-    private func cursorTexture(for shape: CursorShape) -> MTLTexture? {
-        if let cached = cursorTextures[shape] { return cached }
-        // Try named asset → tiff fallback → procedural fallback.
-        let candidates = [shape.rawValue, "arrow"]
-        for name in candidates {
-            if let texture = loadAssetTexture(named: name) {
-                cursorTextures[shape] = texture
-                return texture
-            }
-        }
-        // Procedural cursor as last resort — proves the pipeline works even
-        // when the asset catalog is unreachable.
-        if let texture = makeProceduralCursorTexture() {
-            Log.editor.warning("Using procedural cursor — no asset texture loaded")
-            cursorTextures[shape] = texture
-            return texture
-        }
-        return nil
-    }
-
-    private func loadAssetTexture(named name: String) -> MTLTexture? {
-        guard let image = NSImage(named: name) else {
-            Log.editor.warning("NSImage(named:) returned nil for '\(name)' — asset catalog miss")
-            return nil
-        }
-        let imageSize = image.size
-        Log.editor.info("NSImage('\(name)') loaded, size=\(imageSize.width)x\(imageSize.height)")
-
-        // ALWAYS normalise through a fresh sRGB CGContext with explicit
-        // premultiplied-LAST alpha (RGBA byte order). Without this, the
-        // TIFF-derived CGImage came back with alphaInfo=.premultipliedFirst
-        // (ARGB) which MTKTextureLoader read at face value — the cursor came
-        // out yellow because what the shader thought was R/G/B/A was
-        // actually A/R/G/B.
-        let w = max(1, Int(imageSize.width))
-        let h = max(1, Int(imageSize.height))
-        guard let cs = CGColorSpace(name: CGColorSpace.sRGB),
-              let ctx = CGContext(
-                data: nil, width: w, height: h, bitsPerComponent: 8,
-                bytesPerRow: 0, space: cs,
-                bitmapInfo: CGImageAlphaInfo.premultipliedLast.rawValue
-                    | CGBitmapInfo.byteOrder32Big.rawValue
-              ) else {
-            Log.editor.warning("Could not create CGContext for '\(name)'")
-            return nil
-        }
-        // CGContext's underlying pixel storage is always bottom-up (row 0 =
-        // bottom of bitmap). With flipped:false the NSImage draws in CG's
-        // native coord system, so the image's top of the cursor ends up at
-        // the top of memory but in bottom-up row order. We then tell the
-        // texture loader the source is `.bottomLeft` so it flips Y on load
-        // and the cursor ends up right-side-up in the Metal texture.
-        let nsCtx = NSGraphicsContext(cgContext: ctx, flipped: false)
-        NSGraphicsContext.saveGraphicsState()
-        NSGraphicsContext.current = nsCtx
-        image.draw(in: NSRect(x: 0, y: 0, width: w, height: h),
-                   from: .zero, operation: .copy, fraction: 1.0)
-        NSGraphicsContext.restoreGraphicsState()
-        guard let cg = ctx.makeImage() else {
-            Log.editor.warning("ctx.makeImage failed for '\(name)'")
-            return nil
-        }
-
-        let opts: [MTKTextureLoader.Option: Any] = [
-            .SRGB: false,
-            .origin: MTKTextureLoader.Origin.bottomLeft,
-            .generateMipmaps: false
-        ]
-        if let tex = try? textureLoader.newTexture(cgImage: cg, options: opts) {
-            Log.editor.info("Cursor '\(name)' loaded (normalised RGBA)")
-            return tex
-        }
-        Log.editor.warning("All asset texture loads failed for '\(name)'")
-        return nil
-    }
-
-    /// Draws a chunky magenta arrow into a CG bitmap so we ALWAYS have a
-    /// cursor texture, even if every asset-catalog path fails.
-    private func makeProceduralCursorTexture() -> MTLTexture? {
-        let size = 128
-        guard let cs = CGColorSpace(name: CGColorSpace.sRGB),
-              let ctx = CGContext(
-                data: nil, width: size, height: size, bitsPerComponent: 8,
-                bytesPerRow: 0, space: cs,
-                bitmapInfo: CGImageAlphaInfo.premultipliedLast.rawValue
-              ) else {
-            return nil
-        }
-        ctx.clear(CGRect(x: 0, y: 0, width: size, height: size))
-
-        // Arrow path (top-left origin pre-flip; CGContext is bottom-left,
-        // we flip to match a typical screen cursor).
-        ctx.translateBy(x: 0, y: CGFloat(size))
-        ctx.scaleBy(x: 1, y: -1)
-        let path = CGMutablePath()
-        path.move(to: CGPoint(x: 20, y: 14))
-        path.addLine(to: CGPoint(x: 20, y: 102))
-        path.addLine(to: CGPoint(x: 50, y: 76))
-        path.addLine(to: CGPoint(x: 66, y: 110))
-        path.addLine(to: CGPoint(x: 80, y: 102))
-        path.addLine(to: CGPoint(x: 64, y: 70))
-        path.addLine(to: CGPoint(x: 96, y: 70))
-        path.closeSubpath()
-
-        ctx.setFillColor(red: 1, green: 0, blue: 1, alpha: 1) // magenta
-        ctx.addPath(path)
-        ctx.fillPath()
-
-        ctx.setLineWidth(4)
-        ctx.setStrokeColor(red: 1, green: 1, blue: 1, alpha: 1)
-        ctx.addPath(path)
-        ctx.strokePath()
-
-        guard let cg = ctx.makeImage() else { return nil }
-        let opts: [MTKTextureLoader.Option: Any] = [
-            .SRGB: false,
-            .origin: MTKTextureLoader.Origin.topLeft,
-            .generateMipmaps: false
-        ]
-        return try? textureLoader.newTexture(cgImage: cg, options: opts)
-    }
-
-    // MARK: - Aspect fit + uniforms
-
-    private struct AspectUniforms { var scale: SIMD2<Float> }
-    private struct ZoomUniforms {
-        var centerUV: SIMD2<Float>
-        var scale: Float
-        var _pad: Float = 0
-    }
-    private struct CanvasUniforms {
-        var contentScale: SIMD2<Float>
-    }
-    // Field order + sizes must match `CursorUniforms` in Shaders.metal. All
-    // SIMD2<Float> are 8-byte aligned, so the two trailing floats pack into a
-    // single 8-byte slot — no explicit padding needed.
-    private struct CursorUniforms {
-        var cursorPos: SIMD2<Float>
-        var videoSize: SIMD2<Float>
-        var aspectScale: SIMD2<Float>
-        var hotspot: SIMD2<Float>
-        var motionBlur: SIMD2<Float>
-        var size: Float
-        var opacity: Float
-    }
-    private struct ClickUniforms {
-        var centerInVideoPixels: SIMD2<Float>
-        var radiusInPixels: Float
-        var thicknessInPixels: Float
-        var videoSize: SIMD2<Float>
-        var aspectScale: SIMD2<Float>
-        var color: SIMD4<Float>
-    }
+    // MARK: - Aspect fit
 
     private func aspectFitScale() -> AspectUniforms {
         guard drawableSize.width > 0, drawableSize.height > 0,

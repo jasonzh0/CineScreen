@@ -1,6 +1,8 @@
 import Foundation
 import AVFoundation
 import CoreVideo
+import CoreImage
+import UniformTypeIdentifiers
 
 /// Shared stop flags for one export run. The video/audio loops (each on its
 /// own DispatchQueue) consult it at every ready-callback; `cancel()` and the
@@ -66,6 +68,19 @@ final class ExportPipeline {
         /// Camera warm-up offset (screenT = webcamT + offsetMs) — shifts the
         /// webcam read window so the overlay is time-aligned with the screen.
         var webcamOffsetMs: Double = 0
+        /// Output size as a fraction of the source (1.0 = native). Overlays
+        /// are positioned in normalized space, so they scale with the frame.
+        var outputScale: Double = 1.0
+        /// H.264 bits-per-pixel budget (bitrate = w*h*fps*bpp). MP4 only.
+        var bitsPerPixel: Double = 0.10
+        /// Container. GIF renders the same composited frames but caps at
+        /// 15fps / 960px longest side (GIF sizes grow brutally), drops
+        /// audio, and ignores the scale/quality knobs.
+        var format: Format = .mp4
+    }
+
+    enum Format: String {
+        case mp4, gif
     }
 
     enum Progress {
@@ -134,6 +149,21 @@ final class ExportPipeline {
         }
         reader.add(videoReaderOutput)
 
+        // GIF branches off here: same decode + compositor, its own encoder.
+        if input.format == .gif {
+            return try await exportGIF(
+                input: input,
+                reader: reader,
+                readerOutput: videoReaderOutput,
+                compositor: compositor,
+                sourceSize: outputSize,
+                timeRange: timeRange,
+                nominalFPS: Double(fps),
+                trimmedSeconds: trimmedSeconds,
+                onProgress: onProgress
+            )
+        }
+
         var audioReaderOutputs: [AVAssetReaderTrackOutput] = []
         for track in audioTracks {
             // Decode the audio to uncompressed 16-bit interleaved PCM. The
@@ -167,11 +197,18 @@ final class ExportPipeline {
             .appendingPathComponent(".cinescreen-export-\(UUID().uuidString).mp4")
         let writer = try AVAssetWriter(outputURL: tempURL, fileType: .mp4)
 
-        let videoBitrate = Int(Double(Int(outputSize.width) * Int(outputSize.height)) * Double(fps) * 0.10)
+        // Scaled output dimensions (even, for the encoder). The compositor
+        // renders into the destination buffer, so downscaling happens on the
+        // GPU as part of the normal video-quad sampling.
+        let scale = min(1.0, max(0.1, input.outputScale))
+        let scaledW = max(2, (Int(outputSize.width * scale) / 2) * 2)
+        let scaledH = max(2, (Int(outputSize.height * scale) / 2) * 2)
+
+        let videoBitrate = Int(Double(scaledW * scaledH) * Double(fps) * input.bitsPerPixel)
         let videoSettings: [String: Any] = [
             AVVideoCodecKey: AVVideoCodecType.h264,
-            AVVideoWidthKey: Int(outputSize.width),
-            AVVideoHeightKey: Int(outputSize.height),
+            AVVideoWidthKey: scaledW,
+            AVVideoHeightKey: scaledH,
             AVVideoCompressionPropertiesKey: [
                 AVVideoAverageBitRateKey: videoBitrate,
                 AVVideoProfileLevelKey: AVVideoProfileLevelH264HighAutoLevel,
@@ -186,8 +223,8 @@ final class ExportPipeline {
 
         let pixelBufferAttrs: [String: Any] = [
             kCVPixelBufferPixelFormatTypeKey as String: kCVPixelFormatType_32BGRA,
-            kCVPixelBufferWidthKey as String: Int(outputSize.width),
-            kCVPixelBufferHeightKey as String: Int(outputSize.height),
+            kCVPixelBufferWidthKey as String: scaledW,
+            kCVPixelBufferHeightKey as String: scaledH,
             kCVPixelBufferMetalCompatibilityKey as String: true,
             kCVPixelBufferIOSurfacePropertiesKey as String: [:],
         ]
@@ -314,6 +351,177 @@ final class ExportPipeline {
         } catch {
             tearDown()
             throw error
+        }
+    }
+
+    // MARK: - GIF
+
+    /// Renders the trimmed, composited frames into an animated GIF via
+    /// CGImageDestination. Runs the pull-decode-render-encode loop off the
+    /// main actor; supports cancel; writes to a hidden temp file promoted on
+    /// success like the MP4 path.
+    private func exportGIF(
+        input: Input,
+        reader: AVAssetReader,
+        readerOutput: AVAssetReaderTrackOutput,
+        compositor: ExportCompositor,
+        sourceSize: CGSize,
+        timeRange: CMTimeRange,
+        nominalFPS: Double,
+        trimmedSeconds: Double,
+        onProgress: @Sendable @escaping (Progress) -> Void
+    ) async throws -> URL {
+        let session = self.session
+        let gifFPS = min(15.0, max(1.0, nominalFPS))
+        let longest = Double(max(sourceSize.width, sourceSize.height))
+        let scale = min(1.0, 960.0 / max(1.0, longest))
+        let width = max(2, (Int(sourceSize.width * scale) / 2) * 2)
+        let height = max(2, (Int(sourceSize.height * scale) / 2) * 2)
+        let frameCount = max(1, Int(trimmedSeconds * gifFPS))
+        let frameDelay = 1.0 / gifFPS
+
+        let tempURL = input.outputURL
+            .deletingLastPathComponent()
+            .appendingPathComponent(".cinescreen-export-\(UUID().uuidString).gif")
+        guard let destination = CGImageDestinationCreateWithURL(
+            tempURL as CFURL, UTType.gif.identifier as CFString, frameCount, nil
+        ) else {
+            throw ExportError.writerSetupFailed("GIF destination")
+        }
+        CGImageDestinationSetProperties(destination, [
+            kCGImagePropertyGIFDictionary: [kCGImagePropertyGIFLoopCount: 0]
+        ] as CFDictionary)
+
+        var poolOut: CVPixelBufferPool?
+        let poolAttrs: [String: Any] = [
+            kCVPixelBufferPixelFormatTypeKey as String: kCVPixelFormatType_32BGRA,
+            kCVPixelBufferWidthKey as String: width,
+            kCVPixelBufferHeightKey as String: height,
+            kCVPixelBufferMetalCompatibilityKey as String: true,
+            kCVPixelBufferIOSurfacePropertiesKey as String: [:],
+        ]
+        CVPixelBufferPoolCreate(kCFAllocatorDefault, nil, poolAttrs as CFDictionary, &poolOut)
+        guard let pool = poolOut else { throw ExportError.pixelBufferPoolMissing }
+
+        guard reader.startReading() else {
+            throw ExportError.readerStartFailed(reader.error?.localizedDescription ?? "unknown")
+        }
+        onProgress(.running(fraction: 0))
+
+        let webcamSource = try await WebcamFrameSource.open(
+            url: input.webcamURL,
+            timeRange: timeRange,
+            offsetMs: input.webcamOffsetMs
+        )
+
+        return try await withCheckedThrowingContinuation { continuation in
+            DispatchQueue.global(qos: .userInitiated).async {
+                func tearDown() {
+                    if reader.status == .reading { reader.cancelReading() }
+                    try? FileManager.default.removeItem(at: tempURL)
+                }
+                do {
+                    let ciContext = CIContext()
+                    var nextOutputPTS = timeRange.start
+                    let outputDelta = CMTime(seconds: frameDelay, preferredTimescale: 600)
+                    var currentSourceBuffer: CVPixelBuffer?
+                    var peekedSourceBuffer: CVPixelBuffer?
+                    var peekedSourcePTS: CMTime = .negativeInfinity
+                    var sourceExhausted = false
+                    var written = 0
+
+                    while CMTimeCompare(nextOutputPTS, timeRange.end) < 0, written < frameCount {
+                        if session.shouldStop { throw ExportError.cancelled }
+
+                        // Same peek-and-promote stepping as the MP4 loop.
+                        while !sourceExhausted {
+                            if let peek = peekedSourceBuffer,
+                               CMTimeCompare(peekedSourcePTS, nextOutputPTS) <= 0 {
+                                currentSourceBuffer = peek
+                                peekedSourceBuffer = nil
+                            }
+                            if peekedSourceBuffer != nil { break }
+                            guard reader.status == .reading,
+                                  let sample = readerOutput.copyNextSampleBuffer(),
+                                  let buf = CMSampleBufferGetImageBuffer(sample) else {
+                                if reader.status == .failed {
+                                    throw ExportError.readError(
+                                        reader.error?.localizedDescription ?? "video decode failed mid-export"
+                                    )
+                                }
+                                sourceExhausted = true
+                                break
+                            }
+                            let pts = CMSampleBufferGetPresentationTimeStamp(sample)
+                            if CMTimeCompare(pts, nextOutputPTS) <= 0 {
+                                currentSourceBuffer = buf
+                            } else {
+                                peekedSourceBuffer = buf
+                                peekedSourcePTS = pts
+                                if currentSourceBuffer == nil { currentSourceBuffer = buf }
+                            }
+                        }
+                        guard let sourceBuffer = currentSourceBuffer else { break }
+
+                        var destBuffer: CVPixelBuffer?
+                        guard CVPixelBufferPoolCreatePixelBuffer(kCFAllocatorDefault, pool, &destBuffer) == kCVReturnSuccess,
+                              let dest = destBuffer else {
+                            throw ExportError.pixelBufferAllocFailed
+                        }
+
+                        let outputTimeMs = nextOutputPTS.seconds * 1000
+                        let webcamFrame = input.webcamLayout.enabled ? webcamSource?.frame(at: nextOutputPTS) : nil
+                        guard compositor.render(
+                            source: sourceBuffer,
+                            cursor: input.cursorAt(outputTimeMs),
+                            clicks: input.clicksAt(outputTimeMs),
+                            zoom: input.zoomAt(outputTimeMs),
+                            canvas: input.canvas,
+                            webcam: webcamFrame,
+                            webcamLayout: input.webcamLayout,
+                            destination: dest
+                        ) else {
+                            throw ExportError.compositeFailed
+                        }
+
+                        guard let cg = ciContext.createCGImage(
+                            CIImage(cvPixelBuffer: dest),
+                            from: CGRect(x: 0, y: 0, width: width, height: height)
+                        ) else {
+                            throw ExportError.compositeFailed
+                        }
+                        CGImageDestinationAddImage(destination, cg, [
+                            kCGImagePropertyGIFDictionary: [
+                                kCGImagePropertyGIFDelayTime: frameDelay,
+                                kCGImagePropertyGIFUnclampedDelayTime: frameDelay,
+                            ]
+                        ] as CFDictionary)
+
+                        written += 1
+                        let elapsed = nextOutputPTS.seconds - timeRange.start.seconds
+                        onProgress(.running(fraction: min(1.0, max(0.0, elapsed / trimmedSeconds))))
+                        nextOutputPTS = CMTimeAdd(nextOutputPTS, outputDelta)
+                    }
+
+                    if session.shouldStop { throw ExportError.cancelled }
+                    guard CGImageDestinationFinalize(destination) else {
+                        throw ExportError.writeFailed("GIF finalize failed")
+                    }
+                    if reader.status == .reading { reader.cancelReading() }
+
+                    let fm = FileManager.default
+                    if fm.fileExists(atPath: input.outputURL.path) {
+                        _ = try fm.replaceItemAt(input.outputURL, withItemAt: tempURL)
+                    } else {
+                        try fm.moveItem(at: tempURL, to: input.outputURL)
+                    }
+                    onProgress(.finished(input.outputURL))
+                    continuation.resume(returning: input.outputURL)
+                } catch {
+                    tearDown()
+                    continuation.resume(throwing: error)
+                }
+            }
         }
     }
 

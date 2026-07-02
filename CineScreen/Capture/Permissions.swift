@@ -65,11 +65,10 @@ enum Permissions {
         Log.permissions.info("CGRequestScreenCaptureAccess returned \(triggered)")
         // Give TCC a moment to settle
         try? await Task.sleep(nanoseconds: 200_000_000)
-        let next = screenRecordingState()
-        if next != .granted {
-            openSystemSettings(pane: .screenRecording)
-        }
-        return next
+        // Deliberately no auto-open of System Settings: on the first ask it
+        // stacked the Settings pane on top of the native consent dialog. The
+        // onboarding card offers an explicit "Open System Settings" link.
+        return screenRecordingState()
     }
 
     /// Accessibility has no in-process API to prompt — must direct the user.

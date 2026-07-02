@@ -19,113 +19,23 @@ final class ExportCompositor {
     private let webcamPipeline: MTLRenderPipelineState
     private let vertexBuffer: MTLBuffer
     private let textureCache: CVMetalTextureCache
-    private let textureLoader: MTKTextureLoader
-    private var cursorTextures: [CursorShape: MTLTexture] = [:]
+    private let cursorTextureStore: CursorTextureStore
 
     init?() {
         guard let device = MTLCreateSystemDefaultDevice(),
               let queue = device.makeCommandQueue(),
               let library = device.makeDefaultLibrary() else { return nil }
 
-        guard let bgVertex = library.makeFunction(name: "background_vertex"),
-              let bgFragment = library.makeFunction(name: "background_fragment"),
-              let shadowVertex = library.makeFunction(name: "shadow_vertex"),
-              let shadowFragment = library.makeFunction(name: "shadow_fragment"),
-              let videoVertex = library.makeFunction(name: "video_vertex"),
-              let videoFragment = library.makeFunction(name: "video_fragment"),
-              let cursorVertex = library.makeFunction(name: "cursor_vertex"),
-              let cursorFragment = library.makeFunction(name: "cursor_fragment"),
-              let clickVertex = library.makeFunction(name: "click_vertex"),
-              let clickFragment = library.makeFunction(name: "click_fragment") else { return nil }
-
-        // Pipelines render into BGRA to match the writer's pixel buffer format.
-        let bgDesc = MTLRenderPipelineDescriptor()
-        bgDesc.vertexFunction = bgVertex
-        bgDesc.fragmentFunction = bgFragment
-        bgDesc.colorAttachments[0].pixelFormat = .bgra8Unorm
-        bgDesc.label = "export.background"
-        guard let backgroundPipeline = try? device.makeRenderPipelineState(descriptor: bgDesc) else { return nil }
-
-        let shadowDesc = MTLRenderPipelineDescriptor()
-        shadowDesc.vertexFunction = shadowVertex
-        shadowDesc.fragmentFunction = shadowFragment
-        shadowDesc.colorAttachments[0].pixelFormat = .bgra8Unorm
-        shadowDesc.colorAttachments[0].isBlendingEnabled = true
-        shadowDesc.colorAttachments[0].rgbBlendOperation = .add
-        shadowDesc.colorAttachments[0].alphaBlendOperation = .add
-        shadowDesc.colorAttachments[0].sourceRGBBlendFactor = .sourceAlpha
-        shadowDesc.colorAttachments[0].sourceAlphaBlendFactor = .one
-        shadowDesc.colorAttachments[0].destinationRGBBlendFactor = .oneMinusSourceAlpha
-        shadowDesc.colorAttachments[0].destinationAlphaBlendFactor = .oneMinusSourceAlpha
-        shadowDesc.label = "export.shadow"
-        guard let shadowPipeline = try? device.makeRenderPipelineState(descriptor: shadowDesc) else { return nil }
-
-        let videoDesc = MTLRenderPipelineDescriptor()
-        videoDesc.vertexFunction = videoVertex
-        videoDesc.fragmentFunction = videoFragment
-        videoDesc.colorAttachments[0].pixelFormat = .bgra8Unorm
-        videoDesc.colorAttachments[0].isBlendingEnabled = true
-        videoDesc.colorAttachments[0].rgbBlendOperation = .add
-        videoDesc.colorAttachments[0].alphaBlendOperation = .add
-        videoDesc.colorAttachments[0].sourceRGBBlendFactor = .sourceAlpha
-        videoDesc.colorAttachments[0].sourceAlphaBlendFactor = .one
-        videoDesc.colorAttachments[0].destinationRGBBlendFactor = .oneMinusSourceAlpha
-        videoDesc.colorAttachments[0].destinationAlphaBlendFactor = .oneMinusSourceAlpha
-        videoDesc.label = "export.video"
-        guard let videoPipeline = try? device.makeRenderPipelineState(descriptor: videoDesc) else { return nil }
-
-        let cursorDesc = MTLRenderPipelineDescriptor()
-        cursorDesc.vertexFunction = cursorVertex
-        cursorDesc.fragmentFunction = cursorFragment
-        cursorDesc.colorAttachments[0].pixelFormat = .bgra8Unorm
-        cursorDesc.colorAttachments[0].isBlendingEnabled = true
-        cursorDesc.colorAttachments[0].rgbBlendOperation = .add
-        cursorDesc.colorAttachments[0].alphaBlendOperation = .add
-        cursorDesc.colorAttachments[0].sourceRGBBlendFactor = .sourceAlpha
-        cursorDesc.colorAttachments[0].sourceAlphaBlendFactor = .one
-        cursorDesc.colorAttachments[0].destinationRGBBlendFactor = .oneMinusSourceAlpha
-        cursorDesc.colorAttachments[0].destinationAlphaBlendFactor = .oneMinusSourceAlpha
-        cursorDesc.label = "export.cursor"
-        guard let cursorPipeline = try? device.makeRenderPipelineState(descriptor: cursorDesc) else { return nil }
-
-        let clickDesc = MTLRenderPipelineDescriptor()
-        clickDesc.vertexFunction = clickVertex
-        clickDesc.fragmentFunction = clickFragment
-        clickDesc.colorAttachments[0].pixelFormat = .bgra8Unorm
-        clickDesc.colorAttachments[0].isBlendingEnabled = true
-        clickDesc.colorAttachments[0].rgbBlendOperation = .add
-        clickDesc.colorAttachments[0].alphaBlendOperation = .add
-        clickDesc.colorAttachments[0].sourceRGBBlendFactor = .sourceAlpha
-        clickDesc.colorAttachments[0].sourceAlphaBlendFactor = .one
-        clickDesc.colorAttachments[0].destinationRGBBlendFactor = .oneMinusSourceAlpha
-        clickDesc.colorAttachments[0].destinationAlphaBlendFactor = .oneMinusSourceAlpha
-        clickDesc.label = "export.click"
-        guard let clickPipeline = try? device.makeRenderPipelineState(descriptor: clickDesc) else { return nil }
-
-        guard let webcamVertex = library.makeFunction(name: "webcam_vertex"),
-              let webcamFragment = library.makeFunction(name: "webcam_fragment") else { return nil }
-        let webcamDesc = MTLRenderPipelineDescriptor()
-        webcamDesc.vertexFunction = webcamVertex
-        webcamDesc.fragmentFunction = webcamFragment
-        webcamDesc.colorAttachments[0].pixelFormat = .bgra8Unorm
-        webcamDesc.colorAttachments[0].isBlendingEnabled = true
-        webcamDesc.colorAttachments[0].rgbBlendOperation = .add
-        webcamDesc.colorAttachments[0].alphaBlendOperation = .add
-        webcamDesc.colorAttachments[0].sourceRGBBlendFactor = .sourceAlpha
-        webcamDesc.colorAttachments[0].sourceAlphaBlendFactor = .one
-        webcamDesc.colorAttachments[0].destinationRGBBlendFactor = .oneMinusSourceAlpha
-        webcamDesc.colorAttachments[0].destinationAlphaBlendFactor = .oneMinusSourceAlpha
-        webcamDesc.label = "export.webcam"
-        guard let webcamPipeline = try? device.makeRenderPipelineState(descriptor: webcamDesc) else { return nil }
-
-        let quad: [SIMD4<Float>] = [
-            SIMD4(-1, -1, 0, 1),
-            SIMD4( 1, -1, 1, 1),
-            SIMD4(-1,  1, 0, 0),
-            SIMD4( 1,  1, 1, 0),
-        ]
-        let len = MemoryLayout<SIMD4<Float>>.stride * quad.count
-        guard let buffer = device.makeBuffer(bytes: quad, length: len, options: .storageModeShared) else { return nil }
+        // Pipelines render into BGRA to match the writer's pixel buffer
+        // format. Shared factory + quad — see CompositorCore; identical
+        // wiring to the preview by construction.
+        guard let pipelines = CompositorCore.makePipelines(
+            device: device,
+            library: library,
+            pixelFormat: .bgra8Unorm,
+            labelPrefix: "export"
+        ) else { return nil }
+        guard let buffer = CompositorCore.makeQuadBuffer(device: device) else { return nil }
 
         // Cache attributes: auto-expire bindings older than 0.5s. Without
         // this the cache grows unbounded — each frame's source + destination
@@ -141,15 +51,15 @@ final class ExportCompositor {
 
         self.device = device
         self.commandQueue = queue
-        self.backgroundPipeline = backgroundPipeline
-        self.shadowPipeline = shadowPipeline
-        self.videoPipeline = videoPipeline
-        self.cursorPipeline = cursorPipeline
-        self.clickPipeline = clickPipeline
-        self.webcamPipeline = webcamPipeline
+        self.backgroundPipeline = pipelines.background
+        self.shadowPipeline = pipelines.shadow
+        self.videoPipeline = pipelines.video
+        self.cursorPipeline = pipelines.cursor
+        self.clickPipeline = pipelines.click
+        self.webcamPipeline = pipelines.webcam
         self.vertexBuffer = buffer
         self.textureCache = cache
-        self.textureLoader = MTKTextureLoader(device: device)
+        self.cursorTextureStore = CursorTextureStore(device: device)
     }
 
     // MARK: - Render
@@ -262,7 +172,7 @@ final class ExportCompositor {
         }
 
         // 3. Cursor pass
-        if let cursor = cursor, let texture = cursorTexture(for: cursor.shape) {
+        if let cursor = cursor, let texture = cursorTextureStore.texture(for: cursor.shape) {
             var uniforms = CursorUniforms(
                 cursorPos: cursor.positionInVideoPixels,
                 videoSize: videoSize,
@@ -358,80 +268,4 @@ final class ExportCompositor {
         return texture
     }
 
-    private func cursorTexture(for shape: CursorShape) -> MTLTexture? {
-        if let cached = cursorTextures[shape] { return cached }
-        let candidates = [shape.rawValue, "arrow"]
-        for name in candidates {
-            if let tex = loadCursorTexture(named: name) {
-                cursorTextures[shape] = tex
-                return tex
-            }
-        }
-        return nil
-    }
-
-    /// Mirrors MetalRenderer's normalised-RGBA loader — always re-renders
-    /// the asset through a fresh sRGB CGContext with explicit RGBA byte
-    /// order, then loads via MTKTextureLoader with `.origin: .bottomLeft`.
-    /// Without this the export had the same yellow / black-square cursor bug
-    /// that the editor preview used to.
-    private func loadCursorTexture(named name: String) -> MTLTexture? {
-        guard let image = NSImage(named: name) else { return nil }
-        let w = max(1, Int(image.size.width))
-        let h = max(1, Int(image.size.height))
-        guard let cs = CGColorSpace(name: CGColorSpace.sRGB),
-              let ctx = CGContext(
-                data: nil, width: w, height: h, bitsPerComponent: 8,
-                bytesPerRow: 0, space: cs,
-                bitmapInfo: CGImageAlphaInfo.premultipliedLast.rawValue
-                    | CGBitmapInfo.byteOrder32Big.rawValue
-              ) else {
-            return nil
-        }
-        let nsCtx = NSGraphicsContext(cgContext: ctx, flipped: false)
-        NSGraphicsContext.saveGraphicsState()
-        NSGraphicsContext.current = nsCtx
-        image.draw(in: NSRect(x: 0, y: 0, width: w, height: h),
-                   from: .zero, operation: .copy, fraction: 1.0)
-        NSGraphicsContext.restoreGraphicsState()
-        guard let cg = ctx.makeImage() else { return nil }
-
-        let opts: [MTKTextureLoader.Option: Any] = [
-            .SRGB: false,
-            .origin: MTKTextureLoader.Origin.bottomLeft,
-            .generateMipmaps: false
-        ]
-        return try? textureLoader.newTexture(cgImage: cg, options: opts)
-    }
-
-    // MARK: - Uniforms (must match the layouts in MetalRenderer.swift)
-
-    private struct AspectUniforms { var scale: SIMD2<Float> }
-    // Field order + sizes must match `CursorUniforms` in Shaders.metal (and
-    // the mirror in MetalRenderer). Trailing floats pack into one 8-byte slot.
-    private struct CursorUniforms {
-        var cursorPos: SIMD2<Float>
-        var videoSize: SIMD2<Float>
-        var aspectScale: SIMD2<Float>
-        var hotspot: SIMD2<Float>
-        var motionBlur: SIMD2<Float>
-        var size: Float
-        var opacity: Float
-    }
-    private struct ClickUniforms {
-        var centerInVideoPixels: SIMD2<Float>
-        var radiusInPixels: Float
-        var thicknessInPixels: Float
-        var videoSize: SIMD2<Float>
-        var aspectScale: SIMD2<Float>
-        var color: SIMD4<Float>
-    }
-    private struct ZoomUniforms {
-        var centerUV: SIMD2<Float>
-        var scale: Float
-        var _pad: Float = 0
-    }
-    private struct CanvasUniforms {
-        var contentScale: SIMD2<Float>
-    }
 }

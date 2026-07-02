@@ -24,6 +24,10 @@ final class AppState {
     var captureCamera: Bool = false
     /// AVCaptureDevice uniqueID for the selected webcam. nil = system default.
     var selectedCameraID: String? = nil
+    /// AVCaptureDevice uniqueID for the selected microphone. nil = default.
+    var selectedMicID: String? = nil
+    /// Whether ⌥⌘R starts/stops recording from anywhere.
+    var enableGlobalHotkey: Bool = true
 
     // Permissions snapshot (refreshed on a timer and after each request)
     var permissions: PermissionStatus
@@ -60,6 +64,8 @@ final class AppState {
         static let captureMic = "cs.captureMic"
         static let captureCamera = "cs.captureCamera"
         static let selectedCameraID = "cs.selectedCameraID"
+        static let selectedMicID = "cs.selectedMicID"
+        static let enableGlobalHotkey = "cs.enableGlobalHotkey"
     }
 
     private func loadSettings() {
@@ -73,6 +79,10 @@ final class AppState {
         captureMic = d.bool(forKey: Keys.captureMic)
         captureCamera = d.bool(forKey: Keys.captureCamera)
         selectedCameraID = d.string(forKey: Keys.selectedCameraID)
+        selectedMicID = d.string(forKey: Keys.selectedMicID)
+        if d.object(forKey: Keys.enableGlobalHotkey) != nil {
+            enableGlobalHotkey = d.bool(forKey: Keys.enableGlobalHotkey)
+        }
     }
 
     func saveProjectsDirectory(_ url: URL) {
@@ -112,6 +122,20 @@ final class AppState {
             UserDefaults.standard.set(id, forKey: Keys.selectedCameraID)
         } else {
             UserDefaults.standard.removeObject(forKey: Keys.selectedCameraID)
+        }
+    }
+
+    func saveEnableGlobalHotkey(_ on: Bool) {
+        enableGlobalHotkey = on
+        UserDefaults.standard.set(on, forKey: Keys.enableGlobalHotkey)
+    }
+
+    func saveSelectedMicID(_ id: String?) {
+        selectedMicID = id
+        if let id = id {
+            UserDefaults.standard.set(id, forKey: Keys.selectedMicID)
+        } else {
+            UserDefaults.standard.removeObject(forKey: Keys.selectedMicID)
         }
     }
 

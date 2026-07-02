@@ -21,6 +21,48 @@ struct EditorView: View {
             // window must never lose edits.
             vm.saveNow()
         }
+        .background { keyboardShortcuts }
+    }
+
+    /// Editor-wide keys, delivered through invisible buttons — the same
+    /// mechanism the play button already uses for Space, so shortcuts work
+    /// without fighting SwiftUI focus. ←/→ frame-step, ⇧←/→ jump 1s,
+    /// I/O set trim in/out at the playhead, ⌘S saves, ⌫ removes the
+    /// selected zoom section, ⎋ deselects.
+    private var keyboardShortcuts: some View {
+        Group {
+            Button("") { vm.stepFrame(-1) }
+                .keyboardShortcut(.leftArrow, modifiers: [])
+            Button("") { vm.stepFrame(1) }
+                .keyboardShortcut(.rightArrow, modifiers: [])
+            Button("") { vm.seek(toMilliseconds: vm.currentTimeMs - 1000) }
+                .keyboardShortcut(.leftArrow, modifiers: .shift)
+            Button("") { vm.seek(toMilliseconds: vm.currentTimeMs + 1000) }
+                .keyboardShortcut(.rightArrow, modifiers: .shift)
+            Button("") { vm.saveNow() }
+                .keyboardShortcut("s", modifiers: .command)
+            Button("") {
+                if vm.durationMs > 0 {
+                    vm.trimStartMs = max(0, min(vm.currentTimeMs, vm.trimEndMs - 100))
+                }
+            }
+            .keyboardShortcut("i", modifiers: [])
+            Button("") {
+                if vm.durationMs > 0 {
+                    vm.trimEndMs = min(vm.durationMs, max(vm.currentTimeMs, vm.trimStartMs + 100))
+                }
+            }
+            .keyboardShortcut("o", modifiers: [])
+            Button("") {
+                if let index = vm.selectedZoomIndex { vm.removeZoomSection(at: index) }
+            }
+            .keyboardShortcut(.delete, modifiers: [])
+            Button("") { vm.selectedZoomIndex = nil }
+                .keyboardShortcut(.escape, modifiers: [])
+        }
+        .opacity(0)
+        .frame(width: 0, height: 0)
+        .accessibilityHidden(true)
     }
 
     private var mainPane: some View {
