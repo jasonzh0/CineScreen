@@ -12,6 +12,13 @@ final class EditorViewModel {
     let metadataURL: URL?
     var metadata: RecordingMetadata? {
         didSet {
+            // Any metadata change invalidates the cached per-frame snapshot
+            // AND the auto-generated zoom sections (they derive from clicks,
+            // duration, and zoom level). This central hook covers every
+            // mutator — including sidebar bindings that write into metadata
+            // directly, which used to bypass invalidation entirely.
+            cachedSnapshot = nil
+            cachedZoomSections = nil
             guard !suppressAutosave else { return }
             scheduleAutosave()
         }
@@ -86,6 +93,16 @@ final class EditorViewModel {
         )
     }
 
+    /// Width/height of the recording. The preview locks its canvas to this
+    /// so canvas-relative placement (webcam position, padding, shadow)
+    /// matches the export, whose canvas is exactly the video frame — an
+    /// unconstrained preview diverged from the exported result whenever the
+    /// window aspect differed from the video's.
+    var previewAspect: CGFloat? {
+        guard let video = metadata?.video, video.height > 0 else { return nil }
+        return CGFloat(video.width) / CGFloat(video.height)
+    }
+
     // Underlying AVFoundation
     let player: AVPlayer
     private var playerItem: AVPlayerItem?
@@ -116,6 +133,13 @@ final class EditorViewModel {
 
     // Auto-generated zoom sections cached on first access.
     @ObservationIgnored private var cachedZoomSections: [ZoomSection]?
+
+    // Cached per-frame snapshot, invalidated on any metadata change. The
+    // renderer's providers pull state three times per 60fps frame, and
+    // RenderSnapshot.init integrates the whole auto-pan camera trajectory at
+    // 240Hz — rebuilding it per pull burned millions of spring steps per
+    // second on the main thread once a recording had real zoom coverage.
+    @ObservationIgnored private var cachedSnapshot: RenderSnapshot?
 
     init(videoURL: URL, metadataURL: URL? = nil) {
         self.videoURL = videoURL
@@ -502,7 +526,6 @@ final class EditorViewModel {
         metadata.zoom.sections = activeZoomSections(metadata: metadata)
         metadata.zoom.config.autoZoom = false
         self.metadata = metadata
-        cachedZoomSections = nil
     }
 
     /// Adds a new 2-second zoom section centred on the current playhead.
@@ -524,7 +547,6 @@ final class EditorViewModel {
         sections.sort { $0.startTime < $1.startTime }
         metadata.zoom.sections = sections
         self.metadata = metadata
-        cachedZoomSections = nil
         selectedZoomIndex = sections.firstIndex(where: { $0.startTime == section.startTime })
     }
 
@@ -539,7 +561,6 @@ final class EditorViewModel {
         )
         metadata.zoom.sections = generated
         self.metadata = metadata
-        cachedZoomSections = nil
         selectedZoomIndex = nil
     }
 
@@ -548,7 +569,6 @@ final class EditorViewModel {
         guard var metadata = metadata, metadata.zoom.sections.indices.contains(index) else { return }
         metadata.zoom.sections.remove(at: index)
         self.metadata = metadata
-        cachedZoomSections = nil
         if selectedZoomIndex == index { selectedZoomIndex = nil }
         else if let s = selectedZoomIndex, s > index { selectedZoomIndex = s - 1 }
     }
@@ -567,17 +587,20 @@ final class EditorViewModel {
         // point at a different section, and the block would flicker / jump
         // between identities. We sort only on add/suggest/save.
         self.metadata = metadata
-        cachedZoomSections = nil
     }
 
-    /// Builds a Sendable snapshot of everything the export pipeline needs to
-    /// compute per-frame state. Capture this on the main actor BEFORE
-    /// kicking off the export; the closures passed to the pipeline then call
-    /// methods on the snapshot from any queue without actor crashes.
+    /// Returns the Sendable snapshot of everything per-frame state needs —
+    /// cached until the next metadata mutation. The preview's providers call
+    /// this every draw; the export captures it once on the main actor before
+    /// kicking off, then calls methods on it from any queue without actor
+    /// crashes.
     func makeRenderSnapshot() -> RenderSnapshot? {
+        if let cachedSnapshot { return cachedSnapshot }
         guard let metadata = metadata else { return nil }
         let sections = activeZoomSections(metadata: metadata)
-        return RenderSnapshot(metadata: metadata, zoomSections: sections)
+        let snapshot = RenderSnapshot(metadata: metadata, zoomSections: sections)
+        cachedSnapshot = snapshot
+        return snapshot
     }
 
 }

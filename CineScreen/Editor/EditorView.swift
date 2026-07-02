@@ -47,6 +47,10 @@ struct EditorView: View {
 
                 WebcamHandleOverlay(vm: vm)
             }
+            // Lock the preview canvas to the recording's aspect so what you
+            // see (webcam placement, padding proportions, shadow) is what the
+            // export produces — its canvas is exactly the video frame.
+            .aspectRatio(vm.previewAspect, contentMode: .fit)
             .padding(.horizontal, 24)
             .padding(.top, 4)
             .padding(.bottom, 12)
