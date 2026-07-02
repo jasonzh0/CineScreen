@@ -36,16 +36,16 @@ enum MouseTrackingError: LocalizedError {
 
 @MainActor
 final class MouseTrackingService {
-    /// Display bounds in points; used to map global-coord mouse positions
-    /// onto the recorded image.
-    private var displayBoundsPoints: CGRect = .zero
-    /// Pixel size of the recorded image (output frame).
+    /// The captured content's rect in global screen points (top-left origin,
+    /// CGEvent space). Mouse points map into file pixels relative to this —
+    /// origin subtraction handles windows/regions/secondary displays that
+    /// don't sit at the global origin.
+    private var contentRectPoints: CGRect = .zero
+    /// Pixel size of the recorded image (output frame, after any downscale).
     private var pixelSize: CGSize = .zero
-    /// scaleFactor = pixelSize / displayBounds — cached for the hot path.
-    private var scale: CGFloat = 2.0
-    /// If a region was captured, this offset is subtracted (in pixels)
-    /// before clamping to pixelSize.
-    private var regionOffsetPixels: CGPoint = .zero
+    /// pixels-per-point, cached per axis for the hot path.
+    private var scaleX: CGFloat = 2.0
+    private var scaleY: CGFloat = 2.0
 
     private var startTime: CFAbsoluteTime = 0
     private var tap: CFMachPort?
@@ -62,18 +62,20 @@ final class MouseTrackingService {
 
     // MARK: - Lifecycle
 
-    func start(displayBoundsPoints: CGRect, pixelSize: CGSize, regionOffsetPixels: CGPoint = .zero) throws {
+    func start(contentRectPoints: CGRect, pixelSize: CGSize) throws {
         guard !isTracking else { return }
         guard AXIsProcessTrusted() else {
             throw MouseTrackingError.accessibilityNotGranted
         }
 
-        self.displayBoundsPoints = displayBoundsPoints
+        self.contentRectPoints = contentRectPoints
         self.pixelSize = pixelSize
-        self.scale = displayBoundsPoints.width > 0
-            ? CGFloat(pixelSize.width) / displayBoundsPoints.width
+        self.scaleX = contentRectPoints.width > 0
+            ? pixelSize.width / contentRectPoints.width
             : 2.0
-        self.regionOffsetPixels = regionOffsetPixels
+        self.scaleY = contentRectPoints.height > 0
+            ? pixelSize.height / contentRectPoints.height
+            : scaleX
         self.samples = []
         self.startTime = CFAbsoluteTimeGetCurrent()
         // Build the cursor lookup AFTER NSApp is fully up — see comment on
@@ -116,9 +118,16 @@ final class MouseTrackingService {
         self.runLoopSource = source
         self.isTracking = true
 
-        // Seed with the current cursor position so the timeline always has a t=0 sample.
-        let now = NSEvent.mouseLocation
-        record(point: now, kind: .move)
+        // Seed with the current cursor position so the timeline always has a
+        // t=0 sample. NSEvent.mouseLocation is Cocoa space (bottom-left of
+        // the PRIMARY screen) — convert once into the CG top-left global
+        // space every other sample arrives in. The old code flipped with
+        // NSScreen.main (the key window's screen), which is wrong whenever
+        // that isn't the primary display.
+        let cocoa = NSEvent.mouseLocation
+        let primaryHeight = NSScreen.screens.first(where: { $0.frame.origin == .zero })?.frame.height
+            ?? NSScreen.screens.first?.frame.height ?? 0
+        record(topLeftGlobalPoint: CGPoint(x: cocoa.x, y: primaryHeight - cocoa.y), kind: .move)
 
         Log.mouse.info("Mouse tracking started")
     }
@@ -158,29 +167,24 @@ final class MouseTrackingService {
         default:               kind = .move
         }
 
-        // Hop to main to mutate.
+        // Hop to main to mutate. CGEvent.location is already top-left-origin
+        // global points — the exact space `record` expects; the old
+        // flip-to-Cocoa-and-back round trip (via the key window's screen
+        // height) has been dropped.
         DispatchQueue.main.async { [self] in
-            // CGEvent.location is already top-left origin in *global* coords (points).
-            // Convert to bottom-left coordinates (NSEvent style) so we share the
-            // same path as the seed sample.
-            let screenHeight = NSScreen.main?.frame.height ?? 0
-            let point = CGPoint(x: location.x, y: screenHeight - location.y)
-            self.record(point: point, kind: kind)
+            self.record(topLeftGlobalPoint: location, kind: kind)
         }
     }
 
-    private func record(point pointInScreenPoints: CGPoint, kind: MouseSample.Kind) {
+    private func record(topLeftGlobalPoint point: CGPoint, kind: MouseSample.Kind) {
         let now = CFAbsoluteTimeGetCurrent()
         let elapsedMs = (now - startTime) * 1000.0
 
-        // Convert NSEvent-style (origin bottom-left) to top-left point coords.
-        let screenHeight = NSScreen.main?.frame.height ?? 0
-        let topLeftPoint = CGPoint(x: pointInScreenPoints.x, y: screenHeight - pointInScreenPoints.y)
-
-        // Clip out events that landed outside the recorded display, but record
-        // them anyway — the editor decides what to do.
-        let pixelX = (topLeftPoint.x * scale) - regionOffsetPixels.x
-        let pixelY = (topLeftPoint.y * scale) - regionOffsetPixels.y
+        // Map global points → recorded-file pixels: subtract the content
+        // origin, then scale points→pixels per axis. Events outside the
+        // captured content clamp to the edge — the editor decides what to do.
+        let pixelX = (point.x - contentRectPoints.minX) * scaleX
+        let pixelY = (point.y - contentRectPoints.minY) * scaleY
 
         let clampedX = min(max(pixelX, 0), pixelSize.width)
         let clampedY = min(max(pixelY, 0), pixelSize.height)

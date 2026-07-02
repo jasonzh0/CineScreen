@@ -94,12 +94,10 @@ final class RecordingSession {
             throw SessionError.captureFailed(error.localizedDescription)
         }
 
-        let regionOffset: CGPoint = request.region?.origin ?? .zero
         do {
             try mouse.start(
-                displayBoundsPoints: info.displayBounds,
-                pixelSize: CGSize(width: info.pixelWidth, height: info.pixelHeight),
-                regionOffsetPixels: regionOffset
+                contentRectPoints: info.contentRectPoints,
+                pixelSize: CGSize(width: info.pixelWidth, height: info.pixelHeight)
             )
         } catch {
             Log.session.error("mouse.start failed: \(error.localizedDescription)")

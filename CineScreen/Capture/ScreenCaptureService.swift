@@ -45,7 +45,12 @@ struct CaptureInfo {
     var pixelWidth: Int
     var pixelHeight: Int
     var fps: Int
-    var displayBounds: CGRect       // in points
+    /// Where the captured content lives on the desktop — global screen
+    /// points, top-left origin (CGEvent space). The mouse tracker maps
+    /// cursor events into file pixels relative to this rect: a captured
+    /// window is rarely at the display origin, and a secondary display
+    /// never is.
+    var contentRectPoints: CGRect
     var scaleFactor: CGFloat
     var hasSystemAudio: Bool
     var hasMic: Bool
@@ -160,12 +165,17 @@ final class ScreenCaptureService: NSObject {
         }
 
         let scale = Self.backingScale(for: display.displayID)
-        let displayPoints = CGRect(x: 0, y: 0, width: CGFloat(display.width), height: CGFloat(display.height))
 
-        // 2. Output dimensions in pixels, sourceRect in points
+        // 2. Output dimensions in pixels, sourceRect in points, and the
+        // content's global rect (points, top-left origin) for cursor mapping.
+        // Passing full-display bounds regardless of mode gave window captures
+        // the wrong point→pixel scale AND ignored the window's position — the
+        // synthetic cursor landed far from the real pointer for every window
+        // recording.
         var outputW: Int
         var outputH: Int
         var sourceRect: CGRect? = nil
+        var contentRectPoints: CGRect
         if let preBuilt = request.preBuiltFilter {
             // Native picker gave us a filter — its contentRect is in points,
             // and pointPixelScale converts to native pixels. Using contentRect
@@ -175,6 +185,7 @@ final class ScreenCaptureService: NSObject {
             let pxScale = CGFloat(preBuilt.pointPixelScale)
             outputW = Int(rect.width * pxScale)
             outputH = Int(rect.height * pxScale)
+            contentRectPoints = rect
         } else if let window = window {
             // Window capture (legacy windowID path): build the filter early
             // so we can use its contentRect for sizing. This is what makes
@@ -185,6 +196,7 @@ final class ScreenCaptureService: NSObject {
             let pxScale = CGFloat(probeFilter.pointPixelScale)
             outputW = Int(rect.width * pxScale)
             outputH = Int(rect.height * pxScale)
+            contentRectPoints = rect
         } else if let region = request.region {
             outputW = Int(region.width)
             outputH = Int(region.height)
@@ -194,9 +206,18 @@ final class ScreenCaptureService: NSObject {
                 width: region.size.width / scale,
                 height: region.size.height / scale
             )
+            contentRectPoints = CGRect(
+                x: display.frame.minX + region.origin.x / scale,
+                y: display.frame.minY + region.origin.y / scale,
+                width: region.size.width / scale,
+                height: region.size.height / scale
+            )
         } else {
             outputW = Int(CGFloat(display.width) * scale)
             outputH = Int(CGFloat(display.height) * scale)
+            // display.frame carries the display's global origin — (0,0) for
+            // the primary display, but not for secondaries.
+            contentRectPoints = display.frame
         }
 
         // Cap the longest side to 2560px so the encoder doesn't get drowned
@@ -427,7 +448,7 @@ final class ScreenCaptureService: NSObject {
             pixelWidth: outputW,
             pixelHeight: outputH,
             fps: request.fps,
-            displayBounds: displayPoints,
+            contentRectPoints: contentRectPoints,
             scaleFactor: scale,
             hasSystemAudio: sysInput != nil,
             hasMic: mInput != nil
