@@ -60,13 +60,17 @@ struct RenderSnapshot: Sendable {
 
     init(metadata: RecordingMetadata, zoomSections: [ZoomSection]) {
         self.metadata = metadata
-        self.zoomSections = zoomSections
+        // Defensive sort: the pan table is binary-searched by time and
+        // `zoomState` scans in order — both require sorted sections
+        // regardless of what the caller (or an old metadata file) hands us.
+        let sorted = zoomSections.sorted { $0.startTime < $1.startTime }
+        self.zoomSections = sorted
         self.clickDownTimesMs = metadata.clicks
             .filter { $0.action == .down }
             .map(\.timestamp)
             .sorted()
         self.panSamples = Self.computePanTrack(
-            sections: zoomSections,
+            sections: sorted,
             metadata: metadata,
             config: metadata.zoom.config
         )

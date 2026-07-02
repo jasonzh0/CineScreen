@@ -183,7 +183,11 @@ final class EditorViewModel {
         suppressAutosave = true
         defer { suppressAutosave = false }
         do {
-            metadata = try RecordingMetadata.decode(from: url)
+            var decoded = try RecordingMetadata.decode(from: url)
+            // Repair section order persisted by older builds, where a drag
+            // could cross a neighbour and save the non-monotonic result.
+            decoded.zoom.sections.sort { $0.startTime < $1.startTime }
+            metadata = decoded
             if let trim = metadata?.trim {
                 trimStartMs = trim.startMs
                 trimEndMs = trim.endMs
@@ -528,21 +532,36 @@ final class EditorViewModel {
         self.metadata = metadata
     }
 
-    /// Adds a new 2-second zoom section centred on the current playhead.
-    /// Mimics the Electron studio's "Add Zoom" action.
+    /// Adds a new ~2-second zoom section centred on the current playhead,
+    /// clamped into the free gap between existing sections. Adding inside an
+    /// existing section selects it instead — the old behaviour inserted an
+    /// invisible overlapping duplicate that appeared to do nothing.
     func addZoomSection() {
         materializeIfAuto()
         guard var metadata = metadata else { return }
         let now = currentTimeMs
-        let duration = max(500.0, min(metadata.video.duration - now, 2000.0))
+        var sections = metadata.zoom.sections
+
+        if let hit = sections.firstIndex(where: { now >= $0.startTime && now <= $0.endTime }) {
+            selectedZoomIndex = hit
+            return
+        }
+
+        // Free gap around the playhead (sections are sorted, non-overlapping).
+        let prevEnd = sections.last(where: { $0.endTime <= now })?.endTime ?? 0
+        let nextStart = sections.first(where: { $0.startTime >= now })?.startTime ?? metadata.video.duration
+        let half = 1000.0
+        let start = max(max(0, now - half), prevEnd)
+        let end = min(min(metadata.video.duration, now + half), nextStart)
+        guard end - start >= 100 else { return }
+
         let section = ZoomSection(
-            startTime: max(0, now - duration / 2),
-            endTime: min(metadata.video.duration, now + duration / 2),
+            startTime: start,
+            endTime: end,
             scale: metadata.zoom.config.level,
             centerX: 0,
             centerY: 0
         )
-        var sections = metadata.zoom.sections
         sections.append(section)
         sections.sort { $0.startTime < $1.startTime }
         metadata.zoom.sections = sections
@@ -578,14 +597,39 @@ final class EditorViewModel {
         materializeIfAuto()
         guard var metadata = metadata, metadata.zoom.sections.indices.contains(index) else { return }
         var section = metadata.zoom.sections[index]
-        if let s = startTime { section.startTime = max(0, s) }
-        if let e = endTime { section.endTime = min(metadata.video.duration, e) }
+
+        // Clamp edits to the neighbouring sections. The array is kept sorted
+        // and non-overlapping; without these clamps a block dragged past its
+        // neighbour made the array non-monotonic — the pan lookup table is
+        // binary-searched by time, so the camera jumped between arbitrary
+        // sections, and the corrupted order was persisted. Overlaps also
+        // caused instant scale jumps at boundaries, and a zero-length section
+        // produced a one-frame full-scale zoom pop — the minimum length
+        // prevents both. Because a drag can never cross a neighbour, sorted
+        // order is invariant and no mid-drag re-sort (which would break the
+        // captured drag index) is ever needed.
+        let minLengthMs = 100.0
+        let prevEnd = index > 0 ? metadata.zoom.sections[index - 1].endTime : 0
+        let nextStart = index + 1 < metadata.zoom.sections.count
+            ? metadata.zoom.sections[index + 1].startTime
+            : metadata.video.duration
+        let lo = max(0, prevEnd)
+        let hi = min(metadata.video.duration, nextStart)
+
+        if let s = startTime, let e = endTime {
+            // Body drag — preserve the block's length, sliding it within the
+            // free gap; shrink only if the gap itself is smaller.
+            let length = min(max(minLengthMs, e - s), hi - lo)
+            let newStart = min(max(s, lo), hi - length)
+            section.startTime = newStart
+            section.endTime = newStart + length
+        } else if let s = startTime {
+            section.startTime = min(max(s, lo), section.endTime - minLengthMs)
+        } else if let e = endTime {
+            section.endTime = max(min(e, hi), section.startTime + minLengthMs)
+        }
         if let z = scale { section.scale = max(1.0, min(z, 6.0)) }
         metadata.zoom.sections[index] = section
-        // DO NOT re-sort here — dragging a block past a neighbour would
-        // reorder the array mid-drag, the captured drag index would suddenly
-        // point at a different section, and the block would flicker / jump
-        // between identities. We sort only on add/suggest/save.
         self.metadata = metadata
     }
 
