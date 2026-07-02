@@ -151,7 +151,14 @@ final class RecordingSession {
         }
         let finalWebcamURL = await webcamFinishedURL
 
-        let durationMs: Double = (startWallTime.map { Date().timeIntervalSince($0) * 1000.0 }) ?? 0
+        // Prefer the file's real duration (last video frame's rebased PTS).
+        // Wall-clock spans capture *startup* latency too (~0.3–1s of
+        // SCShareableContent fetch + writer setup before the first frame),
+        // which overstated the duration — zoom sections could be placed past
+        // the actual video end, and the trailing cursor keyframe anchored
+        // beyond the last frame.
+        let wallClockMs: Double = (startWallTime.map { Date().timeIntervalSince($0) * 1000.0 }) ?? 0
+        let durationMs = captureResult.capturedDurationMs ?? wallClockMs
         let info = captureResult.info
         let videoURL = captureResult.outputURL
         let metadataURL = videoURL.deletingPathExtension().appendingPathExtension("json")

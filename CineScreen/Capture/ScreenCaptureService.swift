@@ -56,6 +56,9 @@ struct CaptureResult {
     var outputURL: URL
     var frames: Int64
     var info: CaptureInfo
+    /// Duration of the written file, derived from the last video frame's
+    /// rebased PTS. nil if no frames landed.
+    var capturedDurationMs: Double?
 }
 
 enum CaptureError: LocalizedError {
@@ -306,6 +309,12 @@ final class ScreenCaptureService: NSObject {
         ]
         videoSettings[AVVideoWidthKey] = evenW
         videoSettings[AVVideoHeightKey] = evenH
+        // Apply the quality setting on top of the assistant's known-good
+        // codec config. Without this override the Low/Medium/High picker
+        // changed nothing — the computed bitrate was never used.
+        var compression = (videoSettings[AVVideoCompressionPropertiesKey] as? [String: Any]) ?? [:]
+        compression[AVVideoAverageBitRateKey] = bitrate
+        videoSettings[AVVideoCompressionPropertiesKey] = compression
         let codec = (videoSettings[AVVideoCodecKey] as? String) ?? "h264"
         Log.capture.info("Using preset \(assistantPreset.rawValue) for \(evenW)x\(evenH), codec=\(codec)")
         let vInput = AVAssetWriterInput(mediaType: .video, outputSettings: videoSettings)
@@ -474,7 +483,16 @@ final class ScreenCaptureService: NSObject {
 
         if success {
             Log.capture.info("Capture stopped, frames=\(frames)")
-            return CaptureResult(outputURL: info.outputURL, frames: frames, info: info)
+            var capturedDurationMs: Double?
+            if let seconds = streamOutput?.lastVideoPTSSeconds {
+                capturedDurationMs = seconds * 1000
+            }
+            return CaptureResult(
+                outputURL: info.outputURL,
+                frames: frames,
+                info: info,
+                capturedDurationMs: capturedDurationMs
+            )
         } else {
             // Surface as much detail as we can about the writer failure —
             // localizedDescription is usually just "The operation could not
@@ -628,13 +646,29 @@ private final class StreamOutput: NSObject, SCStreamDelegate, SCStreamOutput {
 
     private let stateLock = NSLock()
     private var _sessionStartTime: CMTime?
-    private(set) var frameCount: Int64 = 0
+    private var _frameCount: Int64 = 0
+    private var _lastVideoPTSSeconds: Double?
 
     /// Read by the mic delegate (on micQueue). nil until the screen session
     /// has actually started; samples received before this must be dropped.
     var sessionStartTime: CMTime? {
         stateLock.lock(); defer { stateLock.unlock() }
         return _sessionStartTime
+    }
+
+    /// Written on sampleQueue, read from the main actor at stop() — lock-
+    /// protected (the old bare Int64 was an unsynchronized cross-thread read).
+    var frameCount: Int64 {
+        stateLock.lock(); defer { stateLock.unlock() }
+        return _frameCount
+    }
+
+    /// Rebased PTS of the newest appended video frame — the file's real
+    /// duration to within one frame, unlike wall-clock timing that also
+    /// spans capture-startup latency.
+    var lastVideoPTSSeconds: Double? {
+        stateLock.lock(); defer { stateLock.unlock() }
+        return _lastVideoPTSSeconds
     }
 
     init(owner: ScreenCaptureService,
@@ -703,7 +737,10 @@ private final class StreamOutput: NSObject, SCStreamDelegate, SCStreamOutput {
             let rebasedPts = CMTimeSubtract(rawPts, baseTime)
             let ok = pixelBufferAdaptor.append(pixelBuffer, withPresentationTime: rebasedPts)
             if ok {
-                frameCount &+= 1
+                stateLock.lock()
+                _frameCount &+= 1
+                _lastVideoPTSSeconds = rebasedPts.seconds
+                stateLock.unlock()
             } else if self.writer.status == .failed {
                 let err = self.writer.error?.localizedDescription ?? "unknown"
                 Log.capture.error("Video append failed; writer.error: \(err)")
