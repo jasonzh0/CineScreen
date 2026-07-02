@@ -70,7 +70,7 @@ jobs:
           sed -i '' 's/objectVersion = 77;/objectVersion = 70;/' CineScreen.xcodeproj/project.pbxproj
           grep -m1 "objectVersion" CineScreen.xcodeproj/project.pbxproj
 
-      - name: Build (Debug, no signing)
+      - name: Build & test (Debug, no signing)
         if: '!inputs.release'
         run: |
           set -o pipefail
@@ -83,7 +83,7 @@ jobs:
             -destination 'platform=macOS' \
             CODE_SIGN_IDENTITY="-" \
             CODE_SIGNING_REQUIRED=NO \
-            build | tee build/build.log
+            build test | tee build/build.log
 
       # ----- Code signing setup (release only) ------------------------------
       - name: Import signing certificate

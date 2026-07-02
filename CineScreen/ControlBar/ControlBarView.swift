@@ -195,25 +195,23 @@ struct ControlBarView: View {
 
     private var settingsSection: some View {
         Menu {
-            Picker("Display capture", selection: $state.selectedWindowID) {
-                Text("Entire screen").tag(CGWindowID?.none)
-                ForEach(state.availableWindows, id: \.id) { w in
-                    Text("\(w.appName) — \(w.title)").tag(CGWindowID?.some(w.id))
-                }
-            }
-            Divider()
-            Picker("Frame rate", selection: $state.frameRate) {
+            // Bindings route through the save* helpers — binding straight to
+            // the properties changed the live value but never persisted it,
+            // so these reset on relaunch (Settings got this right).
+            Picker("Frame rate", selection: Binding(
+                get: { state.frameRate },
+                set: { state.saveFrameRate($0) }
+            )) {
                 Text("30 fps").tag(30)
                 Text("60 fps").tag(60)
             }
-            Picker("Quality", selection: $state.quality) {
+            Picker("Quality", selection: Binding(
+                get: { state.quality },
+                set: { state.saveQuality($0) }
+            )) {
                 Text("Low").tag(CaptureRequest.Quality.low)
                 Text("Medium").tag(CaptureRequest.Quality.medium)
                 Text("High").tag(CaptureRequest.Quality.high)
-            }
-            Divider()
-            Button("Refresh windows") {
-                Task { await state.refreshAvailableWindows() }
             }
         } label: {
             HStack(spacing: 4) {
@@ -252,7 +250,6 @@ struct ControlBarView: View {
     private func select(_ mode: CaptureMode) {
         switch mode {
         case .display:
-            state.selectedWindowID = nil
             startNewProjectRecording(preBuiltFilter: nil)
         case .window:
             // Use the system-provided picker so the user gets the same native
@@ -275,7 +272,6 @@ struct ControlBarView: View {
         let outputURL = project.fallbackVideoURL
         let request = CaptureRequest(
             outputURL: outputURL,
-            windowID: state.selectedWindowID,
             preBuiltFilter: preBuiltFilter,
             fps: state.frameRate,
             quality: state.quality,
@@ -299,6 +295,11 @@ struct ControlBarView: View {
             } catch {
                 Log.app.error("ControlBar start failed: \(error.localizedDescription)")
                 state.statusMessage = error.localizedDescription
+                // The recording never started — remove the folder created for
+                // it so it doesn't linger as a permanent "Incomplete" tile.
+                try? FileManager.default.removeItem(at: project.folderURL)
+                state.activeProject = nil
+                state.refreshProjects()
             }
         }
     }

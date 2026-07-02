@@ -321,7 +321,7 @@ private struct DoneStep: View {
 
             VStack(alignment: .leading, spacing: 12) {
                 TipRow(kbd: "⌘N", text: "Start a new recording from anywhere in the app.")
-                TipRow(kbd: "ESC", text: "Stop the current recording.")
+                TipRow(kbd: "⌥⎋", text: "Stop the current recording from anywhere.")
                 TipRow(kbd: "⌘,", text: "Open settings — tweak fps, quality, and audio defaults.")
             }
             .padding(18)

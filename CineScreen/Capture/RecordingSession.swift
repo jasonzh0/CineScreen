@@ -43,7 +43,15 @@ enum SessionError: LocalizedError {
 @Observable
 final class RecordingSession {
     var state: SessionState = .idle
-    var lastResult: SessionResult?
+
+    /// True while a recording is starting, running, or finalising — used to
+    /// gate quitting the app and starting another recording.
+    var isBusy: Bool {
+        switch state {
+        case .starting, .recording, .stopping: return true
+        case .idle, .error: return false
+        }
+    }
 
     private let capture = ScreenCaptureService()
     private let mouse = MouseTrackingService()
@@ -69,6 +77,13 @@ final class RecordingSession {
         state = .starting
         startWallTime = Date()
 
+        // Surface mid-recording stream death (display disconnect, permission
+        // revoked) — without this the HUD timer keeps counting over a dead
+        // stream and the failure stays invisible until the user hits Stop.
+        capture.onRuntimeFailure = { [weak self] message in
+            self?.handleRuntimeFailure(message)
+        }
+
         let info: CaptureInfo
         do {
             info = try await capture.start(request)
@@ -78,12 +93,10 @@ final class RecordingSession {
             throw SessionError.captureFailed(error.localizedDescription)
         }
 
-        let regionOffset: CGPoint = request.region?.origin ?? .zero
         do {
             try mouse.start(
-                displayBoundsPoints: info.displayBounds,
-                pixelSize: CGSize(width: info.pixelWidth, height: info.pixelHeight),
-                regionOffsetPixels: regionOffset
+                contentRectPoints: info.contentRectPoints,
+                pixelSize: CGSize(width: info.pixelWidth, height: info.pixelHeight)
             )
         } catch {
             Log.session.error("mouse.start failed: \(error.localizedDescription)")
@@ -135,28 +148,54 @@ final class RecordingSession {
         }
         let finalWebcamURL = await webcamFinishedURL
 
-        let durationMs: Double = (startWallTime.map { Date().timeIntervalSince($0) * 1000.0 }) ?? 0
+        // Prefer the file's real duration (last video frame's rebased PTS).
+        // Wall-clock spans capture *startup* latency too (~0.3–1s of
+        // SCShareableContent fetch + writer setup before the first frame),
+        // which overstated the duration — zoom sections could be placed past
+        // the actual video end, and the trailing cursor keyframe anchored
+        // beyond the last frame.
+        let wallClockMs: Double = (startWallTime.map { Date().timeIntervalSince($0) * 1000.0 }) ?? 0
+        let durationMs = captureResult.capturedDurationMs ?? wallClockMs
         let info = captureResult.info
         let videoURL = captureResult.outputURL
         let metadataURL = videoURL.deletingPathExtension().appendingPathExtension("json")
+
+        // Camera warm-up delays the webcam's first frame 0.3–1.5s past the
+        // screen's. Both pipelines stamp host-clock PTS, so the difference is
+        // the exact track offset — persisted so editor and export can align
+        // the two files instead of playing the webcam early.
+        var webcamOffsetMs: Double?
+        if finalWebcamURL != nil,
+           let webcamFirst = webcam.lastFirstFramePTS,
+           let screenFirst = captureResult.firstFrameHostPTSSeconds {
+            webcamOffsetMs = (webcamFirst.seconds - screenFirst) * 1000
+        }
 
         let metadata = Self.buildMetadata(
             videoURL: videoURL,
             info: info,
             durationMs: durationMs,
-            samples: samples
+            samples: samples,
+            webcamOffsetMs: webcamOffsetMs
         )
 
         do {
             try metadata.write(to: metadataURL)
         } catch {
-            // The editor can't open a recording without its sidecar metadata,
-            // so a write failure here would leave an un-openable orphan .mov on
-            // disk. Discard the video too (mirrors cancel()'s discard) rather
-            // than leaving a broken half-project behind.
-            try? FileManager.default.removeItem(at: videoURL)
-            state = .error(error.localizedDescription)
-            throw SessionError.writeFailed(error.localizedDescription)
+            // Never destroy the user's recording over a sidecar write failure —
+            // the .mp4 plays fine on its own and the editor tolerates missing
+            // metadata (no cursor/zoom overlays). Retry with a telemetry-free
+            // sidecar in case the full one failed on size (an hour of mouse
+            // keyframes is tens of MB); if even that fails (disk full,
+            // permissions), keep the bare video.
+            Log.session.error("Metadata write failed: \(error.localizedDescription) — salvaging recording, retrying without telemetry")
+            let minimal = Self.buildMetadata(
+                videoURL: videoURL,
+                info: info,
+                durationMs: durationMs,
+                samples: []
+            )
+            try? minimal.write(to: metadataURL)
         }
 
         let result = SessionResult(
@@ -166,10 +205,28 @@ final class RecordingSession {
             durationMs: durationMs,
             webcamURL: finalWebcamURL
         )
-        lastResult = result
         state = .idle
         Log.session.info("Session complete — \(captureResult.frames) frames, \(durationMs, format: .fixed(precision: 0))ms")
         return result
+    }
+
+    /// The capture stream died on its own (display disconnect, permission
+    /// revoked, system stop). Salvage what was captured through the normal
+    /// stop path — `ScreenCaptureService.stop()` tolerates an already-dead
+    /// stream and finalizes the frames that landed — then keep the failure
+    /// visible so the HUD and main window can surface it.
+    private func handleRuntimeFailure(_ message: String) {
+        guard case .recording = state else { return }
+        Log.session.error("Capture died mid-recording: \(message)")
+        Task { @MainActor in
+            do {
+                _ = try await self.stop()
+            } catch {
+                Log.session.error("Salvage stop after stream death failed: \(error.localizedDescription)")
+            }
+            // stop() ends .idle on success — keep the failure visible either way.
+            self.state = .error(message)
+        }
     }
 
     func cancel() async {
@@ -196,7 +253,8 @@ final class RecordingSession {
         videoURL: URL,
         info: CaptureInfo,
         durationMs: Double,
-        samples: [MouseSample]
+        samples: [MouseSample],
+        webcamOffsetMs: Double? = nil
     ) -> RecordingMetadata {
         var keyframes: [CursorKeyframe] = []
         var clicks: [ClickEvent] = []
@@ -285,6 +343,7 @@ final class RecordingSession {
             clicks: clicks,
             effects: nil,
             trim: nil,
+            webcamOffsetMs: webcamOffsetMs,
             createdAt: Date().timeIntervalSince1970 * 1000
         )
     }

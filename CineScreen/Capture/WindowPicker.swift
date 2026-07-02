@@ -29,8 +29,8 @@ final class WindowPicker: NSObject, SCContentSharingPickerObserver {
     }
 
     /// Presents the system picker. Returns the chosen filter or nil if the
-    /// user cancelled. Safe to call multiple times — concurrent calls reuse
-    /// the latest continuation (only one pick can be in flight at a time).
+    /// user cancelled. Safe to call again while a pick is pending — the
+    /// previous continuation is resumed with nil (cancelled) first.
     func pick(mode: Mode) async -> SCContentFilter? {
         // If somehow a previous pick is still pending, cancel it.
         continuation?.resume(returning: nil)

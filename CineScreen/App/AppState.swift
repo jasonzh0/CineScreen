@@ -24,9 +24,6 @@ final class AppState {
     var captureCamera: Bool = false
     /// AVCaptureDevice uniqueID for the selected webcam. nil = system default.
     var selectedCameraID: String? = nil
-    /// `nil` = capture the entire display. Otherwise the chosen on-screen window.
-    var selectedWindowID: CGWindowID? = nil
-    var availableWindows: [CaptureWindow] = []
 
     // Permissions snapshot (refreshed on a timer and after each request)
     var permissions: PermissionStatus
@@ -124,16 +121,6 @@ final class AppState {
         permissions = Permissions.currentStatus()
     }
 
-    // MARK: - Windows
-
-    func refreshAvailableWindows() async {
-        do {
-            availableWindows = try await ScreenCaptureService.availableWindows()
-        } catch {
-            Log.app.error("Failed to enumerate windows: \(error.localizedDescription)")
-        }
-    }
-
     // MARK: - Projects
 
     func refreshProjects() {
@@ -142,7 +129,7 @@ final class AppState {
 
     /// Creates a new project in the configured library and selects it as the
     /// recording target. The video will be written to
-    /// `<projectFolder>/recording.mov`.
+    /// `<projectFolder>/recording.mp4`.
     func beginNewProject() -> Project? {
         do {
             let project = try ProjectsLibrary.createNew(in: projectsDirectory)

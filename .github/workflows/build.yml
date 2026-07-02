@@ -1,7 +1,11 @@
 name: CI
 
+# PRs and pushes to main both build + test. Commits land directly on main in
+# this repo, so a PR-only trigger left main permanently unverified.
 on:
   pull_request:
+  push:
+    branches: [main]
 
 jobs:
   build:

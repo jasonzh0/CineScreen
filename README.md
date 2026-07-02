@@ -3,7 +3,7 @@
 > Cinematic screen recording for macOS — turn raw captures into polished product videos.
 
 Native macOS screen recorder built in Swift, SwiftUI, and Metal. Capture any
-window, display, or region with **ScreenCaptureKit**; polish it in a per-frame
+window or display with **ScreenCaptureKit**; polish it in a per-frame
 timeline editor with smooth cursor motion, automatic zooms, and gradient
 backdrops; then export through an **AVAssetWriter** pipeline that never drops a
 frame.
@@ -15,8 +15,8 @@ Free and open source (MIT) · macOS 14+ · Apple Silicon & Intel.
 ## Features
 
 ### 🎥 Capture — pixel-perfect ScreenCaptureKit
-Apple's native capture API drives every frame. Pick a window, a display, or a
-region — CineScreen pipes the raw stream straight into a Metal compositor.
+Apple's native capture API drives every frame. Pick a window or a display —
+CineScreen pipes the raw stream straight into a Metal compositor.
 
 ### ✨ Compose — polish without thinking
 Smooth cursor motion, automatic click highlights, and zoom keyframes you tune
@@ -29,10 +29,10 @@ rate. ProRes or H.264, no dropped frames, signed and notarized `.dmg`.
 
 ## How it works
 
-A whole studio in your menu bar. CineScreen sits quietly until you need it — tap
-record, pick a window, and the editor opens with your clip already loaded.
+Tap record, pick a window or display, and the editor opens with your clip
+already loaded.
 
-1. **Install** — drag CineScreen into Applications; the menu-bar icon appears on first launch.
+1. **Install** — drag CineScreen into Applications and launch it.
 2. **Grant access** — enable Screen Recording for CineScreen in System Settings, then relaunch.
 3. **Record** — open the floating control bar, pick a window or display, hit record. Stop, and your clip drops straight into the editor.
 4. **Export** — style, scrub, and tune; the Metal compositor renders every frame offline at a locked frame rate.
@@ -97,6 +97,7 @@ Pages — which auto-updates existing users.
 ├── exportOptions.plist      # xcodebuild -exportArchive options
 ├── scripts/                 # make_release.sh (archive→sign→notarize→DMG/appcast)
 ├── docs/                    # UPDATES.md (Sparkle auto-update setup)
+├── Tests/                   # CineScreenTests unit tests (`make test`)
 └── CineScreen/
     ├── App/                 # @main + root views, Sparkle updater
     ├── Capture/             # ScreenCaptureKit + mouse tracking
@@ -107,7 +108,6 @@ Pages — which auto-updates existing users.
     ├── MainWindow/          # projects library, settings
     ├── Models/              # metadata + project structs
     ├── Projects/            # project library on disk
-    ├── StatusItem/          # menu-bar UI
     ├── Util/
     └── Resources/           # Assets.xcassets, Info.plist, entitlements
 ```
@@ -119,5 +119,3 @@ macOS 14 (Sonoma) or later · Apple Silicon & Intel.
 ## License
 
 MIT — see [LICENSE](LICENSE).
-</content>
-</invoke>

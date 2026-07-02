@@ -62,4 +62,37 @@ enum CursorAnimationStyle: String {
         case .rapid:  return 0.02
         }
     }
+
+    /// Speed- and lag-adaptive smooth time. The cursor should glide gently
+    /// when it's stationary or drifting (cinematic), but track *tightly* when
+    /// urgency is high — otherwise a quick move leaves the smoothed sprite
+    /// stranded far behind the real pointer.
+    ///
+    /// Two urgency signals, blending from `smoothTime` (calm) down to
+    /// `minSmoothTime` (urgent) on whichever is stronger:
+    /// - `speed`: raw cursor velocity — catches sustained fast moves.
+    /// - `lagPx`: how far the sprite currently trails the raw pointer —
+    ///   catches move-then-stop, where speed collapses to zero the instant the
+    ///   move ends while the sprite is still mid-flight. Without it the
+    ///   residual gap closes at full cinematic slowness ("oozing"). Because
+    ///   lag shrinks as the sprite catches up, the blend relaxes on approach
+    ///   and the landing still reads as a glide, not a snap.
+    ///
+    /// Both signals are normalised by the video width so the behaviour is
+    /// resolution-independent (thresholds are widths and widths-per-second).
+    func smoothTime(forSpeedPxPerSec speed: Double, lagPx: Double = 0, videoWidth: Double) -> Double {
+        guard videoWidth > 0 else { return smoothTime }
+        let widthsPerSec = speed / videoWidth
+        let speedLo = 0.15  // below this, full cinematic glide
+        let speedHi = 1.20  // at/above ~one screen-width per second, fully tight
+        let speedF = min(1.0, max(0.0, (widthsPerSec - speedLo) / (speedHi - speedLo)))
+
+        let lagNorm = lagPx / videoWidth
+        let lagLo = 0.005   // within ~0.5% of the width: no urgency
+        let lagHi = 0.05    // trailing 5%+ of the width: fully tight
+        let lagF = min(1.0, max(0.0, (lagNorm - lagLo) / (lagHi - lagLo)))
+
+        let f = max(speedF, lagF)
+        return smoothTime + (minSmoothTime - smoothTime) * f
+    }
 }

@@ -55,9 +55,12 @@ VERSION="$(grep -E '^\s*MARKETING_VERSION:' project.yml | head -1 | sed 's/.*"\(
 # monotonic build number from the commit count. (Requires a full clone — CI
 # checks out with fetch-depth: 0.)
 BUILD_NUMBER="$(git rev-list --count HEAD 2>/dev/null || echo 1)"
-ARCH="$(uname -m)"
-DMG_PATH="$RELEASE_DIR/CineScreen-${VERSION}-${ARCH}.dmg"
-ZIP_PATH="$RELEASE_DIR/CineScreen-${VERSION}-${ARCH}.zip"
+# The archive is universal (ARCHS_STANDARD + ONLY_ACTIVE_ARCH=NO) — naming
+# artifacts after the build runner's `uname -m` mislabelled them "-arm64",
+# contradicting the README's Intel support and deterring Intel users.
+ARTIFACT_SUFFIX="universal"
+DMG_PATH="$RELEASE_DIR/CineScreen-${VERSION}-${ARTIFACT_SUFFIX}.dmg"
+ZIP_PATH="$RELEASE_DIR/CineScreen-${VERSION}-${ARTIFACT_SUFFIX}.zip"
 
 rm -rf "$RELEASE_DIR/build" "$EXPORT_PATH"
 mkdir -p "$BUILD_DIR" "$RELEASE_DIR"
@@ -65,7 +68,7 @@ mkdir -p "$BUILD_DIR" "$RELEASE_DIR"
 # ---------------------------------------------------------------------------
 # Archive
 # ---------------------------------------------------------------------------
-echo "==> xcodebuild archive (Release, $ARCH)"
+echo "==> xcodebuild archive (Release, universal)"
 
 XCODEBUILD_ARGS=(
   -project "$PROJECT"

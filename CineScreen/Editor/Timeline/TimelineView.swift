@@ -10,7 +10,15 @@ struct TimelineView: View {
         case trimStart
         case trimEnd
     }
-    @State private var active: Drag = .none
+    /// Which drag interaction owns the pointer. @GestureState (not @State):
+    /// SwiftUI never calls onEnded for a *cancelled* gesture (window
+    /// deactivation, popover), and a stuck value here permanently blocked
+    /// timeline scrubbing until the handle was grabbed again — @GestureState
+    /// resets automatically however the gesture ends.
+    @GestureState private var active: Drag = .none
+    /// Timeline zoom at pinch start — magnification is cumulative from
+    /// gesture start, so it must scale a fixed baseline, not the live value.
+    @GestureState private var magnifyStart: Double?
 
     private let rulerHeight: CGFloat = 22
     private let trackHeight: CGFloat = 36
@@ -189,10 +197,10 @@ struct TimelineView: View {
         }
         .gesture(
             DragGesture(minimumDistance: 0)
+                .updating($active) { _, state, _ in
+                    if state == .none { state = isStart ? .trimStart : .trimEnd }
+                }
                 .onChanged { value in
-                    if active == .none {
-                        active = isStart ? .trimStart : .trimEnd
-                    }
                     guard active == (isStart ? .trimStart : .trimEnd) else { return }
                     let newMs = max(0, min(duration, Double(value.location.x / width) * duration))
                     if isStart {
@@ -201,7 +209,6 @@ struct TimelineView: View {
                         vm.trimEndMs = max(newMs, vm.trimStartMs + 100)
                     }
                 }
-                .onEnded { _ in active = .none }
         )
     }
 
@@ -243,7 +250,10 @@ struct TimelineView: View {
         let trackHeight: CGFloat
         let duration: Double
 
-        @State private var dragStart: (startTime: Double, endTime: Double)?
+        /// Section bounds at gesture start. @GestureState so a *cancelled*
+        /// drag (which never fires onEnded) can't leave a stale origin that
+        /// the next drag would jump from.
+        @GestureState private var dragStart: (startTime: Double, endTime: Double)?
 
         private enum Edge { case left, right }
         private let edgeWidth: CGFloat = 8
@@ -328,12 +338,12 @@ struct TimelineView: View {
                     )
                     .highPriorityGesture(
                         DragGesture(minimumDistance: 4, coordinateSpace: .named(TimelineView.TimelineCoordSpace))
+                            .updating($dragStart) { _, start, _ in
+                                if start == nil { start = (section.startTime, section.endTime) }
+                            }
                             .onChanged { value in
-                                let origin = dragStart ?? (section.startTime, section.endTime)
-                                if dragStart == nil {
-                                    dragStart = origin
-                                    vm.selectedZoomIndex = index
-                                }
+                                guard let origin = dragStart else { return }
+                                if vm.selectedZoomIndex != index { vm.selectedZoomIndex = index }
                                 let deltaMs = Double(value.translation.width / trackWidth) * duration
                                 let len = origin.endTime - origin.startTime
                                 var newStart = origin.startTime + deltaMs
@@ -345,7 +355,6 @@ struct TimelineView: View {
                                                          endTime: newStart + len)
                                 }
                             }
-                            .onEnded { _ in dragStart = nil }
                     )
 
                 // EDGE handles sit on top of the body region at the left and
@@ -385,12 +394,12 @@ struct TimelineView: View {
             }
             .highPriorityGesture(
                 DragGesture(minimumDistance: 1, coordinateSpace: .named(TimelineView.TimelineCoordSpace))
+                    .updating($dragStart) { _, start, _ in
+                        if start == nil { start = (section.startTime, section.endTime) }
+                    }
                     .onChanged { value in
-                        let origin = dragStart ?? (section.startTime, section.endTime)
-                        if dragStart == nil {
-                            dragStart = origin
-                            vm.selectedZoomIndex = index
-                        }
+                        guard let origin = dragStart else { return }
+                        if vm.selectedZoomIndex != index { vm.selectedZoomIndex = index }
                         let deltaMs = Double(value.translation.width / trackWidth) * duration
                         var t = Transaction(); t.disablesAnimations = true
                         withTransaction(t) {
@@ -404,7 +413,6 @@ struct TimelineView: View {
                             }
                         }
                     }
-                    .onEnded { _ in dragStart = nil }
             )
         }
     }
@@ -428,22 +436,28 @@ struct TimelineView: View {
 
     private func scrubGesture(width: CGFloat, duration: Double) -> some Gesture {
         DragGesture(minimumDistance: 0)
+            .updating($active) { _, state, _ in
+                if state == .none { state = .playhead }
+            }
             .onChanged { value in
-                guard active == .none || active == .playhead else { return }
-                active = .playhead
+                guard active == .playhead else { return }
                 let ratio = max(0, min(1, value.location.x / width))
                 vm.seek(toMilliseconds: ratio * duration)
-            }
-            .onEnded { _ in
-                if active == .playhead { active = .none }
             }
     }
 
     private var zoomGesture: some Gesture {
+        // Scale a gesture-start baseline: `magnification` is cumulative from
+        // pinch start, so multiplying it into the live zoom compounded
+        // exponentially — a slow 2x pinch hit the 20x clamp within a few
+        // ticks.
         MagnifyGesture()
+            .updating($magnifyStart) { _, start, _ in
+                if start == nil { start = vm.timelineZoom }
+            }
             .onChanged { value in
-                let new = max(1.0, min(20.0, vm.timelineZoom * Double(value.magnification)))
-                vm.timelineZoom = new
+                guard let base = magnifyStart else { return }
+                vm.timelineZoom = max(1.0, min(20.0, base * Double(value.magnification)))
             }
     }
 

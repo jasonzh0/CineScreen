@@ -1,16 +1,41 @@
 name: Release
 
+# Tag-push only. workflow_dispatch was removed deliberately: run from a
+# branch, github.ref_name is the branch name, which baked broken enclosure
+# URLs into the appcast and broke the release step's tag lookup.
 on:
   push:
     tags:
       - 'v*.*.*'
-  workflow_dispatch:
 
 permissions:
   contents: write
 
+# One release at a time — concurrent tag pushes raced each other publishing
+# to gh-pages.
+concurrency:
+  group: release
+  cancel-in-progress: false
+
 jobs:
+  preflight:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Assert tag matches MARKETING_VERSION
+        run: |
+          TAG="${GITHUB_REF_NAME#v}"
+          VERSION="$(grep -E '^\s*MARKETING_VERSION:' project.yml | head -1 | sed 's/.*"\(.*\)".*/\1/')"
+          if [ "$TAG" != "$VERSION" ]; then
+            echo "Tag v$TAG does not match project.yml MARKETING_VERSION=$VERSION." >&2
+            echo "Bump MARKETING_VERSION and commit before tagging — Sparkle's" >&2
+            echo "CFBundleVersion is the commit count, so a mismatched tag would" >&2
+            echo "still auto-update every user to wrongly-versioned assets." >&2
+            exit 1
+          fi
+
   build:
+    needs: preflight
     uses: ./.github/workflows/build-workflow.yml
     with:
       upload-artifacts: true

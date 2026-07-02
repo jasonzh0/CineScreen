@@ -7,6 +7,8 @@ struct ProjectsView: View {
     @Environment(\.openWindow) private var openWindow
 
     @State private var hoveredProject: Project.ID?
+    /// Set when the user picks Delete — the confirmation dialog acts on it.
+    @State private var projectPendingDeletion: Project?
 
     var body: some View {
         ZStack(alignment: .top) {
@@ -43,6 +45,23 @@ struct ProjectsView: View {
         .onChange(of: state.pendingProjectToOpen) { _, _ in
             openPendingIfAny()
         }
+        .confirmationDialog(
+            "Move \u{201C}\(projectPendingDeletion?.name ?? "recording")\u{201D} to the Trash?",
+            isPresented: Binding(
+                get: { projectPendingDeletion != nil },
+                set: { if !$0 { projectPendingDeletion = nil } }
+            ),
+            titleVisibility: .visible
+        ) {
+            Button("Move to Trash", role: .destructive) {
+                if let project = projectPendingDeletion {
+                    deleteProject(project)
+                }
+                projectPendingDeletion = nil
+            }
+        } message: {
+            Text("The recording and its edits can be restored from the Trash.")
+        }
     }
 
     // MARK: - Backdrop
@@ -76,7 +95,6 @@ struct ProjectsView: View {
 
     private var newRecordingButton: some View {
         Button {
-            Task { await state.refreshAvailableWindows() }
             state.refreshPermissions()
             ControlBarController.shared.show(state: state)
         } label: {
@@ -117,7 +135,7 @@ struct ProjectsView: View {
                     } onReveal: {
                         ProjectsLibrary.reveal(project)
                     } onDelete: {
-                        deleteProject(project)
+                        projectPendingDeletion = project
                     }
                     .onHover { hovering in
                         hoveredProject = hovering ? project.id : nil
@@ -212,7 +230,8 @@ struct ProjectsView: View {
             try ProjectsLibrary.delete(project)
             state.refreshProjects()
         } catch {
-            state.statusMessage = "Could not delete: \(error.localizedDescription)"
+            // "failed" keys the status banner's error styling.
+            state.statusMessage = "Delete failed: \(error.localizedDescription)"
         }
     }
 }

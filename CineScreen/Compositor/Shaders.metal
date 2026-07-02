@@ -414,7 +414,10 @@ vertex VertexOut click_vertex(
 
     float2 quadHalfNDC = float2(u.radiusInPixels, u.radiusInPixels) / u.videoSize * zoom.scale;
     float2 offset = kUnitQuad[vid] * float2(quadHalfNDC.x * 2.0, -quadHalfNDC.y * 2.0);
-    float2 pos = (centerNDC + offset) * u.aspectScale;
+    // Apply canvas.contentScale to match the video and cursor passes — without
+    // it, click rings drift outward from the recording whenever canvas padding
+    // shrinks the video (contentScale < 1).
+    float2 pos = (centerNDC + offset) * u.aspectScale * canvas.contentScale;
 
     VertexOut out;
     out.position = float4(pos, 0.0, 1.0);

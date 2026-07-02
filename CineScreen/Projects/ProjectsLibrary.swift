@@ -2,8 +2,8 @@ import Foundation
 import AppKit
 
 /// Manages a single root directory of projects on disk. Lists, creates,
-/// renames, and deletes projects. Acts as the bridge between the new
-/// project-based UX and the underlying `.mov + .json` files.
+/// and deletes projects. Acts as the bridge between the project-based UX
+/// and the underlying `recording.mp4 + recording.json` files.
 @MainActor
 final class ProjectsLibrary {
     /// Default location: `~/Documents/CineScreen`.
@@ -28,6 +28,14 @@ final class ProjectsLibrary {
         var results: [Project] = []
         for url in entries {
             guard (try? url.resourceValues(forKeys: [.isDirectoryKey]).isDirectory) == true else { continue }
+            // Only folders that carry CineScreen artifacts are projects.
+            // Settings lets users point the library at any directory —
+            // without this check every subfolder rendered as an "Incomplete"
+            // project whose Delete destroyed arbitrary user data. The video
+            // fallback keeps pre-descriptor recordings visible.
+            let hasDescriptor = fm.fileExists(atPath: url.appendingPathComponent(Project.projectFileName).path)
+            let hasVideo = fm.fileExists(atPath: url.appendingPathComponent(Project.videoFileName).path)
+            guard hasDescriptor || hasVideo else { continue }
             results.append(load(from: url))
         }
         results.sort { $0.createdAt > $1.createdAt }
@@ -114,8 +122,12 @@ final class ProjectsLibrary {
         try encoder.encode(descriptor).write(to: url, options: .atomic)
     }
 
+    /// Moves the project folder to the Trash — recoverable, unlike a hard
+    /// delete. Deliberately no `removeItem` fallback: on volumes without a
+    /// Trash this throws, and the caller surfaces the error, rather than
+    /// silently escalating to permanent deletion.
     static func delete(_ project: Project) throws {
-        try FileManager.default.removeItem(at: project.folderURL)
+        try FileManager.default.trashItem(at: project.folderURL, resultingItemURL: nil)
     }
 
     static func reveal(_ project: Project) {

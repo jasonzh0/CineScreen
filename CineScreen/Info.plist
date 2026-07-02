@@ -27,7 +27,7 @@
     <key>NSHighResolutionCapable</key>
     <true/>
     <key>NSSupportsAutomaticTermination</key>
-    <true/>
+    <false/>
     <key>NSSupportsSuddenTermination</key>
     <false/>
     <key>NSHumanReadableCopyright</key>
@@ -36,16 +36,14 @@
     <string>CineScreen uses the camera to include a webcam overlay in your screen recordings.</string>
     <key>NSMicrophoneUsageDescription</key>
     <string>CineScreen uses the microphone to record narration alongside your screen recordings.</string>
-    <key>NSScreenCaptureDescription</key>
-    <string>CineScreen records your screen and system audio.</string>
-    <key>NSAccessibilityUsageDescription</key>
-    <string>CineScreen tracks cursor movement and clicks so it can render a smooth, animated cursor in your recordings.</string>
+    <!-- Screen Recording and Accessibility TCC prompts don't read Info.plist
+         usage strings on macOS (no such keys exist) — the onboarding UI
+         explains those grants instead. -->
 
-    <!-- Sparkle auto-update. The feed is hosted on GitHub Pages; its enclosures
-         point at the versioned release ZIPs. SUPublicEDKey must be the EdDSA
-         public key printed by Sparkle's `generate_keys` tool (see
-         docs/UPDATES.md). The placeholder below MUST be replaced before
-         shipping or update checks will fail signature verification. -->
+    <!-- Sparkle auto-update. The feed is hosted on GitHub Pages; its
+         enclosures point at the versioned release ZIPs. SUPublicEDKey is the
+         EdDSA public key from Sparkle's `generate_keys` (see docs/UPDATES.md);
+         updates are verified against it before install. -->
     <key>SUFeedURL</key>
     <string>https://jasonzh0.github.io/CineScreen/appcast.xml</string>
     <key>SUPublicEDKey</key>

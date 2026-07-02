@@ -9,10 +9,8 @@ import AppKit
 struct CaptureRequest {
     var outputURL: URL
     var displayID: CGDirectDisplayID = CGMainDisplayID()
-    /// Set to capture a single window instead of the full display.
-    var windowID: CGWindowID? = nil
-    /// Pre-built filter from the native `SCContentSharingPicker`. Takes
-    /// precedence over `windowID` / `displayID` when set.
+    /// Pre-built filter from the native `SCContentSharingPicker` (window
+    /// capture). Takes precedence over `displayID` when set.
     var preBuiltFilter: SCContentFilter? = nil
     var region: CGRect? = nil          // in pixels, top-left origin
     var fps: Int = 60
@@ -31,21 +29,18 @@ struct CaptureRequest {
     }
 }
 
-/// One window available for window-only capture.
-struct CaptureWindow: Identifiable, Hashable {
-    let id: CGWindowID
-    let title: String
-    let appName: String
-    let size: CGSize
-}
-
 /// What the caller can read off the service after `start()` returns.
 struct CaptureInfo {
     var outputURL: URL
     var pixelWidth: Int
     var pixelHeight: Int
     var fps: Int
-    var displayBounds: CGRect       // in points
+    /// Where the captured content lives on the desktop — global screen
+    /// points, top-left origin (CGEvent space). The mouse tracker maps
+    /// cursor events into file pixels relative to this rect: a captured
+    /// window is rarely at the display origin, and a secondary display
+    /// never is.
+    var contentRectPoints: CGRect
     var scaleFactor: CGFloat
     var hasSystemAudio: Bool
     var hasMic: Bool
@@ -56,6 +51,13 @@ struct CaptureResult {
     var outputURL: URL
     var frames: Int64
     var info: CaptureInfo
+    /// Duration of the written file, derived from the last video frame's
+    /// rebased PTS. nil if no frames landed.
+    var capturedDurationMs: Double?
+    /// Raw host-clock PTS (seconds) of the first video frame — the file's
+    /// t=0. Compared against the webcam's first-frame PTS to derive the
+    /// camera warm-up offset.
+    var firstFrameHostPTSSeconds: Double?
 }
 
 enum CaptureError: LocalizedError {
@@ -106,22 +108,17 @@ final class ScreenCaptureService: NSObject {
 
     private var frameCount: Int64 = 0
 
-    // MARK: - Discovery
+    /// Invoked when the SCStream dies on its own (display disconnect, Screen
+    /// Recording permission revoked, system stop) rather than via `stop()`.
+    /// Set by `RecordingSession` so the failure reaches the UI instead of the
+    /// HUD timer counting over a dead stream.
+    var onRuntimeFailure: ((String) -> Void)?
 
-    /// List on-screen windows large enough to record (≥100×100). Used by the
-    /// "Record window" picker in the recording tab.
-    static func availableWindows() async throws -> [CaptureWindow] {
-        let content = try await SCShareableContent.excludingDesktopWindows(true, onScreenWindowsOnly: true)
-        return content.windows
-            .filter { $0.frame.width >= 100 && $0.frame.height >= 100 }
-            .map {
-                CaptureWindow(
-                    id: $0.windowID,
-                    title: $0.title ?? "",
-                    appName: $0.owningApplication?.applicationName ?? "",
-                    size: $0.frame.size
-                )
-            }
+    /// Forwarded from the stream delegate (which is not main-actor) once the
+    /// stream reports an unexpected stop.
+    func handleStreamFailure(_ message: String) {
+        guard isRecording else { return }
+        onRuntimeFailure?(message)
     }
 
     // MARK: - Lifecycle
@@ -135,17 +132,18 @@ final class ScreenCaptureService: NSObject {
               ?? content.displays.first else {
             throw CaptureError.noDisplay
         }
-        let window: SCWindow? = request.windowID.flatMap { id in
-            content.windows.first(where: { $0.windowID == id })
-        }
-
         let scale = Self.backingScale(for: display.displayID)
-        let displayPoints = CGRect(x: 0, y: 0, width: CGFloat(display.width), height: CGFloat(display.height))
 
-        // 2. Output dimensions in pixels, sourceRect in points
+        // 2. Output dimensions in pixels, sourceRect in points, and the
+        // content's global rect (points, top-left origin) for cursor mapping.
+        // Passing full-display bounds regardless of mode gave window captures
+        // the wrong point→pixel scale AND ignored the window's position — the
+        // synthetic cursor landed far from the real pointer for every window
+        // recording.
         var outputW: Int
         var outputH: Int
         var sourceRect: CGRect? = nil
+        var contentRectPoints: CGRect
         if let preBuilt = request.preBuiltFilter {
             // Native picker gave us a filter — its contentRect is in points,
             // and pointPixelScale converts to native pixels. Using contentRect
@@ -155,16 +153,7 @@ final class ScreenCaptureService: NSObject {
             let pxScale = CGFloat(preBuilt.pointPixelScale)
             outputW = Int(rect.width * pxScale)
             outputH = Int(rect.height * pxScale)
-        } else if let window = window {
-            // Window capture (legacy windowID path): build the filter early
-            // so we can use its contentRect for sizing. This is what makes
-            // the title bar render — window.frame alone excludes the chrome
-            // padding SCK adds around the window.
-            let probeFilter = SCContentFilter(desktopIndependentWindow: window)
-            let rect = probeFilter.contentRect
-            let pxScale = CGFloat(probeFilter.pointPixelScale)
-            outputW = Int(rect.width * pxScale)
-            outputH = Int(rect.height * pxScale)
+            contentRectPoints = rect
         } else if let region = request.region {
             outputW = Int(region.width)
             outputH = Int(region.height)
@@ -174,9 +163,18 @@ final class ScreenCaptureService: NSObject {
                 width: region.size.width / scale,
                 height: region.size.height / scale
             )
+            contentRectPoints = CGRect(
+                x: display.frame.minX + region.origin.x / scale,
+                y: display.frame.minY + region.origin.y / scale,
+                width: region.size.width / scale,
+                height: region.size.height / scale
+            )
         } else {
             outputW = Int(CGFloat(display.width) * scale)
             outputH = Int(CGFloat(display.height) * scale)
+            // display.frame carries the display's global origin — (0,0) for
+            // the primary display, but not for secondaries.
+            contentRectPoints = display.frame
         }
 
         // Cap the longest side to 2560px so the encoder doesn't get drowned
@@ -225,9 +223,6 @@ final class ScreenCaptureService: NSObject {
         let filter: SCContentFilter = {
             if let preBuilt = request.preBuiltFilter {
                 return preBuilt
-            }
-            if let window = window {
-                return SCContentFilter(desktopIndependentWindow: window)
             }
             // Full-display capture: exclude CineScreen's own windows (the
             // floating recording bar, projects window, etc.) so our UI never
@@ -293,6 +288,12 @@ final class ScreenCaptureService: NSObject {
         ]
         videoSettings[AVVideoWidthKey] = evenW
         videoSettings[AVVideoHeightKey] = evenH
+        // Apply the quality setting on top of the assistant's known-good
+        // codec config. Without this override the Low/Medium/High picker
+        // changed nothing — the computed bitrate was never used.
+        var compression = (videoSettings[AVVideoCompressionPropertiesKey] as? [String: Any]) ?? [:]
+        compression[AVVideoAverageBitRateKey] = bitrate
+        videoSettings[AVVideoCompressionPropertiesKey] = compression
         let codec = (videoSettings[AVVideoCodecKey] as? String) ?? "h264"
         Log.capture.info("Using preset \(assistantPreset.rawValue) for \(evenW)x\(evenH), codec=\(codec)")
         let vInput = AVAssetWriterInput(mediaType: .video, outputSettings: videoSettings)
@@ -401,7 +402,7 @@ final class ScreenCaptureService: NSObject {
             pixelWidth: outputW,
             pixelHeight: outputH,
             fps: request.fps,
-            displayBounds: displayPoints,
+            contentRectPoints: contentRectPoints,
             scaleFactor: scale,
             hasSystemAudio: sysInput != nil,
             hasMic: mInput != nil
@@ -461,7 +462,17 @@ final class ScreenCaptureService: NSObject {
 
         if success {
             Log.capture.info("Capture stopped, frames=\(frames)")
-            return CaptureResult(outputURL: info.outputURL, frames: frames, info: info)
+            var capturedDurationMs: Double?
+            if let seconds = streamOutput?.lastVideoPTSSeconds {
+                capturedDurationMs = seconds * 1000
+            }
+            return CaptureResult(
+                outputURL: info.outputURL,
+                frames: frames,
+                info: info,
+                capturedDurationMs: capturedDurationMs,
+                firstFrameHostPTSSeconds: streamOutput?.sessionStartTime?.seconds
+            )
         } else {
             // Surface as much detail as we can about the writer failure —
             // localizedDescription is usually just "The operation could not
@@ -615,13 +626,29 @@ private final class StreamOutput: NSObject, SCStreamDelegate, SCStreamOutput {
 
     private let stateLock = NSLock()
     private var _sessionStartTime: CMTime?
-    private(set) var frameCount: Int64 = 0
+    private var _frameCount: Int64 = 0
+    private var _lastVideoPTSSeconds: Double?
 
     /// Read by the mic delegate (on micQueue). nil until the screen session
     /// has actually started; samples received before this must be dropped.
     var sessionStartTime: CMTime? {
         stateLock.lock(); defer { stateLock.unlock() }
         return _sessionStartTime
+    }
+
+    /// Written on sampleQueue, read from the main actor at stop() — lock-
+    /// protected (the old bare Int64 was an unsynchronized cross-thread read).
+    var frameCount: Int64 {
+        stateLock.lock(); defer { stateLock.unlock() }
+        return _frameCount
+    }
+
+    /// Rebased PTS of the newest appended video frame — the file's real
+    /// duration to within one frame, unlike wall-clock timing that also
+    /// spans capture-startup latency.
+    var lastVideoPTSSeconds: Double? {
+        stateLock.lock(); defer { stateLock.unlock() }
+        return _lastVideoPTSSeconds
     }
 
     init(owner: ScreenCaptureService,
@@ -690,7 +717,10 @@ private final class StreamOutput: NSObject, SCStreamDelegate, SCStreamOutput {
             let rebasedPts = CMTimeSubtract(rawPts, baseTime)
             let ok = pixelBufferAdaptor.append(pixelBuffer, withPresentationTime: rebasedPts)
             if ok {
-                frameCount &+= 1
+                stateLock.lock()
+                _frameCount &+= 1
+                _lastVideoPTSSeconds = rebasedPts.seconds
+                stateLock.unlock()
             } else if self.writer.status == .failed {
                 let err = self.writer.error?.localizedDescription ?? "unknown"
                 Log.capture.error("Video append failed; writer.error: \(err)")
@@ -728,6 +758,10 @@ private final class StreamOutput: NSObject, SCStreamDelegate, SCStreamOutput {
 
     func stream(_ stream: SCStream, didStopWithError error: any Error) {
         Log.capture.error("SCStream stopped with error: \(error.localizedDescription)")
+        let message = error.localizedDescription
+        Task { @MainActor [weak owner] in
+            owner?.handleStreamFailure(message)
+        }
     }
 }
 
