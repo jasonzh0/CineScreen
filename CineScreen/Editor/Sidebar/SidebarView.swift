@@ -587,15 +587,13 @@ struct SidebarView: View {
 
     private func saveEdits() {
         guard let url = vm.metadataURL else { return }
-        // Write current trim back into metadata. Canvas style, webcam
-        // layout, and zoom sections are already in vm.metadata thanks to
-        // their respective didSet/mutation paths.
-        vm.metadata?.trim = TrimRange(startMs: vm.trimStartMs, endMs: vm.trimEndMs)
-        do {
-            try vm.metadata?.write(to: url)
+        // All edits (trim, canvas, webcam, zoom) are already mirrored into
+        // vm.metadata by their didSet/mutation paths — this just flushes the
+        // debounced autosave immediately for explicit feedback.
+        if vm.saveNow() {
             saveMessage = "Saved to \(url.lastPathComponent)"
-        } catch {
-            saveMessage = "Save failed: \(error.localizedDescription)"
+        } else {
+            saveMessage = "Save failed: \(vm.lastSaveError ?? "unknown error")"
         }
     }
 

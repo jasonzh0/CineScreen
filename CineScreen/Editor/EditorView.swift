@@ -16,6 +16,11 @@ struct EditorView: View {
         .background(CTheme.panelDeep)
         .tint(CTheme.accent)
         .preferredColorScheme(.dark)
+        .onDisappear {
+            // Flush any pending debounced autosave — closing the Studio
+            // window must never lose edits.
+            vm.saveNow()
+        }
     }
 
     private var mainPane: some View {

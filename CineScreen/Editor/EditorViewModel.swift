@@ -10,7 +10,12 @@ final class EditorViewModel {
     // Inputs
     let videoURL: URL
     let metadataURL: URL?
-    var metadata: RecordingMetadata?
+    var metadata: RecordingMetadata? {
+        didSet {
+            guard !suppressAutosave else { return }
+            scheduleAutosave()
+        }
+    }
 
     // Playback state — bindable
     var currentTimeMs: Double = 0
@@ -18,9 +23,19 @@ final class EditorViewModel {
     var isPlaying: Bool = false
     var loadError: String?
 
-    // Trim — the current edit (not yet saved back to metadata)
-    var trimStartMs: Double = 0
-    var trimEndMs: Double = 0
+    // Trim — mirrored into metadata.trim on every change so the debounced
+    // autosave persists trim edits like everything else.
+    var trimStartMs: Double = 0 {
+        didSet { syncTrimToMetadata() }
+    }
+    var trimEndMs: Double = 0 {
+        didSet { syncTrimToMetadata() }
+    }
+
+    private func syncTrimToMetadata() {
+        guard !suppressAutosave, trimEndMs > trimStartMs else { return }
+        metadata?.trim = TrimRange(startMs: trimStartMs, endMs: trimEndMs)
+    }
 
     // Canvas styling (Phase 4) — backgrounds + padding + drop shadow.
     // Defaults give a polished out-of-the-box look so new recordings already
@@ -90,6 +105,15 @@ final class EditorViewModel {
     @ObservationIgnored private var cursorSmoother = SmoothPosition2D(x: 0, y: 0, smoothTime: 0.25)
     @ObservationIgnored private var lastCursorSampleMs: Double?
 
+    // Autosave — every metadata mutation schedules a debounced write so
+    // edits survive closing the window without pressing Save.
+    @ObservationIgnored private var autosaveTask: Task<Void, Never>?
+    /// Set while loading state INTO the view model so initial population
+    /// doesn't trigger a spurious write-on-open.
+    @ObservationIgnored private var suppressAutosave: Bool = false
+    /// Last persistence failure, for the sidebar to surface.
+    private(set) var lastSaveError: String?
+
     // Auto-generated zoom sections cached on first access.
     @ObservationIgnored private var cachedZoomSections: [ZoomSection]?
 
@@ -132,6 +156,8 @@ final class EditorViewModel {
 
     private func loadMetadata() {
         guard let url = metadataURL else { return }
+        suppressAutosave = true
+        defer { suppressAutosave = false }
         do {
             metadata = try RecordingMetadata.decode(from: url)
             if let trim = metadata?.trim {
@@ -155,6 +181,46 @@ final class EditorViewModel {
         } catch {
             loadError = "Could not parse metadata: \(error.localizedDescription)"
             Log.editor.error("Metadata decode failed: \(error.localizedDescription)")
+        }
+    }
+
+    // MARK: - Persistence
+
+    /// Debounce window between an edit and its disk write — long enough to
+    /// coalesce slider storms into one write, short enough that little is at
+    /// risk if the app dies.
+    private static let autosaveDelay: Duration = .seconds(1)
+
+    private func scheduleAutosave() {
+        autosaveTask?.cancel()
+        autosaveTask = Task { [weak self] in
+            try? await Task.sleep(for: Self.autosaveDelay)
+            guard !Task.isCancelled else { return }
+            self?.persistMetadata()
+        }
+    }
+
+    /// Flushes pending edits to disk immediately — used by window close and
+    /// the explicit Save button.
+    @discardableResult
+    func saveNow() -> Bool {
+        autosaveTask?.cancel()
+        autosaveTask = nil
+        return persistMetadata()
+    }
+
+    @discardableResult
+    private func persistMetadata() -> Bool {
+        guard let url = metadataURL, let metadata else { return false }
+        do {
+            try metadata.write(to: url)
+            lastSaveError = nil
+            Log.editor.info("Saved edits to \(url.lastPathComponent)")
+            return true
+        } catch {
+            lastSaveError = error.localizedDescription
+            Log.editor.error("Autosave failed: \(error.localizedDescription)")
+            return false
         }
     }
 
@@ -226,7 +292,12 @@ final class EditorViewModel {
             await MainActor.run {
                 let ms = cmDuration.seconds * 1000
                 self.durationMs = ms
-                if self.trimEndMs == 0 { self.trimEndMs = ms }
+                if self.trimEndMs == 0 {
+                    // Derived default, not a user edit — don't autosave it.
+                    self.suppressAutosave = true
+                    self.trimEndMs = ms
+                    self.suppressAutosave = false
+                }
             }
         } catch {
             await MainActor.run {
