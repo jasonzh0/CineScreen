@@ -45,6 +45,15 @@ final class RecordingSession {
     var state: SessionState = .idle
     var lastResult: SessionResult?
 
+    /// True while a recording is starting, running, or finalising — used to
+    /// gate quitting the app and starting another recording.
+    var isBusy: Bool {
+        switch state {
+        case .starting, .recording, .stopping: return true
+        case .idle, .error: return false
+        }
+    }
+
     private let capture = ScreenCaptureService()
     private let mouse = MouseTrackingService()
     private let webcam = WebcamCaptureService()
@@ -68,6 +77,13 @@ final class RecordingSession {
         Log.session.info("Recording session start requested")
         state = .starting
         startWallTime = Date()
+
+        // Surface mid-recording stream death (display disconnect, permission
+        // revoked) — without this the HUD timer keeps counting over a dead
+        // stream and the failure stays invisible until the user hits Stop.
+        capture.onRuntimeFailure = { [weak self] message in
+            self?.handleRuntimeFailure(message)
+        }
 
         let info: CaptureInfo
         do {
@@ -177,6 +193,25 @@ final class RecordingSession {
         state = .idle
         Log.session.info("Session complete — \(captureResult.frames) frames, \(durationMs, format: .fixed(precision: 0))ms")
         return result
+    }
+
+    /// The capture stream died on its own (display disconnect, permission
+    /// revoked, system stop). Salvage what was captured through the normal
+    /// stop path — `ScreenCaptureService.stop()` tolerates an already-dead
+    /// stream and finalizes the frames that landed — then keep the failure
+    /// visible so the HUD and main window can surface it.
+    private func handleRuntimeFailure(_ message: String) {
+        guard case .recording = state else { return }
+        Log.session.error("Capture died mid-recording: \(message)")
+        Task { @MainActor in
+            do {
+                _ = try await self.stop()
+            } catch {
+                Log.session.error("Salvage stop after stream death failed: \(error.localizedDescription)")
+            }
+            // stop() ends .idle on success — keep the failure visible either way.
+            self.state = .error(message)
+        }
     }
 
     func cancel() async {

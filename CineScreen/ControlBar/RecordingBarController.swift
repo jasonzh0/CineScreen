@@ -155,12 +155,17 @@ final class RecordingBarController {
         guard let state = state else { hide(); return }
         Log.app.info("Recording bar: cancel requested")
         Task { @MainActor in
+            // When the session already died underneath the HUD, "Cancel" is
+            // the failure bar's Close button — carry the failure into the
+            // main window's banner ("failed" keys its error styling).
+            let failure: String?
+            if case let .error(message) = state.session.state { failure = message } else { failure = nil }
             await state.session.cancel()
             self.hide()
             state.refreshProjects()
             NSApp.activate(ignoringOtherApps: true)
             bringProjectsWindowFront()
-            state.statusMessage = "Recording cancelled."
+            state.statusMessage = failure.map { "Recording failed: \($0)" } ?? "Recording cancelled."
         }
     }
 
@@ -180,9 +185,48 @@ private struct RecordingBarView: View {
     var onStop: () -> Void
     var onCancel: () -> Void
 
+    @Environment(AppState.self) private var state
     @State private var pulse = false
 
+    /// Non-nil once the session died underneath the HUD (stream failure) —
+    /// swaps the timer/Stop UI for a failure notice so the bar doesn't keep
+    /// counting over a dead stream.
+    private var sessionFailed: Bool {
+        if case .error = state.session.state { return true }
+        return false
+    }
+
     var body: some View {
+        HStack(spacing: 14) {
+            if sessionFailed {
+                failureContent
+            } else {
+                recordingContent
+            }
+        }
+        .padding(.horizontal, 14)
+        .padding(.vertical, 9)
+        .background(.regularMaterial, in: Capsule())
+        .overlay(Capsule().strokeBorder(CTheme.stroke, lineWidth: 1))
+        .shadow(color: .black.opacity(0.45), radius: 20, x: 0, y: 8)
+        .padding(10)
+        .fixedSize()
+    }
+
+    private var failureContent: some View {
+        HStack(spacing: 10) {
+            Image(systemName: "exclamationmark.triangle.fill")
+                .font(.system(size: 13))
+                .foregroundStyle(CTheme.warning)
+            Text("Recording stopped")
+                .font(.system(size: 13, weight: .semibold))
+                .foregroundStyle(CTheme.textPrimary)
+            Button("Close", action: onCancel)
+                .buttonStyle(CineGhostButtonStyle(font: .system(size: 12.5, weight: .medium), hPad: 13, vPad: 9))
+        }
+    }
+
+    private var recordingContent: some View {
         HStack(spacing: 14) {
             recordDot
 
@@ -221,13 +265,6 @@ private struct RecordingBarView: View {
                 .padding(.leading, 2)
                 .help("Press Option-Escape anywhere to stop recording")
         }
-        .padding(.horizontal, 14)
-        .padding(.vertical, 9)
-        .background(.regularMaterial, in: Capsule())
-        .overlay(Capsule().strokeBorder(CTheme.stroke, lineWidth: 1))
-        .shadow(color: .black.opacity(0.45), radius: 20, x: 0, y: 8)
-        .padding(10)
-        .fixedSize()
     }
 
     private var recordDot: some View {

@@ -106,6 +106,19 @@ final class ScreenCaptureService: NSObject {
 
     private var frameCount: Int64 = 0
 
+    /// Invoked when the SCStream dies on its own (display disconnect, Screen
+    /// Recording permission revoked, system stop) rather than via `stop()`.
+    /// Set by `RecordingSession` so the failure reaches the UI instead of the
+    /// HUD timer counting over a dead stream.
+    var onRuntimeFailure: ((String) -> Void)?
+
+    /// Forwarded from the stream delegate (which is not main-actor) once the
+    /// stream reports an unexpected stop.
+    func handleStreamFailure(_ message: String) {
+        guard isRecording else { return }
+        onRuntimeFailure?(message)
+    }
+
     // MARK: - Discovery
 
     /// List on-screen windows large enough to record (≥100×100). Used by the
@@ -728,6 +741,10 @@ private final class StreamOutput: NSObject, SCStreamDelegate, SCStreamOutput {
 
     func stream(_ stream: SCStream, didStopWithError error: any Error) {
         Log.capture.error("SCStream stopped with error: \(error.localizedDescription)")
+        let message = error.localizedDescription
+        Task { @MainActor [weak owner] in
+            owner?.handleStreamFailure(message)
+        }
     }
 }
 
