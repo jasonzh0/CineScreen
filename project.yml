@@ -24,6 +24,8 @@ settings:
       SWIFT_OPTIMIZATION_LEVEL: "-Onone"
       SWIFT_ACTIVE_COMPILATION_CONDITIONS: DEBUG
       GCC_OPTIMIZATION_LEVEL: "0"
+      # Required for @testable import CineScreen in the unit tests.
+      ENABLE_TESTABILITY: YES
     Release:
       SWIFT_OPTIMIZATION_LEVEL: "-O"
       SWIFT_COMPILATION_MODE: wholemodule
@@ -63,3 +65,40 @@ targets:
           CODE_SIGN_IDENTITY: "Apple Development"
         Release:
           CODE_SIGN_IDENTITY: "Developer ID Application"
+
+  CineScreenTests:
+    type: bundle.unit-test
+    platform: macOS
+    sources:
+      - path: Tests/CineScreenTests
+    dependencies:
+      - target: CineScreen
+    settings:
+      base:
+        PRODUCT_BUNDLE_IDENTIFIER: com.cinescreen.app.native.tests
+        GENERATE_INFOPLIST_FILE: YES
+        # Host the tests inside the app so @testable import sees the full
+        # module without recompiling sources into the bundle.
+        TEST_HOST: "$(BUILT_PRODUCTS_DIR)/CineScreen.app/Contents/MacOS/CineScreen"
+        BUNDLE_LOADER: "$(TEST_HOST)"
+      configs:
+        Debug:
+          CODE_SIGN_IDENTITY: "Apple Development"
+
+schemes:
+  CineScreen:
+    build:
+      targets:
+        CineScreen: all
+    run:
+      config: Debug
+    test:
+      config: Debug
+      targets:
+        - CineScreenTests
+    profile:
+      config: Release
+    analyze:
+      config: Debug
+    archive:
+      config: Release

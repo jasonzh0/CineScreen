@@ -32,6 +32,15 @@ build: project
 	  -derivedDataPath $(BUILD_DIR)/derived \
 	  build
 
+.PHONY: test
+test: project
+	xcodebuild \
+	  -project $(PROJECT) \
+	  -scheme $(SCHEME) \
+	  -configuration $(CONFIG_DEBUG) \
+	  -derivedDataPath $(BUILD_DIR)/derived \
+	  test
+
 .PHONY: build-release
 build-release: project
 	xcodebuild \
@@ -100,6 +109,7 @@ help:
 	@echo "Targets:"
 	@echo "  project        — regenerate $(PROJECT) from project.yml"
 	@echo "  build          — debug build"
+	@echo "  test           — run unit tests"
 	@echo "  build-release  — release build"
 	@echo "  archive        — create xcarchive"
 	@echo "  export         — export signed .app from archive"
