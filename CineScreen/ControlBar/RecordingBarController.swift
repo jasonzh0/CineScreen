@@ -15,7 +15,7 @@ final class RecordingBarController {
 
     private var panel: NSPanel?
     private weak var state: AppState?
-    /// Local + global keyDown monitors so ESC stops the recording from
+    /// Local + global keyDown monitors so ⌥⎋ stops the recording from
     /// anywhere (the user is usually in another app while recording).
     private var keyMonitors: [Any] = []
     /// Guards stop/cancel against double-firing (e.g. mashing ESC).
@@ -75,16 +75,26 @@ final class RecordingBarController {
         panel = nil
     }
 
-    // MARK: - ESC-to-stop
+    // MARK: - Option-Escape-to-stop
 
-    /// Installs keyDown monitors for the Escape key (keyCode 53). The global
-    /// monitor fires when another app is frontmost (the usual case while
-    /// recording) and is observe-only, so ESC still reaches that app; the local
-    /// monitor covers the case where CineScreen itself is frontmost.
+    /// Installs keyDown monitors for Option-Escape (keyCode 53 + ⌥). The
+    /// global monitor fires when another app is frontmost (the usual case
+    /// while recording) and is observe-only, so the keystroke still reaches
+    /// that app; the local monitor covers CineScreen itself being frontmost.
+    ///
+    /// Plain ESC deliberately does NOT stop the recording: it's one of the
+    /// most-pressed keys in normal work (dismissing dialogs, exiting
+    /// fullscreen, vim), and an unmodified global ESC monitor silently ended
+    /// recordings whenever the user pressed it in the app being recorded.
+    /// The exact-modifier match also keeps ⌘⌥⎋ (Force Quit) from stopping.
     private func installEscMonitor() {
         removeEscMonitor()
         let onKey: (NSEvent) -> Void = { [weak self] event in
             guard event.keyCode == 53 else { return }
+            let flags = event.modifierFlags
+                .intersection(.deviceIndependentFlagsMask)
+                .subtracting(.capsLock)
+            guard flags == .option else { return }
             self?.performStop()
         }
         if let global = NSEvent.addGlobalMonitorForEvents(matching: .keyDown, handler: onKey) {
@@ -204,6 +214,12 @@ private struct RecordingBarView: View {
 
             Button("Cancel", action: onCancel)
                 .buttonStyle(CineGhostButtonStyle(font: .system(size: 12.5, weight: .medium), hPad: 13, vPad: 9))
+
+            Text("⌥⎋")
+                .font(.system(size: 11, weight: .semibold, design: .monospaced))
+                .foregroundStyle(CTheme.textTertiary)
+                .padding(.leading, 2)
+                .help("Press Option-Escape anywhere to stop recording")
         }
         .padding(.horizontal, 14)
         .padding(.vertical, 9)
