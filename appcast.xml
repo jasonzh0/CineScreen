@@ -3,13 +3,13 @@
     <channel>
         <title>CineScreen</title>
         <item>
-            <title>2.6.0</title>
-            <pubDate>Thu, 02 Jul 2026 05:48:11 +0000</pubDate>
+            <title>2.6.1</title>
+            <pubDate>Thu, 02 Jul 2026 07:00:57 +0000</pubDate>
             <link>https://github.com/jasonzh0/CineScreen</link>
-            <sparkle:version>142</sparkle:version>
-            <sparkle:shortVersionString>2.6.0</sparkle:shortVersionString>
+            <sparkle:version>143</sparkle:version>
+            <sparkle:shortVersionString>2.6.1</sparkle:shortVersionString>
             <sparkle:minimumSystemVersion>14.0</sparkle:minimumSystemVersion>
-            <enclosure url="https://github.com/jasonzh0/CineScreen/releases/download/v2.6.0/CineScreen-2.6.0-universal.zip" length="3609378" type="application/octet-stream" sparkle:edSignature="3m8g7CK1Rn/LBqO2u0rd/5X0KKpvIE0mtFx3P3AQ/2bG/Oo73HXcvKb2eeRo0Wtdm8/8eVqYZkSqy4Ax209LDA=="/>
+            <enclosure url="https://github.com/jasonzh0/CineScreen/releases/download/v2.6.1/CineScreen-2.6.1-universal.zip" length="3723954" type="application/octet-stream" sparkle:edSignature="RH4SqCmMqWlTdHfe9fvREoCf0UsA9nM/kr3E+Q1uL9Ge5BAbqDf0wvcn0UBobrbakUUb8dgEaO/1fzlyMPjHDA=="/>
         </item>
     </channel>
 </rss>
