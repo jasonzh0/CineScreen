@@ -150,13 +150,20 @@ final class RecordingSession {
         do {
             try metadata.write(to: metadataURL)
         } catch {
-            // The editor can't open a recording without its sidecar metadata,
-            // so a write failure here would leave an un-openable orphan .mov on
-            // disk. Discard the video too (mirrors cancel()'s discard) rather
-            // than leaving a broken half-project behind.
-            try? FileManager.default.removeItem(at: videoURL)
-            state = .error(error.localizedDescription)
-            throw SessionError.writeFailed(error.localizedDescription)
+            // Never destroy the user's recording over a sidecar write failure —
+            // the .mp4 plays fine on its own and the editor tolerates missing
+            // metadata (no cursor/zoom overlays). Retry with a telemetry-free
+            // sidecar in case the full one failed on size (an hour of mouse
+            // keyframes is tens of MB); if even that fails (disk full,
+            // permissions), keep the bare video.
+            Log.session.error("Metadata write failed: \(error.localizedDescription) — salvaging recording, retrying without telemetry")
+            let minimal = Self.buildMetadata(
+                videoURL: videoURL,
+                info: info,
+                durationMs: durationMs,
+                samples: []
+            )
+            try? minimal.write(to: metadataURL)
         }
 
         let result = SessionResult(
