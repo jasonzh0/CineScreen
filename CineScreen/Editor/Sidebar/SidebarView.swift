@@ -610,12 +610,17 @@ struct SidebarView: View {
         // keyframes like the live preview does. Stateful across frames —
         // safe because the export pipeline processes video frames serially
         // on a single queue.
-        let cursorSmoother = ExportCursorSmoother(smoothTime: snapshot.cursorSmoothTime)
+        let cursorSmoother = ExportCursorSmoother()
 
         let cursorAt: @Sendable (Double) -> CursorRenderState? = { ms in
             guard var state = snapshot.cursorStateForExport(atMilliseconds: ms) else { return nil }
             state.positionInVideoPixels = cursorSmoother.smoothed(
-                target: state.positionInVideoPixels, atMilliseconds: ms
+                target: state.positionInVideoPixels,
+                atMilliseconds: ms,
+                smoothTime: snapshot.adaptiveCursorSmoothTime(
+                    atMilliseconds: ms,
+                    spriteAt: cursorSmoother.currentPosition
+                )
             )
             return state
         }

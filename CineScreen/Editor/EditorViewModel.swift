@@ -315,7 +315,10 @@ final class EditorViewModel {
             dt = 1.0 / 60.0
         }
         lastCursorSampleMs = t
-        cursorSmoother.smoothTime = snapshot.cursorSmoothTime
+        cursorSmoother.smoothTime = snapshot.adaptiveCursorSmoothTime(
+            atMilliseconds: t,
+            spriteAt: SIMD2(Float(cursorSmoother.current.x), Float(cursorSmoother.current.y))
+        )
 
         let smoothed = cursorSmoother.update(
             targetX: Double(raw.x),

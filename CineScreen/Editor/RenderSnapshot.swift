@@ -8,11 +8,19 @@ final class ExportCursorSmoother: @unchecked Sendable {
     private var smoother: SmoothPosition2D
     private var lastT: Double = -1
 
-    init(smoothTime: Double) {
-        self.smoother = SmoothPosition2D(x: 0, y: 0, smoothTime: smoothTime)
+    init() {
+        self.smoother = SmoothPosition2D(x: 0, y: 0)
     }
 
-    func smoothed(target: SIMD2<Float>, atMilliseconds t: Double) -> SIMD2<Float> {
+    /// Where the smoothed sprite currently sits, or nil before the first
+    /// sample. Feed this back into `RenderSnapshot.adaptiveCursorSmoothTime`
+    /// so lag urgency can see how far the sprite trails the raw pointer.
+    var currentPosition: SIMD2<Float>? {
+        lastT < 0 ? nil : SIMD2(Float(smoother.current.x), Float(smoother.current.y))
+    }
+
+    func smoothed(target: SIMD2<Float>, atMilliseconds t: Double, smoothTime: Double) -> SIMD2<Float> {
+        smoother.smoothTime = smoothTime
         let dt: Double
         if lastT < 0 {
             smoother.reset(toX: Double(target.x), y: Double(target.y))
@@ -46,10 +54,17 @@ struct RenderSnapshot: Sendable {
     /// follow, so it has to be integrated forward in time once — we then
     /// binary-search this array per frame.
     let panSamples: [PanSample]
+    /// Mouse-down timestamps (ms), sorted ascending — the click-window
+    /// smoothing collapse binary-searches this per frame.
+    let clickDownTimesMs: [Double]
 
     init(metadata: RecordingMetadata, zoomSections: [ZoomSection]) {
         self.metadata = metadata
         self.zoomSections = zoomSections
+        self.clickDownTimesMs = metadata.clicks
+            .filter { $0.action == .down }
+            .map(\.timestamp)
+            .sorted()
         self.panSamples = Self.computePanTrack(
             sections: zoomSections,
             metadata: metadata,
@@ -57,14 +72,77 @@ struct RenderSnapshot: Sendable {
         )
     }
 
-    /// The smoothTime the live preview uses, mirrored here so the export's
-    /// cursor glide matches what the user previewed. Defaults to `.slow`
-    /// because the heavy smoothing reads as more cinematic and matches the
-    /// Screen-Studio-style cursor glide users expect.
-    var cursorSmoothTime: Double {
-        let style = metadata.zoom.config.animationStyle
+    /// Defaults to `.slow` because the heavy smoothing reads as more cinematic
+    /// and matches the Screen-Studio-style cursor glide users expect.
+    private var cursorAnimationStyle: CursorAnimationStyle {
+        metadata.zoom.config.animationStyle
             .map { CursorAnimationStyle(rawValue: $0.rawValue) ?? .slow } ?? .slow
-        return style.smoothTime
+    }
+
+    /// Adaptive cursor smooth time at `t`. Gentle glide when the cursor is
+    /// slow/idle, tightening when urgency is high so the rendered sprite stays
+    /// on the real pointer (and therefore on click targets, which are
+    /// positioned from the raw track). Urgency comes from raw cursor speed
+    /// and, when the caller passes the sprite's current position via
+    /// `spriteAt`, from how far the sprite trails the raw pointer — which
+    /// covers fast-move-then-stop, where speed alone collapses too early. See
+    /// `CursorAnimationStyle.smoothTime(forSpeedPxPerSec:lagPx:videoWidth:)`.
+    func adaptiveCursorSmoothTime(atMilliseconds t: Double, spriteAt sprite: SIMD2<Float>? = nil) -> Double {
+        let speed = Self.cursorSpeedPxPerSec(atMilliseconds: t, metadata: metadata)
+        var lagPx = 0.0
+        if let sprite, let raw = Self.rawCursorPosition(atMilliseconds: t, metadata: metadata) {
+            let dx = Double(raw.x - sprite.x)
+            let dy = Double(raw.y - sprite.y)
+            lagPx = (dx * dx + dy * dy).squareRoot()
+        }
+        let base = cursorAnimationStyle.smoothTime(
+            forSpeedPxPerSec: speed,
+            lagPx: lagPx,
+            videoWidth: Double(metadata.video.width)
+        )
+        // Collapse smoothing to ~zero in a small window around each mouse-down
+        // so the sprite lands exactly on the true click point — that's where
+        // lag is most visible. The cursor is decelerating into the click
+        // anyway, so tightening as it arrives reads naturally rather than as a
+        // snap. The gentle glide is preserved everywhere outside the click
+        // window. Mouse-ups are deliberately excluded (matching clickPopFactor
+        // and the click rings): collapsing at a drag release would snap the
+        // sprite with no visual event to explain it.
+        return base * clickProximityFactor(atMilliseconds: t)
+    }
+
+    /// 0 exactly at a mouse-down timestamp, ramping linearly to 1 once
+    /// `window` ms away. Multiplied into the cursor smooth-time so
+    /// position-smoothing vanishes at clicks (sprite == raw pointer) and
+    /// returns to full between clicks.
+    func clickProximityFactor(atMilliseconds t: Double, window: Double = 140) -> Double {
+        Self.proximityFactor(to: clickDownTimesMs, at: t, window: window)
+    }
+
+    /// Distance-based ramp: 0 at any timestamp in `times`, 1 once `window` ms
+    /// from all of them. `times` must be sorted ascending; binary-searched, so
+    /// this stays cheap at 60 Hz even on click-heavy recordings.
+    static func proximityFactor(to times: [Double], at t: Double, window: Double) -> Double {
+        guard !times.isEmpty else { return 1 }
+        var lo = 0, hi = times.count
+        while lo < hi {
+            let mid = (lo + hi) / 2
+            if times[mid] < t { lo = mid + 1 } else { hi = mid }
+        }
+        var nearest = Double.greatestFiniteMagnitude
+        if lo < times.count { nearest = min(nearest, times[lo] - t) }
+        if lo > 0 { nearest = min(nearest, t - times[lo - 1]) }
+        return min(1.0, nearest / window)
+    }
+
+    /// Instantaneous cursor speed in video px/sec, sampled over a short window.
+    static func cursorSpeedPxPerSec(atMilliseconds t: Double, metadata: RecordingMetadata) -> Double {
+        let lookbackMs = 16.0
+        guard let cur = rawCursorPosition(atMilliseconds: t, metadata: metadata) else { return 0 }
+        let prev = rawCursorPosition(atMilliseconds: t - lookbackMs, metadata: metadata) ?? cur
+        let dx = Double(cur.x - prev.x)
+        let dy = Double(cur.y - prev.y)
+        return (dx * dx + dy * dy).squareRoot() / (lookbackMs / 1000.0)
     }
 
     // MARK: - Per-frame state (deterministic, no smoothing)
