@@ -7,14 +7,21 @@ import SwiftUI
 struct WebcamHandleOverlay: View {
     @Bindable var vm: EditorViewModel
 
-    /// Set true while the user is mid-drag so we can show the dashed
-    /// outline + resize handle without cluttering the canvas the rest of the
-    /// time.
     @State private var isHovering = false
-    @State private var isInteracting = false
-    /// Layout snapshot taken at gesture start so each tick computes deltas
-    /// against the original values rather than chaining.
-    @State private var dragStartLayout: WebcamLayout?
+    /// Layout snapshots taken at gesture start so each tick computes deltas
+    /// against the original values rather than chaining. @GestureState (not
+    /// @State): SwiftUI never calls onEnded for a *cancelled* gesture, and a
+    /// stale origin here made the next drag jump from the old position.
+    @GestureState private var moveStart: WebcamLayout?
+    @GestureState private var resizeStart: WebcamLayout?
+
+    /// The on-screen width of the padded content rect is contentScale x the
+    /// view size — drag deltas must be normalised against that, not the raw
+    /// view size, or the circle moves slower than the pointer whenever
+    /// canvas padding > 0.
+    private var contentScale: CGFloat {
+        max(0.01, 1.0 - CGFloat(max(0, min(0.5, vm.canvasPadding))) * 2.0)
+    }
 
     var body: some View {
         // Only show if the project has a webcam track and the user hasn't
@@ -22,7 +29,7 @@ struct WebcamHandleOverlay: View {
         if vm.webcamPlayer != nil, vm.webcamLayout.enabled {
             GeometryReader { proxy in
                 let rect = circleRect(in: proxy.size)
-                let editing = isHovering || isInteracting
+                let editing = isHovering || moveStart != nil || resizeStart != nil
                 ZStack(alignment: .topLeading) {
                     // Hit region matching the visible circle. Transparent —
                     // the actual pixels come from Metal underneath.
@@ -46,22 +53,17 @@ struct WebcamHandleOverlay: View {
                         .onHover { isHovering = $0 }
                         .gesture(
                             DragGesture(minimumDistance: 0)
+                                .updating($moveStart) { _, start, _ in
+                                    if start == nil { start = vm.webcamLayout }
+                                }
                                 .onChanged { value in
-                                    if dragStartLayout == nil {
-                                        dragStartLayout = vm.webcamLayout
-                                        isInteracting = true
-                                    }
-                                    guard let start = dragStartLayout else { return }
-                                    let dxNorm = Float(value.translation.width / proxy.size.width)
-                                    let dyNorm = Float(value.translation.height / proxy.size.height)
+                                    guard let start = moveStart else { return }
+                                    let dxNorm = Float(value.translation.width / (proxy.size.width * contentScale))
+                                    let dyNorm = Float(value.translation.height / (proxy.size.height * contentScale))
                                     var next = start
                                     next.centerXNorm = start.centerXNorm + dxNorm
                                     next.centerYNorm = start.centerYNorm + dyNorm
                                     vm.setWebcamLayout(next)
-                                }
-                                .onEnded { _ in
-                                    dragStartLayout = nil
-                                    isInteracting = false
                                 }
                         )
 
@@ -98,25 +100,24 @@ struct WebcamHandleOverlay: View {
         .position(x: cx, y: cy)
         .gesture(
             DragGesture(minimumDistance: 0)
+                .updating($resizeStart) { _, start, _ in
+                    if start == nil { start = vm.webcamLayout }
+                }
                 .onChanged { value in
-                    if dragStartLayout == nil {
-                        dragStartLayout = vm.webcamLayout
-                        isInteracting = true
-                    }
-                    guard let start = dragStartLayout else { return }
+                    guard let start = resizeStart else { return }
                     // Translate the corner outward → grow the diameter.
                     // We project the drag onto the 45° axis so both up-left
                     // and down-right diagonals shrink/grow naturally.
+                    // Forward map: pixelWidth = diameterNorm * contentScale *
+                    // viewWidth, so a radius change of `projected` px is a
+                    // diameter change of 2*projected/(contentScale*viewWidth)
+                    // in norm units (the old code divided by the view's short
+                    // side and ignored contentScale).
                     let projected = (value.translation.width + value.translation.height) / 2
-                    let shortSide = min(viewSize.width, viewSize.height)
-                    let deltaNorm = Float((projected / shortSide) * 2)
+                    let deltaNorm = Float((projected * 2) / (viewSize.width * contentScale))
                     var next = start
                     next.diameterNorm = start.diameterNorm + deltaNorm
                     vm.setWebcamLayout(next)
-                }
-                .onEnded { _ in
-                    dragStartLayout = nil
-                    isInteracting = false
                 }
         )
     }
