@@ -734,23 +734,13 @@ struct SidebarView: View {
             return
         }
 
-        // Spring-smooth the export cursor so it glides between sparse
-        // keyframes like the live preview does. Stateful across frames —
-        // safe because the export pipeline processes video frames serially
-        // on a single queue.
-        let cursorSmoother = ExportCursorSmoother()
-
+        // The cursor glide is fully baked into the snapshot's precomputed
+        // track, so the export just samples it — deterministic, stateless, and
+        // identical to the live preview. (Previously a stateful spring lived
+        // here; it could diverge from the preview and, because the pipeline
+        // calls this closure from more than one loop, corrupt its own state.)
         let cursorAt: @Sendable (Double) -> CursorRenderState? = { ms in
-            guard var state = snapshot.cursorStateForExport(atMilliseconds: ms) else { return nil }
-            state.positionInVideoPixels = cursorSmoother.smoothed(
-                target: state.positionInVideoPixels,
-                atMilliseconds: ms,
-                smoothTime: snapshot.adaptiveCursorSmoothTime(
-                    atMilliseconds: ms,
-                    spriteAt: cursorSmoother.currentPosition
-                )
-            )
-            return state
+            snapshot.cursorStateForExport(atMilliseconds: ms)
         }
         let clicksAt: @Sendable (Double) -> [ClickRingState] = { ms in
             snapshot.clickRingStates(atMilliseconds: ms)

@@ -1,43 +1,6 @@
 import Foundation
 import simd
 
-/// Reference-typed wrapper around `SmoothPosition2D` so the export's per-frame
-/// closure can mutate smoothing state across calls. The export pipeline
-/// processes frames serially on one queue, so unchecked Sendable is safe.
-final class ExportCursorSmoother: @unchecked Sendable {
-    private var smoother: SmoothPosition2D
-    private var lastT: Double = -1
-
-    init() {
-        self.smoother = SmoothPosition2D(x: 0, y: 0)
-    }
-
-    /// Where the smoothed sprite currently sits, or nil before the first
-    /// sample. Feed this back into `RenderSnapshot.adaptiveCursorSmoothTime`
-    /// so lag urgency can see how far the sprite trails the raw pointer.
-    var currentPosition: SIMD2<Float>? {
-        lastT < 0 ? nil : SIMD2(Float(smoother.current.x), Float(smoother.current.y))
-    }
-
-    func smoothed(target: SIMD2<Float>, atMilliseconds t: Double, smoothTime: Double) -> SIMD2<Float> {
-        smoother.smoothTime = smoothTime
-        let dt: Double
-        if lastT < 0 {
-            smoother.reset(toX: Double(target.x), y: Double(target.y))
-            dt = 1.0 / 60.0
-        } else {
-            dt = max(0.0001, (t - lastT) / 1000.0)
-        }
-        lastT = t
-        let result = smoother.update(
-            targetX: Double(target.x),
-            targetY: Double(target.y),
-            deltaTime: dt
-        )
-        return SIMD2(Float(result.x), Float(result.y))
-    }
-}
-
 /// Sendable, immutable snapshot of everything the per-frame state functions
 /// need. Built on the main actor at export start, then passed into the
 /// export pipeline's worker queues. The snapshot's methods are pure
@@ -57,6 +20,13 @@ struct RenderSnapshot: Sendable {
     /// Mouse-down timestamps (ms), sorted ascending — the click-window
     /// smoothing collapse binary-searches this per frame.
     let clickDownTimesMs: [Double]
+    /// Precomputed smoothed-cursor trajectory in video pixels. Integrated once
+    /// at a fixed high rate (frame-rate independent) so the editor preview and
+    /// the export sample the *exact same* deterministic glide — no live,
+    /// stateful spring that could diverge between the two pipelines or jitter
+    /// when frame delivery timing varies. Binary-searched per frame via
+    /// `smoothedCursorPosition`.
+    let cursorSamples: [CursorSample]
 
     init(metadata: RecordingMetadata, zoomSections: [ZoomSection]) {
         self.metadata = metadata
@@ -65,14 +35,19 @@ struct RenderSnapshot: Sendable {
         // regardless of what the caller (or an old metadata file) hands us.
         let sorted = zoomSections.sorted { $0.startTime < $1.startTime }
         self.zoomSections = sorted
-        self.clickDownTimesMs = metadata.clicks
+        let clickDowns = metadata.clicks
             .filter { $0.action == .down }
             .map(\.timestamp)
             .sorted()
+        self.clickDownTimesMs = clickDowns
         self.panSamples = Self.computePanTrack(
             sections: sorted,
             metadata: metadata,
             config: metadata.zoom.config
+        )
+        self.cursorSamples = Self.computeCursorTrack(
+            metadata: metadata,
+            clickDownTimesMs: clickDowns
         )
     }
 
@@ -83,14 +58,19 @@ struct RenderSnapshot: Sendable {
             .map { CursorAnimationStyle(rawValue: $0.rawValue) ?? .slow } ?? .slow
     }
 
-    /// Adaptive cursor smooth time at `t`. Gentle glide when the cursor is
-    /// slow/idle, tightening when urgency is high so the rendered sprite stays
-    /// on the real pointer (and therefore on click targets, which are
-    /// positioned from the raw track). Urgency comes from raw cursor speed
-    /// and, when the caller passes the sprite's current position via
-    /// `spriteAt`, from how far the sprite trails the raw pointer — which
-    /// covers fast-move-then-stop, where speed alone collapses too early. See
+    /// Canonical smooth-time policy at `t`, as a pure function (unit-tested in
+    /// isolation): gentle glide when the cursor is slow/idle, tightening when
+    /// urgency is high so the rendered sprite stays on the real pointer (and
+    /// therefore on click targets, which are positioned from the raw track).
+    /// Urgency comes from raw cursor speed and, when the caller passes the
+    /// sprite's current position via `spriteAt`, from how far the sprite trails
+    /// the raw pointer — which covers fast-move-then-stop, where speed alone
+    /// collapses too early. See
     /// `CursorAnimationStyle.smoothTime(forSpeedPxPerSec:lagPx:videoWidth:)`.
+    ///
+    /// `computeCursorTrack` applies this same policy per integration step (with
+    /// an EMA-smoothed speed the loop can't express as a pure function of `t`);
+    /// this method is the specification the track is validated against.
     func adaptiveCursorSmoothTime(atMilliseconds t: Double, spriteAt sprite: SIMD2<Float>? = nil) -> Double {
         let speed = Self.cursorSpeedPxPerSec(atMilliseconds: t, metadata: metadata)
         var lagPx = 0.0
@@ -149,10 +129,17 @@ struct RenderSnapshot: Sendable {
         return (dx * dx + dy * dy).squareRoot() / (lookbackMs / 1000.0)
     }
 
-    // MARK: - Per-frame state (deterministic, no smoothing)
+    // MARK: - Per-frame state (deterministic)
+    //
+    // Fully smoothed: the sprite position comes from the precomputed cursor
+    // track (`smoothedCursorPosition`), so this one call is the complete render
+    // state for both the editor preview and the export — no external, stateful
+    // spring layered on top. Falls back to the raw pointer only when the track
+    // is empty (0–1 keyframes).
 
     func cursorStateForExport(atMilliseconds t: Double) -> CursorRenderState? {
         guard let raw = Self.rawCursorPosition(atMilliseconds: t, metadata: metadata) else { return nil }
+        let position = smoothedCursorPosition(atMilliseconds: t) ?? raw
         let (shape, baseSize) = Self.activeShapeAndSize(
             at: t,
             keyframes: metadata.cursor.keyframes,
@@ -162,12 +149,14 @@ struct RenderSnapshot: Sendable {
         let videoSize = SIMD2(Float(metadata.video.width), Float(metadata.video.height))
         let cfg = metadata.cursor.config
 
-        // --- Cursor velocity (video px/sec), sampled over a small window.
-        // Kept as explicit Float locals so the type-checker stays fast. ---
+        // --- Sprite velocity (video px/sec) from the SMOOTHED track, so the
+        // motion-blur smear matches the sprite's actual on-screen travel rather
+        // than the raw pointer's. Kept as explicit Float locals so the
+        // type-checker stays fast. ---
         let lookbackMs = 16.0
-        let prev = Self.rawCursorPosition(atMilliseconds: t - lookbackMs, metadata: metadata) ?? raw
-        let dx: Float = raw.x - prev.x
-        let dy: Float = raw.y - prev.y
+        let prev = smoothedCursorPosition(atMilliseconds: t - lookbackMs) ?? position
+        let dx: Float = position.x - prev.x
+        let dy: Float = position.y - prev.y
         let dist: Float = (dx * dx + dy * dy).squareRoot()
         let speed: Float = dist / Float(lookbackMs / 1000.0)
 
@@ -197,7 +186,7 @@ struct RenderSnapshot: Sendable {
         }
 
         return CursorRenderState(
-            positionInVideoPixels: raw,
+            positionInVideoPixels: position,
             size: size,
             opacity: opacity,
             shape: shape,
@@ -280,9 +269,10 @@ struct RenderSnapshot: Sendable {
         guard let active = zoomSections.first(where: { t >= $0.startTime && t <= $0.endTime }) else {
             return .identity
         }
-        // 700ms cubic ramp — feels noticeably more cinematic than a 400ms
-        // quad ramp and matches Screen Studio's default zoom feel. Shared
-        // by editor preview and export so both use the exact same curve.
+        // 700ms quintic-smootherstep ramp — matches Screen Studio's cinematic
+        // zoom feel, and the C2 curve means zoom *acceleration* eases in and
+        // out with no perceptible jerk at the ramp ends (the old cubic ease was
+        // only C1). Shared by editor preview and export for an identical curve.
         let duration = active.endTime - active.startTime
         let elapsed = t - active.startTime
         let half = duration / 2
@@ -295,7 +285,7 @@ struct RenderSnapshot: Sendable {
         } else {
             progress = 1.0
         }
-        let eased = Self.easeInOutCubic(min(max(progress, 0), 1))
+        let eased = Self.smootherStep(min(max(progress, 0), 1))
         let scale = 1.0 + (active.scale - 1.0) * eased
         let targetCenter = panCenter(atMilliseconds: t) ?? SIMD2<Float>(0.5, 0.5)
         let neutralCenter = SIMD2<Float>(0.5, 0.5)
@@ -324,6 +314,27 @@ struct RenderSnapshot: Sendable {
             return prev.camera + (next.camera - prev.camera) * min(max(alpha, 0), 1)
         }
         return prev.camera
+    }
+
+    /// Interpolated smoothed-cursor position (video pixels) from the precomputed
+    /// track. Returns nil when the track is empty (0–1 keyframes) so callers
+    /// fall back to the raw pointer. Clamps to the track ends for times outside
+    /// the recorded range.
+    func smoothedCursorPosition(atMilliseconds t: Double) -> SIMD2<Float>? {
+        guard !cursorSamples.isEmpty else { return nil }
+        var lo = 0
+        var hi = cursorSamples.count - 1
+        while lo < hi {
+            let mid = (lo + hi + 1) / 2
+            if cursorSamples[mid].t <= t { lo = mid } else { hi = mid - 1 }
+        }
+        let prev = cursorSamples[lo]
+        let next = (lo + 1 < cursorSamples.count) ? cursorSamples[lo + 1] : prev
+        if next.t > prev.t {
+            let alpha = Float(min(max((t - prev.t) / (next.t - prev.t), 0), 1))
+            return prev.pos + (next.pos - prev.pos) * alpha
+        }
+        return prev.pos
     }
 
     // MARK: - Helpers (static, no isolation)
@@ -377,9 +388,130 @@ struct RenderSnapshot: Sendable {
         return SIMD4(r, g, b, 1)
     }
 
-    /// Slower start/end than quadratic — gives the zoom a more cinematic feel.
-    static func easeInOutCubic(_ t: Double) -> Double {
-        return t < 0.5 ? 4 * t * t * t : 1 - pow(-2 * t + 2, 3) / 2
+    /// Quintic smootherstep (Perlin). C2-continuous — first *and* second
+    /// derivatives are zero at both ends — so anything eased through it (the
+    /// zoom scale + center) starts and stops with no acceleration jerk. Input
+    /// is clamped to [0,1]. Silkier than the cubic ease it replaced.
+    static func smootherStep(_ t: Double) -> Double {
+        let x = min(max(t, 0), 1)
+        return x * x * x * (x * (x * 6 - 15) + 10)
+    }
+
+    // MARK: - Cursor precomputation
+
+    /// One sample on the precomputed smoothed-cursor trajectory.
+    struct CursorSample: Sendable, Equatable {
+        /// Milliseconds from recording start.
+        var t: Double
+        /// Sprite position in video pixels (top-left origin, same space as the
+        /// raw keyframes and click points).
+        var pos: SIMD2<Float>
+    }
+
+    /// Integrates the smoothed cursor sprite forward across the whole recording
+    /// once, at a fixed high rate, so both the editor preview and the export
+    /// read an identical, frame-rate-independent glide. Mirrors the design of
+    /// `computePanTrack`: a critically-damped spring chases the raw pointer
+    /// with an *adaptive* smoothTime — gentle glide when the cursor is slow,
+    /// tightening on speed/lag urgency and collapsing to ~zero in the click
+    /// window so the sprite lands exactly on click targets.
+    ///
+    /// Two things make it silkier than a raw per-frame spring:
+    /// - the urgency **speed** signal is EMA-smoothed, killing the frame-to-
+    ///   frame noise that a bare 16 ms lookback injects into the stiffness;
+    /// - the blend into tight tracking is smoothstepped (see
+    ///   `CursorAnimationStyle.smoothTime`), so acceleration eases in/out.
+    ///
+    /// Returns [] for 0–1 keyframes (nothing to interpolate; callers fall back
+    /// to the raw pointer).
+    static func computeCursorTrack(
+        metadata: RecordingMetadata,
+        clickDownTimesMs: [Double]
+    ) -> [CursorSample] {
+        let frames = metadata.cursor.keyframes
+        guard frames.count >= 2 else { return [] }
+
+        let videoW = Double(max(1, metadata.video.width))
+        let style: CursorAnimationStyle = metadata.zoom.config.animationStyle
+            .flatMap { CursorAnimationStyle(rawValue: $0.rawValue) } ?? .slow
+
+        // 240 Hz inner integration keeps the spring stable and matches the pan
+        // track; we emit samples at ~125 Hz for the lookup table.
+        let integrationHz = 240.0
+        let dtSec = 1.0 / integrationHz
+        let dtMs = dtSec * 1000.0
+        let outputIntervalMs = 8.0
+        // Pre-roll so the spring is at a settled steady state by the first
+        // emitted sample (otherwise the opening frame pops from a cold start).
+        let warmupMs = 300.0
+        // EMA time constant for the speed signal (seconds). Short enough to
+        // stay responsive, long enough to denoise the per-step velocity.
+        let speedTauSec = 0.05
+        let emaAlpha = 1.0 - exp(-dtSec / speedTauSec)
+
+        let startT = frames.first!.timestamp
+        let endT = frames.last!.timestamp
+
+        // Forward-walking raw interpolator: `t` only ever increases here, so we
+        // advance a keyframe cursor instead of binary-searching every step —
+        // O(steps + keyframes) rather than O(steps · log keyframes).
+        var kf = 0
+        func rawAt(_ t: Double) -> SIMD2<Float> {
+            while kf + 1 < frames.count && frames[kf + 1].timestamp <= t { kf += 1 }
+            let prev = frames[kf]
+            let next = (kf + 1 < frames.count) ? frames[kf + 1] : prev
+            if next.timestamp > prev.timestamp {
+                let a = min(max((t - prev.timestamp) / (next.timestamp - prev.timestamp), 0), 1)
+                return SIMD2(
+                    Float(prev.x + (next.x - prev.x) * a),
+                    Float(prev.y + (next.y - prev.y) * a)
+                )
+            }
+            return SIMD2(Float(prev.x), Float(prev.y))
+        }
+
+        var pos = rawAt(startT)              // start settled on the first sample
+        var vel = SIMD2<Float>(0, 0)
+        var prevTarget = pos
+        var speedEMA = 0.0
+
+        var out: [CursorSample] = []
+        out.reserveCapacity(Int((endT - startT) / outputIntervalMs) + 4)
+
+        var t = startT - warmupMs
+        var lastOutputMs = -Double.greatestFiniteMagnitude
+        while t <= endT {
+            let target = rawAt(t)
+
+            // Raw pointer speed (px/sec), EMA-smoothed for a stable stiffness.
+            let d = target - prevTarget
+            let instSpeed = Double((d.x * d.x + d.y * d.y).squareRoot()) / dtSec
+            speedEMA += (instSpeed - speedEMA) * emaAlpha
+            prevTarget = target
+
+            // How far the sprite currently trails the raw pointer.
+            let lagV = target - pos
+            let lagPx = Double((lagV.x * lagV.x + lagV.y * lagV.y).squareRoot())
+
+            var st = style.smoothTime(
+                forSpeedPxPerSec: speedEMA, lagPx: lagPx, videoWidth: videoW
+            )
+            // Collapse toward the true click point inside the click window.
+            st *= proximityFactor(to: clickDownTimesMs, at: t, window: 140)
+
+            smoothDamp(pos: &pos, vel: &vel, target: target, smoothTime: st, dt: dtSec)
+
+            if t >= startT && t - lastOutputMs >= outputIntervalMs {
+                out.append(CursorSample(t: t, pos: pos))
+                lastOutputMs = t
+            }
+            t += dtMs
+        }
+        // Anchor a sample exactly at endTime so the last frame reads cleanly.
+        if (out.last?.t ?? -Double.greatestFiniteMagnitude) < endT {
+            out.append(CursorSample(t: endT, pos: pos))
+        }
+        return out
     }
 
     // MARK: - Auto-pan precomputation

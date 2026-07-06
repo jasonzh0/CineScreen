@@ -122,10 +122,6 @@ final class EditorViewModel {
     /// and seeks are mirrored so the webcam overlay stays in sync.
     @ObservationIgnored let webcamPlayer: AVPlayer?
 
-    // Cursor smoothing state — preview-only.
-    @ObservationIgnored private var cursorSmoother = SmoothPosition2D(x: 0, y: 0, smoothTime: 0.25)
-    @ObservationIgnored private var lastCursorSampleMs: Double?
-
     // Autosave — every metadata mutation schedules a debounced write so
     // edits survive closing the window without pressing Save.
     @ObservationIgnored private var autosaveTask: Task<Void, Never>?
@@ -443,15 +439,9 @@ final class EditorViewModel {
             to: CMTime(seconds: webcamSeconds, preferredTimescale: 600),
             toleranceBefore: .zero, toleranceAfter: .zero
         )
-        // Drop the smoother's history — otherwise it tries to catch up across
-        // the jump. Reset to the raw position when one exists; but always
-        // advance lastCursorSampleMs so an empty cursor track still resets the
-        // smoother's dt baseline on the next cursorState() call.
-        if let snapshot = makeRenderSnapshot(),
-           let raw = RenderSnapshot.rawCursorPosition(atMilliseconds: clamped, metadata: snapshot.metadata) {
-            cursorSmoother.reset(toX: Double(raw.x), y: Double(raw.y))
-        }
-        lastCursorSampleMs = clamped
+        // No cursor-smoother history to reset on seek anymore: the sprite glide
+        // is a stateless lookup into the precomputed track, so any timestamp —
+        // including one jumped to — resolves to the same deterministic value.
     }
 
     // MARK: - Per-frame state (all delegated to RenderSnapshot)
@@ -476,36 +466,12 @@ final class EditorViewModel {
         return secs.isFinite ? secs * 1000 : currentTimeMs
     }
 
-    /// Live-preview cursor state — snapshot's base position with spring
-    /// smoothing layered on top. The export uses the same snapshot + a
-    /// separate `ExportCursorSmoother` instance.
+    /// Live-preview cursor state — pure delegation to the snapshot, which now
+    /// bakes the smoothed glide into a precomputed track. The export samples
+    /// the exact same method, so preview and export are guaranteed identical.
     func cursorState(atMilliseconds ms: Double? = nil) -> CursorRenderState? {
         guard let snapshot = makeRenderSnapshot() else { return nil }
-        let t = ms ?? renderTimeMs
-        guard var state = snapshot.cursorStateForExport(atMilliseconds: t) else { return nil }
-
-        // Apply spring smoothing using the elapsed time since the last call.
-        let raw = state.positionInVideoPixels
-        let dt: Double
-        if let last = lastCursorSampleMs {
-            dt = max(0.0001, (t - last) / 1000.0)
-        } else {
-            cursorSmoother.reset(toX: Double(raw.x), y: Double(raw.y))
-            dt = 1.0 / 60.0
-        }
-        lastCursorSampleMs = t
-        cursorSmoother.smoothTime = snapshot.adaptiveCursorSmoothTime(
-            atMilliseconds: t,
-            spriteAt: SIMD2(Float(cursorSmoother.current.x), Float(cursorSmoother.current.y))
-        )
-
-        let smoothed = cursorSmoother.update(
-            targetX: Double(raw.x),
-            targetY: Double(raw.y),
-            deltaTime: dt
-        )
-        state.positionInVideoPixels = SIMD2(Float(smoothed.x), Float(smoothed.y))
-        return state
+        return snapshot.cursorStateForExport(atMilliseconds: ms ?? renderTimeMs)
     }
 
     /// Click ring states at the playhead — pure delegation.

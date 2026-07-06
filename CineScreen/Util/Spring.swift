@@ -92,7 +92,12 @@ enum CursorAnimationStyle: String {
         let lagHi = 0.05    // trailing 5%+ of the width: fully tight
         let lagF = min(1.0, max(0.0, (lagNorm - lagLo) / (lagHi - lagLo)))
 
+        // Smoothstep the blend factor so stiffness eases in/out (C1) rather
+        // than kinking at the ramp ends — a linear blend makes the glide
+        // visibly "grab" as it tightens. Endpoints are preserved, so tracking
+        // is still fully tight at max urgency (f == 1 → minSmoothTime).
         let f = max(speedF, lagF)
-        return smoothTime + (minSmoothTime - smoothTime) * f
+        let fs = f * f * (3 - 2 * f)
+        return smoothTime + (minSmoothTime - smoothTime) * fs
     }
 }
