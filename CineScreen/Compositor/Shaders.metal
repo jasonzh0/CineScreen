@@ -7,6 +7,8 @@ using namespace metal;
 
 struct AspectUniforms {
     float2 scale;
+    float2 cropOrigin;
+    float2 cropSize;
 };
 
 // Canvas (background + padding) applied as an outer transform on top of the
@@ -15,6 +17,7 @@ struct CanvasUniforms {
     // Multiplied with the post-aspect-fit position to shrink the video into
     // a padded sub-region. e.g. 0.8 = 20% padding total.
     float2 contentScale;
+    float2 cornerRadiusUV;
 };
 
 // Zoom: shifts UV space so a sub-region of the video fills the drawable.
@@ -28,6 +31,7 @@ struct ZoomUniforms {
 struct VertexOut {
     float4 position [[position]];
     float2 uv;
+    float2 frameUV;
 };
 
 // Unit quad for the cursor / click sprite passes.
@@ -58,7 +62,20 @@ struct BackgroundUniforms {
     int stopCount;
     float pad0;
     float pad1;
+    float vignette;
+    float grain;
+    int gradientStyle;
+    float pad2;
 };
+
+float4 finish_background(float4 color, float2 uv, float2 pixel, constant BackgroundUniforms &u) {
+    float edge = smoothstep(0.28, 0.92, length(uv - 0.5) * 1.42);
+    color.rgb *= 1.0 - u.vignette * edge;
+    // Fixed per-pixel dither prevents banding without temporal shimmer.
+    float noise = fract(sin(dot(floor(pixel), float2(12.9898, 78.233))) * 43758.5453) - 0.5;
+    color.rgb = clamp(color.rgb + noise * u.grain, 0.0, 1.0);
+    return color;
+}
 
 vertex VertexOut background_vertex(uint vid [[vertex_id]]) {
     float2 positions[4] = {
@@ -70,6 +87,7 @@ vertex VertexOut background_vertex(uint vid [[vertex_id]]) {
     VertexOut out;
     out.position = float4(positions[vid], 0.0, 1.0);
     out.uv = positions[vid] * 0.5 + 0.5;
+    out.frameUV = out.uv;
     return out;
 }
 
@@ -78,17 +96,19 @@ fragment float4 background_fragment(
     constant BackgroundUniforms &u [[buffer(0)]]
 ) {
     if (u.stopCount <= 1) {
-        return u.stop0;
+        return finish_background(u.stop0, in.uv, in.position.xy, u);
     }
 
     // Rotate uv around centre by angle, project onto the gradient axis, and
     // remap to 0..1 across the diagonal so the gradient reaches every corner.
-    float2 centred = in.uv - 0.5;
+    float2 centred = float2(in.uv.x, 1.0 - in.uv.y) - 0.5;
     float c = cos(u.angleRadians);
     float s = sin(u.angleRadians);
     float t = centred.x * c + centred.y * s;
     float maxT = 0.5 * (abs(c) + abs(s));
-    float normT = clamp((t + maxT) / (2.0 * maxT), 0.0, 1.0);
+    float normT = u.gradientStyle == 1
+        ? clamp(length(centred - float2(c, -s) * 0.28) / 0.95, 0.0, 1.0)
+        : clamp((t + maxT) / (2.0 * maxT), 0.0, 1.0);
 
     float4 stops[4] = { u.stop0, u.stop1, u.stop2, u.stop3 };
     float positions[4] = {
@@ -99,17 +119,18 @@ fragment float4 background_fragment(
     };
     int count = u.stopCount;
 
-    if (normT <= positions[0])           return stops[0];
-    if (normT >= positions[count - 1])   return stops[count - 1];
+    if (normT <= positions[0])           return finish_background(stops[0], in.uv, in.position.xy, u);
+    if (normT >= positions[count - 1])   return finish_background(stops[count - 1], in.uv, in.position.xy, u);
 
     for (int i = 0; i < count - 1; i++) {
         if (normT >= positions[i] && normT <= positions[i + 1]) {
             float span = max(0.0001, positions[i + 1] - positions[i]);
             float local = (normT - positions[i]) / span;
-            return mix(stops[i], stops[i + 1], local);
+            if (u.gradientStyle == 1) local = smoothstep(0.0, 1.0, local);
+            return finish_background(mix(stops[i], stops[i + 1], local), in.uv, in.position.xy, u);
         }
     }
-    return stops[count - 1];
+    return finish_background(stops[count - 1], in.uv, in.position.xy, u);
 }
 
 // =============================================================================
@@ -119,10 +140,11 @@ fragment float4 background_fragment(
 struct ShadowUniforms {
     float2 centerNDC;    // recording centre in NDC (post-zoom translate)
     float2 halfSize;     // recording half-size in NDC (post-zoom scale)
-    float blur;          // shadow blur radius in NDC
-    float yOffset;       // downward offset in NDC (negative y = down)
+    float2 offsetNDC;
+    float blur;          // blur in isotropic viewport-width units
     float cornerRadius;  // rounded-corner radius in NDC, matching the video
     float opacity;       // peak alpha at the recording's edge
+    float viewportAspect;
 };
 
 vertex VertexOut shadow_vertex(uint vid [[vertex_id]]) {
@@ -135,6 +157,7 @@ vertex VertexOut shadow_vertex(uint vid [[vertex_id]]) {
     VertexOut out;
     out.position = float4(positions[vid], 0.0, 1.0);
     out.uv = positions[vid];
+    out.frameUV = out.uv;
     return out;
 }
 
@@ -143,11 +166,11 @@ fragment float4 shadow_fragment(
     constant ShadowUniforms &u [[buffer(0)]]
 ) {
     // Sample in the shifted shadow rect's local frame.
-    float2 p = in.uv - u.centerNDC;
-    p.y -= u.yOffset;
+    float2 metric = float2(1.0, 1.0 / max(0.01, u.viewportAspect));
+    float2 p = (in.uv - u.centerNDC - u.offsetNDC) * metric;
 
     // SDF to a rounded rectangle centred at the shifted position.
-    float2 inner = max(u.halfSize - float2(u.cornerRadius), float2(0.0));
+    float2 inner = max(u.halfSize * metric - float2(u.cornerRadius), float2(0.0));
     float2 d = abs(p) - inner;
     float dist = length(max(d, float2(0.0))) + min(max(d.x, d.y), 0.0) - u.cornerRadius;
 
@@ -161,7 +184,11 @@ fragment float4 shadow_fragment(
     // rect; combined with the downward offset that produced a "dead zone"
     // band of pure gradient between the recording's bottom edge and where
     // the shadow's outer falloff started.
-    float alpha = u.opacity * smoothstep(u.blur, 0.0, max(dist, 0.0));
+    float distance = max(dist, 0.0);
+    float sigma = max(0.0001, u.blur);
+    float ambient = exp(-0.5 * distance * distance / (sigma * sigma));
+    float contact = exp(-0.5 * distance * distance / (sigma * sigma * 0.0484));
+    float alpha = u.opacity * (0.66 * ambient + 0.34 * contact);
     return float4(0.0, 0.0, 0.0, alpha);
 }
 
@@ -207,8 +234,20 @@ vertex VertexOut video_vertex(
 
     VertexOut out;
     out.position = float4(scaledQuad * aspect.scale * canvas.contentScale, 0.0, 1.0);
-    out.uv = v.zw;
+    out.uv = aspect.cropOrigin + v.zw * aspect.cropSize;
+    out.frameUV = v.zw;
     return out;
+}
+
+float frame_alpha(float2 uv, float2 radius) {
+    float2 edge = min(uv, 1.0 - uv);
+    if (any(edge < 0.0)) return 0.0;
+    if (radius.x > 0.0 && radius.y > 0.0 && edge.x < radius.x && edge.y < radius.y) {
+        float distance = length((radius - edge) / radius) - 1.0;
+        float aa = max(0.001, fwidth(distance));
+        return 1.0 - smoothstep(-aa, aa, distance);
+    }
+    return 1.0;
 }
 
 fragment float4 video_fragment(
@@ -216,20 +255,11 @@ fragment float4 video_fragment(
     constant CanvasUniforms &canvas [[buffer(0)]],
     texture2d<float> tex [[texture(1)]]
 ) {
-    // Round the recording's own corners. Source recordings of macOS windows
-    // have black/transparent pixels in their rounded-corner area — without
-    // this mask those would render as solid black wedges at the recording
-    // corners. Radius is in UV space so it scales with the source size.
-    float radius = 0.018;
-    float2 distFromEdge = min(in.uv, 1.0 - in.uv);
-    if (distFromEdge.x < radius && distFromEdge.y < radius) {
-        float2 toCorner = float2(radius) - distFromEdge;
-        if (length(toCorner) > radius) {
-            discard_fragment();
-        }
-    }
+    float alpha = frame_alpha(in.frameUV, canvas.cornerRadiusUV);
     constexpr sampler s(mag_filter::linear, min_filter::linear, address::clamp_to_edge);
-    return tex.sample(s, in.uv);
+    float4 color = tex.sample(s, in.uv);
+    color.a *= alpha;
+    return color;
 }
 
 // =============================================================================
@@ -240,6 +270,8 @@ struct CursorUniforms {
     float2 cursorPos;     // pointer hot-spot in video pixels (top-left origin)
     float2 videoSize;
     float2 aspectScale;
+    float2 cropOrigin;
+    float2 cropSize;
     float2 hotspot;       // hot spot as a fraction of the sprite, [0,1]², top-left
     float2 motionBlur;    // directional blur vector in sprite-UV units (0 = none)
     float size;           // sprite size in video pixels
@@ -254,7 +286,8 @@ vertex VertexOut cursor_vertex(
 ) {
     // `cursorPos` is the pointer's hot spot (where the real cursor pointed).
     // Normalize it to UV space, then to zoom-scaled NDC.
-    float2 posUV = u.cursorPos / u.videoSize;
+    float2 sourceUV = u.cursorPos / u.videoSize;
+    float2 posUV = (sourceUV - u.cropOrigin) / u.cropSize;
     float2 centerOffsetUV = posUV - zoom.centerUV;
     float2 cursorNDC = float2(
         centerOffsetUV.x * 2.0 * zoom.scale,
@@ -262,7 +295,7 @@ vertex VertexOut cursor_vertex(
     );
 
     // Sprite half-extent in NDC, scaled with zoom.
-    float2 quadHalfNDC = float2(u.size, u.size) / u.videoSize * zoom.scale;
+    float2 quadHalfNDC = float2(u.size, u.size) / (u.videoSize * u.cropSize) * zoom.scale;
     float2 offset = kUnitQuad[vid] * float2(quadHalfNDC.x * 2.0, -quadHalfNDC.y * 2.0);
 
     // Shift the whole sprite so its hot spot (not its centre) lands on
@@ -280,12 +313,14 @@ vertex VertexOut cursor_vertex(
     VertexOut out;
     out.position = float4(pos, 0.0, 1.0);
     out.uv = kUnitUV[vid];
+    out.frameUV = (sourceUV + (kUnitUV[vid] - u.hotspot) * u.size / u.videoSize - u.cropOrigin) / u.cropSize;
     return out;
 }
 
 fragment float4 cursor_fragment(
     VertexOut in [[stage_in]],
     constant CursorUniforms &u [[buffer(0)]],
+    constant CanvasUniforms &canvas [[buffer(1)]],
     texture2d<float> tex [[texture(0)]]
 ) {
     constexpr sampler s(mag_filter::linear, min_filter::linear, address::clamp_to_edge);
@@ -294,6 +329,7 @@ fragment float4 cursor_fragment(
     // the sprite smears in the direction of travel. The sprite's transparent
     // border + clamp_to_edge means taps that fall outside the sprite read as
     // transparent, so the smear fades out cleanly.
+    if (any(in.frameUV < 0.0) || any(in.frameUV > 1.0)) discard_fragment();
     float blurLen = length(u.motionBlur);
     float4 c;
     if (blurLen < 0.001) {
@@ -308,7 +344,7 @@ fragment float4 cursor_fragment(
         c = acc / float(kTaps);
     }
 
-    c.a *= u.opacity;
+    c.a *= u.opacity * frame_alpha(in.frameUV, canvas.cornerRadiusUV);
     return c;
 }
 
@@ -347,6 +383,7 @@ vertex VertexOut webcam_vertex(
     // Centred UV in [-0.5, 0.5] — the fragment shader uses it for both the
     // circular mask and the aspect-fill texture lookup.
     out.uv = kUnitQuad[vid];
+    out.frameUV = out.uv;
     return out;
 }
 
@@ -396,6 +433,8 @@ struct ClickUniforms {
     float thicknessInPixels;
     float2 videoSize;
     float2 aspectScale;
+    float2 cropOrigin;
+    float2 cropSize;
     float4 color;
 };
 
@@ -405,14 +444,15 @@ vertex VertexOut click_vertex(
     constant ZoomUniforms &zoom [[buffer(1)]],
     constant CanvasUniforms &canvas [[buffer(2)]]
 ) {
-    float2 posUV = u.centerInVideoPixels / u.videoSize;
+    float2 sourceUV = u.centerInVideoPixels / u.videoSize;
+    float2 posUV = (sourceUV - u.cropOrigin) / u.cropSize;
     float2 centerOffsetUV = posUV - zoom.centerUV;
     float2 centerNDC = float2(
         centerOffsetUV.x * 2.0 * zoom.scale,
         -(centerOffsetUV.y * 2.0 * zoom.scale)
     );
 
-    float2 quadHalfNDC = float2(u.radiusInPixels, u.radiusInPixels) / u.videoSize * zoom.scale;
+    float2 quadHalfNDC = float2(u.radiusInPixels, u.radiusInPixels) * 2.0 / (u.videoSize * u.cropSize) * zoom.scale;
     float2 offset = kUnitQuad[vid] * float2(quadHalfNDC.x * 2.0, -quadHalfNDC.y * 2.0);
     // Apply canvas.contentScale to match the video and cursor passes — without
     // it, click rings drift outward from the recording whenever canvas padding
@@ -422,13 +462,16 @@ vertex VertexOut click_vertex(
     VertexOut out;
     out.position = float4(pos, 0.0, 1.0);
     out.uv = kUnitQuad[vid] + 0.5;
+    out.frameUV = (sourceUV + kUnitQuad[vid] * 2.0 * u.radiusInPixels / u.videoSize - u.cropOrigin) / u.cropSize;
     return out;
 }
 
 fragment float4 click_fragment(
     VertexOut in [[stage_in]],
-    constant ClickUniforms &u [[buffer(0)]]
+    constant ClickUniforms &u [[buffer(0)]],
+    constant CanvasUniforms &canvas [[buffer(1)]]
 ) {
+    if (any(in.frameUV < 0.0) || any(in.frameUV > 1.0)) discard_fragment();
     float2 d = in.uv - float2(0.5, 0.5);
     float dist = length(d);
     float thicknessNorm = (u.thicknessInPixels / max(1.0, u.radiusInPixels * 2.0));
@@ -441,6 +484,6 @@ fragment float4 click_fragment(
     float mask = outerEdge * innerEdge;
 
     float4 colour = u.color;
-    colour.a *= mask;
+    colour.a *= mask * frame_alpha(in.frameUV, canvas.cornerRadiusUV);
     return colour;
 }

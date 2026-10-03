@@ -17,8 +17,7 @@ struct RenderSnapshot: Sendable {
     /// follow, so it has to be integrated forward in time once — we then
     /// binary-search this array per frame.
     let panSamples: [PanSample]
-    /// Mouse-down timestamps (ms), sorted ascending — the click-window
-    /// smoothing collapse binary-searches this per frame.
+    /// Mouse-down timestamps (ms), sorted ascending for click constraints.
     let clickDownTimesMs: [Double]
     /// Precomputed smoothed-cursor trajectory in video pixels. Integrated once
     /// at a fixed high rate (frame-rate independent) so the editor preview and
@@ -27,28 +26,32 @@ struct RenderSnapshot: Sendable {
     /// when frame delivery timing varies. Binary-searched per frame via
     /// `smoothedCursorPosition`.
     let cursorSamples: [CursorSample]
+    /// Movement and mouse-down events; duplicate endpoint anchors are excluded.
+    let cursorActivityTimesMs: [Double]
 
     init(metadata: RecordingMetadata, zoomSections: [ZoomSection]) {
-        self.metadata = metadata
-        // Defensive sort: the pan table is binary-searched by time and
-        // `zoomState` scans in order — both require sorted sections
-        // regardless of what the caller (or an old metadata file) hands us.
         let sorted = zoomSections.sorted { $0.startTime < $1.startTime }
-        self.zoomSections = sorted
-        let clickDowns = metadata.clicks
-            .filter { $0.action == .down }
-            .map(\.timestamp)
-            .sorted()
-        self.clickDownTimesMs = clickDowns
-        self.panSamples = Self.computePanTrack(
-            sections: sorted,
-            metadata: metadata,
-            config: metadata.zoom.config
+        let clickDowns = metadata.clicks.filter { $0.action == .down }.map(\.timestamp).sorted()
+        self.init(
+            metadata: metadata, zoomSections: sorted,
+            panSamples: Self.computePanTrack(sections: sorted, metadata: metadata, config: metadata.zoom.config),
+            cursorSamples: Self.computeCursorTrack(metadata: metadata, clickDownTimesMs: clickDowns)
         )
-        self.cursorSamples = Self.computeCursorTrack(
-            metadata: metadata,
-            clickDownTimesMs: clickDowns
-        )
+    }
+
+    /// Reuses immutable trajectories when only appearance changes. Callers must
+    /// supply tracks built from the same cursor and zoom motion inputs.
+    init(metadata: RecordingMetadata, zoomSections: [ZoomSection], panSamples: [PanSample], cursorSamples: [CursorSample]) {
+        self.metadata = metadata
+        self.zoomSections = zoomSections.sorted { $0.startTime < $1.startTime }
+        self.panSamples = panSamples
+        self.cursorSamples = cursorSamples
+        self.clickDownTimesMs = metadata.clicks.filter { $0.action == .down }.map(\.timestamp).sorted()
+        var activity = metadata.cursor.keyframes.first.map { [$0.timestamp] } ?? []
+        for (previous, current) in zip(metadata.cursor.keyframes, metadata.cursor.keyframes.dropFirst()) {
+            if previous.x != current.x || previous.y != current.y { activity.append(current.timestamp) }
+        }
+        self.cursorActivityTimesMs = (activity + clickDownTimesMs).sorted()
     }
 
     /// Defaults to `.slow` because the heavy smoothing reads as more cinematic
@@ -84,21 +87,13 @@ struct RenderSnapshot: Sendable {
             lagPx: lagPx,
             videoWidth: Double(metadata.video.width)
         )
-        // Collapse smoothing to ~zero in a small window around each mouse-down
-        // so the sprite lands exactly on the true click point — that's where
-        // lag is most visible. The cursor is decelerating into the click
-        // anyway, so tightening as it arrives reads naturally rather than as a
-        // snap. The gentle glide is preserved everywhere outside the click
-        // window. Mouse-ups are deliberately excluded (matching clickPopFactor
-        // and the click rings): collapsing at a drag release would snap the
-        // sprite with no visual event to explain it.
-        return base * clickProximityFactor(atMilliseconds: t)
+        // Click landing is a trajectory constraint applied with lookahead;
+        // collapsing spring stiffness here would discharge lag as a speed burst.
+        return base
     }
 
-    /// 0 exactly at a mouse-down timestamp, ramping linearly to 1 once
-    /// `window` ms away. Multiplied into the cursor smooth-time so
-    /// position-smoothing vanishes at clicks (sprite == raw pointer) and
-    /// returns to full between clicks.
+    /// Legacy click-proximity utility. Click trajectory fitting no longer
+    /// multiplies spring smooth-time by this factor.
     func clickProximityFactor(atMilliseconds t: Double, window: Double = 140) -> Double {
         Self.proximityFactor(to: clickDownTimesMs, at: t, window: window)
     }
@@ -178,10 +173,20 @@ struct RenderSnapshot: Sendable {
         // --- Hide-when-static: fade the cursor out once it's been idle ---
         var opacity: Float = 1.0
         if cfg.hideWhenStatic == true {
-            let idleMs = t - Self.lastKeyframeTimestamp(atMilliseconds: t, keyframes: metadata.cursor.keyframes)
-            let holdMs = 1400.0, fadeMs = 450.0
-            if idleMs > holdMs {
-                opacity = 1.0 - Float(min(1.0, (idleMs - holdMs) / fadeMs))
+            var lo = 0, hi = cursorActivityTimesMs.count
+            while lo < hi {
+                let mid = (lo + hi) / 2
+                if cursorActivityTimesMs[mid] <= t { lo = mid + 1 } else { hi = mid }
+            }
+            if lo > 0 {
+                let activity = cursorActivityTimesMs[lo - 1]
+                let idleMs = t - activity
+                let holdMs = 1400.0, fadeMs = 450.0
+                opacity = 1.0 - Float(min(1.0, max(0, (idleMs - holdMs) / fadeMs)))
+                // A movement after a hidden hold fades back in instead of popping.
+                if lo > 1, activity - cursorActivityTimesMs[lo - 2] > holdMs + fadeMs {
+                    opacity = min(opacity, Float(min(1, max(0, idleMs / 120))))
+                }
             }
         }
 
@@ -242,7 +247,7 @@ struct RenderSnapshot: Sendable {
         guard cfg?.enabled ?? false else { return [] }
         let size = cfg?.size ?? 64
         let duration = cfg?.duration ?? 600
-        let color = Self.parseHexColor(cfg?.color ?? "#ffffff")
+        let color = RGBAColor.parseHex(cfg?.color ?? "#ffffff")
 
         var out: [ClickRingState] = []
         for click in metadata.clicks where click.action == .down {
@@ -269,14 +274,11 @@ struct RenderSnapshot: Sendable {
         guard let active = zoomSections.first(where: { t >= $0.startTime && t <= $0.endTime }) else {
             return .identity
         }
-        // 700ms quintic-smootherstep ramp — matches Screen Studio's cinematic
-        // zoom feel, and the C2 curve means zoom *acceleration* eases in and
-        // out with no perceptible jerk at the ramp ends (the old cubic ease was
-        // only C1). Shared by editor preview and export for an identical curve.
+        // Bound ramps to preserve a readable hold even in short sections.
         let duration = active.endTime - active.startTime
+        guard duration > 0 else { return .identity }
         let elapsed = t - active.startTime
-        let half = duration / 2
-        let rampMs = min(700.0, half)
+        let rampMs = Self.zoomTransitionDuration(config: metadata.zoom.config, sectionDuration: duration)
         let progress: Double
         if elapsed < rampMs {
             progress = elapsed / rampMs
@@ -290,7 +292,13 @@ struct RenderSnapshot: Sendable {
         let targetCenter = panCenter(atMilliseconds: t) ?? SIMD2<Float>(0.5, 0.5)
         let neutralCenter = SIMD2<Float>(0.5, 0.5)
         let centerUV = neutralCenter + (targetCenter - neutralCenter) * Float(eased)
-        return ZoomState(centerUV: centerUV, scale: Float(scale))
+        return ZoomState(centerUV: centerUV, scale: Float(scale), framingProgress: Float(eased))
+    }
+
+    /// Legacy transitionSpeed is expressed in milliseconds by the recorder.
+    static func zoomTransitionDuration(config: ZoomConfig, sectionDuration: Double) -> Double {
+        let requested = config.transitionSpeed.isFinite ? config.transitionSpeed : 300
+        return min(max(120, min(1200, requested)), max(0, sectionDuration) * 0.35)
     }
 
     /// Binary-search the precomputed pan trajectory for an interpolated camera
@@ -307,7 +315,8 @@ struct RenderSnapshot: Sendable {
         let prev = panSamples[lo]
         // Only return a sample if it actually belongs to the section that
         // contains `t` — otherwise we'd hand a stale camera to a neutral gap.
-        guard t >= prev.t else { return nil }
+        guard t >= prev.t, zoomSections.indices.contains(prev.sectionIndex),
+              t <= zoomSections[prev.sectionIndex].endTime else { return nil }
         let next = (lo + 1 < panSamples.count) ? panSamples[lo + 1] : prev
         if next.t > prev.t, next.sectionIndex == prev.sectionIndex, t <= next.t {
             let alpha = Float((t - prev.t) / (next.t - prev.t))
@@ -351,13 +360,18 @@ struct RenderSnapshot: Sendable {
         }
         let prev = frames[lo]
         let next = (lo + 1 < frames.count) ? frames[lo + 1] : prev
-        if next.timestamp > prev.timestamp {
-            let alpha = Float((t - prev.timestamp) / (next.timestamp - prev.timestamp))
-            let a = SIMD2(Float(prev.x), Float(prev.y))
-            let b = SIMD2(Float(next.x), Float(next.y))
-            return a + (b - a) * min(max(alpha, 0), 1)
-        }
-        return SIMD2(Float(prev.x), Float(prev.y))
+        return interpolateCursor(previous: prev, next: next, at: t, frameRate: metadata.video.frameRate)
+    }
+
+    /// Capture is event-driven: a long gap is an idle hold, not a slow drag.
+    /// Only bridge the last display-frame interval into the new event. Dense
+    /// movement tracks retain linear interpolation between their samples.
+    private static func interpolateCursor(previous: CursorKeyframe, next: CursorKeyframe, at t: Double, frameRate: Double) -> SIMD2<Float> {
+        let gap = next.timestamp - previous.timestamp
+        guard gap > 0 else { return SIMD2(Float(previous.x), Float(previous.y)) }
+        let start = gap > 100 ? next.timestamp - min(100, 1000 / Double(max(1, frameRate))) : previous.timestamp
+        let alpha = min(max((t - start) / (next.timestamp - start), 0), 1)
+        return SIMD2(Float(previous.x + (next.x - previous.x) * alpha), Float(previous.y + (next.y - previous.y) * alpha))
     }
 
     static func activeShapeAndSize(
@@ -374,18 +388,6 @@ struct RenderSnapshot: Sendable {
         }
         let kf = keyframes[min(lo, keyframes.count - 1)]
         return (kf.shape ?? fallback.shape, Float(kf.size ?? fallback.size))
-    }
-
-    static func parseHexColor(_ hex: String) -> SIMD4<Float> {
-        var s = hex
-        if s.hasPrefix("#") { s.removeFirst() }
-        guard s.count == 6, let v = UInt32(s, radix: 16) else {
-            return SIMD4(1, 1, 1, 1)
-        }
-        let r = Float((v >> 16) & 0xff) / 255
-        let g = Float((v >> 8) & 0xff) / 255
-        let b = Float(v & 0xff) / 255
-        return SIMD4(r, g, b, 1)
     }
 
     /// Quintic smootherstep (Perlin). C2-continuous — first *and* second
@@ -413,8 +415,8 @@ struct RenderSnapshot: Sendable {
     /// read an identical, frame-rate-independent glide. Mirrors the design of
     /// `computePanTrack`: a critically-damped spring chases the raw pointer
     /// with an *adaptive* smoothTime — gentle glide when the cursor is slow,
-    /// tightening on speed/lag urgency and collapsing to ~zero in the click
-    /// window so the sprite lands exactly on click targets.
+    /// tightening on speed/lag urgency. A separate lookahead fit constrains
+    /// click landing while preserving baseline velocity at click timestamps.
     ///
     /// Two things make it silkier than a raw per-frame spring:
     /// - the urgency **speed** signal is EMA-smoothed, killing the frame-to-
@@ -460,14 +462,7 @@ struct RenderSnapshot: Sendable {
             while kf + 1 < frames.count && frames[kf + 1].timestamp <= t { kf += 1 }
             let prev = frames[kf]
             let next = (kf + 1 < frames.count) ? frames[kf + 1] : prev
-            if next.timestamp > prev.timestamp {
-                let a = min(max((t - prev.timestamp) / (next.timestamp - prev.timestamp), 0), 1)
-                return SIMD2(
-                    Float(prev.x + (next.x - prev.x) * a),
-                    Float(prev.y + (next.y - prev.y) * a)
-                )
-            }
-            return SIMD2(Float(prev.x), Float(prev.y))
+            return interpolateCursor(previous: prev, next: next, at: t, frameRate: metadata.video.frameRate)
         }
 
         var pos = rawAt(startT)              // start settled on the first sample
@@ -475,11 +470,11 @@ struct RenderSnapshot: Sendable {
         var prevTarget = pos
         var speedEMA = 0.0
 
-        var out: [CursorSample] = []
+        var out: [CursorSample] = [CursorSample(t: startT, pos: pos)]
         out.reserveCapacity(Int((endT - startT) / outputIntervalMs) + 4)
 
         var t = startT - warmupMs
-        var lastOutputMs = -Double.greatestFiniteMagnitude
+        var lastOutputMs = startT
         while t <= endT {
             let target = rawAt(t)
 
@@ -493,12 +488,9 @@ struct RenderSnapshot: Sendable {
             let lagV = target - pos
             let lagPx = Double((lagV.x * lagV.x + lagV.y * lagV.y).squareRoot())
 
-            var st = style.smoothTime(
+            let st = style.smoothTime(
                 forSpeedPxPerSec: speedEMA, lagPx: lagPx, videoWidth: videoW
             )
-            // Collapse toward the true click point inside the click window.
-            st *= proximityFactor(to: clickDownTimesMs, at: t, window: 140)
-
             smoothDamp(pos: &pos, vel: &vel, target: target, smoothTime: st, dt: dtSec)
 
             if t >= startT && t - lastOutputMs >= outputIntervalMs {
@@ -511,7 +503,46 @@ struct RenderSnapshot: Sendable {
         if (out.last?.t ?? -Double.greatestFiniteMagnitude) < endT {
             out.append(CursorSample(t: endT, pos: pos))
         }
-        return out
+        return constrainClicks(samples: out, times: clickDownTimesMs, metadata: metadata, style: style)
+    }
+
+    /// Fit the *whole* trajectory with advance knowledge of clicks. A wide C2
+    /// influence window distributes lag recovery rather than dumping it into
+    /// the last 140 ms. Blend against the current raw position, not a frozen
+    /// click offset: that prevents residual spring lag from overshooting a
+    /// move-stop-click after landing. Overlapping windows combine smoothly.
+    private static func constrainClicks(samples: [CursorSample], times: [Double], metadata: RecordingMetadata, style: CursorAnimationStyle) -> [CursorSample] {
+        guard let first = samples.first, let last = samples.last else { return samples }
+        let clicks = Array(Set(times.filter { $0 >= first.t && $0 <= last.t })).sorted()
+        guard !clicks.isEmpty else { return samples }
+        func baseline(_ t: Double) -> SIMD2<Float> {
+            var lo = 0, hi = samples.count - 1
+            while lo < hi {
+                let mid = (lo + hi + 1) / 2
+                if samples[mid].t <= t { lo = mid } else { hi = mid - 1 }
+            }
+            let a = samples[lo], b = samples[min(lo + 1, samples.count - 1)]
+            guard b.t > a.t else { return a.pos }
+            return a.pos + (b.pos - a.pos) * Float(min(max((t - a.t) / (b.t - a.t), 0), 1))
+        }
+        let window = max(600, style.smoothTime * 2400)
+        // Include exact click times so subframe events land exactly.
+        let outputTimes = Array(Set(samples.map(\.t) + clicks)).sorted()
+        var firstRelevantClick = 0
+        return outputTimes.map { t in
+            while firstRelevantClick < clicks.count && clicks[firstRelevantClick] < t - window { firstRelevantClick += 1 }
+            var remaining = 1.0
+            var index = firstRelevantClick
+            while index < clicks.count && clicks[index] <= t + window {
+                // Product-combine influences; unlike nearest-click selection,
+                // this has no derivative kink halfway between nearby clicks.
+                remaining *= smootherStep(abs(t - clicks[index]) / window)
+                index += 1
+            }
+            let position = baseline(t)
+            let raw = rawCursorPosition(atMilliseconds: t, metadata: metadata) ?? position
+            return CursorSample(t: t, pos: position + (raw - position) * Float(1 - remaining))
+        }
     }
 
     // MARK: - Auto-pan precomputation
@@ -545,18 +576,22 @@ struct RenderSnapshot: Sendable {
         // Rule-of-thirds safe box: cursor moves freely inside the middle third
         // of the visible (zoomed) frame before the camera starts to follow.
         let safeFraction: Float = 0.33
+        let followSpeed = config.followSpeed.isFinite ? max(0.1, min(5, config.followSpeed)) : 1
+        let styleMultiplier: Double
+        switch config.animationStyle ?? .mellow {
+        case .slow: styleMultiplier = 1.3
+        case .mellow: styleMultiplier = 1
+        case .quick: styleMultiplier = 0.7
+        case .rapid: styleMultiplier = 0.5
+        }
         // Camera spring smoothTime is *adaptive per axis* — long when the
         // cursor is close to the camera (cinematic glide) and short as the
         // cursor approaches the visible-frame edge (so a fast drag doesn't
         // leave the spring lagging out of frame). The cursor pre-smoothing
         // spring stays fast/static to kill trackpad jitter.
-        let cameraMaxSmoothTime: Double = 0.60
-        let cameraMinSmoothTime: Double = 0.16
+        let cameraMaxSmoothTime: Double = 0.60 * styleMultiplier / followSpeed
+        let cameraMinSmoothTime: Double = 0.16 * styleMultiplier / followSpeed
         let cursorSmoothTime: Double = 0.12
-        // Maximum fraction of visible half-extent the cursor is allowed to
-        // reach before we hard-clamp the camera. Keeps the cursor inside the
-        // frame even when the spring lag would otherwise push it out.
-        let frameEdgeFraction: Float = 0.92
         // Pre-roll the cursor smoother so it has a steady state at section
         // start (otherwise the section's first frame can pop).
         let warmupMs: Double = 300.0
@@ -576,10 +611,21 @@ struct RenderSnapshot: Sendable {
             let scale = Float(max(1.0, section.scale))
             let visHalfX = 0.5 / scale
             let visHalfY = 0.5 / scale
-            let safeHalfX = visHalfX * safeFraction
-            let safeHalfY = visHalfY * safeFraction
+            // Persisted deadZone is a radius in source pixels.
+            let radius = config.deadZone.flatMap { $0.isFinite ? Float(max(0, $0)) : nil }
+            let safeHalfX = radius.map { min(visHalfX * 0.85, $0 / videoW) } ?? visHalfX * safeFraction
+            let safeHalfY = radius.map { min(visHalfY * 0.85, $0 / videoH) } ?? visHalfY * safeFraction
             let minX = visHalfX, maxX = 1.0 - visHalfX
             let minY = visHalfY, maxY = 1.0 - visHalfY
+
+            if section.targetMode == .fixed {
+                let x = section.centerX.isFinite ? Float(section.centerX) : 0.5
+                let y = section.centerY.isFinite ? Float(section.centerY) : 0.5
+                let target = SIMD2(min(max(x, minX), maxX), min(max(y, minY), maxY))
+                out.append(PanSample(t: section.startTime, camera: target, sectionIndex: idx))
+                out.append(PanSample(t: section.endTime, camera: target, sectionIndex: idx))
+                continue
+            }
 
             func cursorUV(_ t: Double) -> SIMD2<Float> {
                 if let p = rawCursorPosition(atMilliseconds: t, metadata: metadata) {
@@ -630,7 +676,10 @@ struct RenderSnapshot: Sendable {
                 // 1) Pre-smooth the raw cursor.
                 smoothDamp(
                     pos: &smoothCursor, vel: &smoothCursorVel,
-                    target: cursorUV(t), smoothTime: cursorSmoothTime, dt: dtSec
+                    // Recorded lookahead gives the camera time to follow a
+                    // fast drag without a frame-edge position reset.
+                    target: cursorUV(min(section.endTime, t + min(180, cameraMinSmoothTime * 1000))),
+                    smoothTime: cursorSmoothTime, dt: dtSec
                 )
 
                 // 2) Soft rule-of-thirds target: target == camera while the
@@ -644,6 +693,11 @@ struct RenderSnapshot: Sendable {
                 else if dx < -safeHalfX { target.x = smoothCursor.x + safeHalfX }
                 if dy > safeHalfY { target.y = smoothCursor.y - safeHalfY }
                 else if dy < -safeHalfY { target.y = smoothCursor.y + safeHalfY }
+
+                // Clamp the destination, so the spring approaches screen
+                // boundaries continuously instead of hitting a position wall.
+                target.x = min(max(target.x, minX), maxX)
+                target.y = min(max(target.y, minY), maxY)
 
                 // 3) Drive the camera with critically-damped springs whose
                 //    smoothTime tightens as the cursor approaches the visible
@@ -677,26 +731,6 @@ struct RenderSnapshot: Sendable {
                 )
                 clampCameraAndKillVelocity(pos: &camera, vel: &cameraVel)
 
-                // 4) Hard frame-edge safety: even with adaptive smoothing, a
-                //    sufficiently fast cursor can outpace the spring. Snap
-                //    the camera forward so the cursor never leaves the
-                //    visible frame, and zero velocity in that axis so the
-                //    spring resumes cleanly on the next frame.
-                let maxOffX = visHalfX * frameEdgeFraction
-                let maxOffY = visHalfY * frameEdgeFraction
-                let dcx = smoothCursor.x - camera.x
-                let dcy = smoothCursor.y - camera.y
-                // Clamp the camera so the cursor can't leave the frame, but
-                // only DAMP the velocity instead of zeroing it. Hard-zeroing
-                // made the camera dead-stop when a fast drag hit the edge (a
-                // visible jerk); keeping part of the catch-up momentum lets it
-                // ride the edge smoothly with the cursor.
-                if dcx > maxOffX { camera.x = smoothCursor.x - maxOffX; cameraVel.x *= 0.5 }
-                else if dcx < -maxOffX { camera.x = smoothCursor.x + maxOffX; cameraVel.x *= 0.5 }
-                if dcy > maxOffY { camera.y = smoothCursor.y - maxOffY; cameraVel.y *= 0.5 }
-                else if dcy < -maxOffY { camera.y = smoothCursor.y + maxOffY; cameraVel.y *= 0.5 }
-                clampCameraAndKillVelocity(pos: &camera, vel: &cameraVel)
-
                 if t - lastOutputMs >= outputIntervalMs {
                     out.append(PanSample(t: t, camera: camera, sectionIndex: idx))
                     lastOutputMs = t
@@ -728,10 +762,16 @@ struct RenderSnapshot: Sendable {
         let omega = 2.0 / st
         let x = omega * dt
         let expFactor = Float(1.0 / (1.0 + x + 0.48 * x * x + 0.235 * x * x * x))
+        let previous = pos
         let change = pos - target
         let temp = (vel + Float(omega) * change) * Float(dt)
         vel = (vel - Float(omega) * temp) * expFactor
         pos = target + (change + temp) * expFactor
+        // Adaptive stiffness can leave residual momentum at a stopped target.
+        // Limit crossing the destination rather than allowing a rebound.
+        if (target.x - previous.x) * (pos.x - target.x) > 0 { pos.x = target.x; vel.x = 0 }
+        if (target.y - previous.y) * (pos.y - target.y) > 0 { pos.y = target.y; vel.y = 0 }
+
     }
 
     /// 1D variant — used when the camera's x and y axes need independent

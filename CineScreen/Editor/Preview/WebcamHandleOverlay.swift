@@ -58,6 +58,7 @@ struct WebcamHandleOverlay: View {
                                 }
                                 .onChanged { value in
                                     guard let start = moveStart else { return }
+                                    vm.beginEditing()
                                     let dxNorm = Float(value.translation.width / (proxy.size.width * contentScale))
                                     let dyNorm = Float(value.translation.height / (proxy.size.height * contentScale))
                                     var next = start
@@ -74,6 +75,7 @@ struct WebcamHandleOverlay: View {
                 .frame(width: proxy.size.width, height: proxy.size.height, alignment: .topLeading)
             }
             .allowsHitTesting(true)
+            .onChange(of: moveStart == nil && resizeStart == nil) { _, ended in if ended { vm.endEditing() } }
         }
     }
 
@@ -105,6 +107,7 @@ struct WebcamHandleOverlay: View {
                 }
                 .onChanged { value in
                     guard let start = resizeStart else { return }
+                    vm.beginEditing()
                     // Translate the corner outward → grow the diameter.
                     // We project the drag onto the 45° axis so both up-left
                     // and down-right diagonals shrink/grow naturally.
@@ -123,7 +126,7 @@ struct WebcamHandleOverlay: View {
     }
 
     /// Computes the on-screen pixel rect for the webcam circle from the
-    /// current canvas style + layout. Mirrors `MetalRenderer.webcamUniforms`
+    /// current canvas style + layout. Mirrors `CompositorCore.webcamUniforms`
     /// math but in SwiftUI points instead of NDC.
     private func circleRect(in size: CGSize) -> CGRect {
         let layout = vm.webcamLayout.clamped()

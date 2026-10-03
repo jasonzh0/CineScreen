@@ -1,6 +1,7 @@
 import Foundation
 import AVFoundation
 import Observation
+import AppKit
 
 /// Owns one open recording — its metadata, the AVPlayer driving playback,
 /// and any unsaved edits.
@@ -12,16 +13,70 @@ final class EditorViewModel {
     let metadataURL: URL?
     var metadata: RecordingMetadata? {
         didSet {
-            // Any metadata change invalidates the cached per-frame snapshot
-            // AND the auto-generated zoom sections (they derive from clicks,
-            // duration, and zoom level). This central hook covers every
-            // mutator — including sidebar bindings that write into metadata
-            // directly, which used to bypass invalidation entirely.
+            guard metadata != oldValue else { return }
             cachedSnapshot = nil
-            cachedZoomSections = nil
+            renderRevision &+= 1
+            if metadata?.clicks != oldValue?.clicks || metadata?.video.duration != oldValue?.video.duration || metadata?.zoom.config != oldValue?.zoom.config {
+                cachedZoomSections = nil
+            }
+            prepareMotionSnapshot()
             guard !suppressAutosave else { return }
+            history.recordChange(from: oldValue, to: metadata)
+            hasUnsavedChanges = true
+            if metadata?.output != oldValue?.output { applyAudioSettings() }
+            if metadata?.editSegments != oldValue?.editSegments || metadata?.trim != oldValue?.trim { rebuildEditedPlayback() }
             scheduleAutosave()
         }
+    }
+
+    private(set) var hasUnsavedChanges = false
+    private(set) var lastSavedAt: Date?
+    let projectTitle: String
+    private(set) var renderRevision = 0
+    private static func title(for videoURL: URL) -> String {
+        let folder = videoURL.deletingLastPathComponent()
+        if let data = try? Data(contentsOf: folder.appendingPathComponent(Project.projectFileName)),
+           let project = try? JSONDecoder().decode(ProjectDescriptor.self, from: data) { return project.name }
+        return videoURL.deletingPathExtension().lastPathComponent
+    }
+    private var history = EditorHistory()
+    var canUndo: Bool { history.canUndo(current: metadata) }
+    var canRedo: Bool { history.canRedo }
+
+    /// One pointer gesture is one history entry, even for hundreds of changes.
+    func beginEditing() { history.beginEditing(current: metadata) }
+    func endEditing() { history.endEditing(current: metadata) }
+    func sliderEditing(_ editing: Bool) {
+        if editing { beginEditing() } else { endEditing() }
+    }
+    func performEdit(_ edit: () -> Void) {
+        let ownsTransaction = !history.isEditing
+        if ownsTransaction { beginEditing() }
+        defer { if ownsTransaction { endEditing() } }
+        edit()
+    }
+    func undo() {
+        if let previous = history.undo(current: metadata) { restore(previous) }
+    }
+    func redo() {
+        if let next = history.redo(current: metadata) { restore(next) }
+    }
+    private func restore(_ value: RecordingMetadata) {
+        let playbackChanged = metadata?.trim != value.trim || metadata?.editSegments != value.editSegments
+        pause()
+        suppressAutosave = true
+        metadata = value
+        trimStartMs = value.trim?.startMs ?? 0
+        trimEndMs = value.trim?.endMs ?? durationMs
+        webcamLayout = value.webcam ?? .default
+        applyCanvas(value.canvas ?? .default)
+        suppressAutosave = false
+        selectedZoomIndex = nil
+        selectedSegmentID = nil
+        hasUnsavedChanges = true
+        applyAudioSettings()
+        if playbackChanged { rebuildEditedPlayback() }
+        scheduleAutosave()
     }
 
     // Playback state — bindable
@@ -44,32 +99,54 @@ final class EditorViewModel {
         metadata?.trim = TrimRange(startMs: trimStartMs, endMs: trimEndMs)
     }
 
-    // Canvas styling (Phase 4) — backgrounds + padding + drop shadow.
+    // Canvas bindings mirror the persisted configuration.
     // Defaults give a polished out-of-the-box look so new recordings already
     // feel "designed". Mutations push into metadata so they survive Save.
-    var canvasPadding: Double = 0.05 {
+    var canvasPadding: Double = CanvasStyleConfig.default.padding {
         didSet { syncCanvasToMetadata() }
     }
-    var canvasBackground: CanvasBackground = .solid("#1a1a1a") {
+    var canvasBackground: CanvasBackground = CanvasStyleConfig.default.background {
         didSet { syncCanvasToMetadata() }
     }
-    var canvasDropShadow: Bool = true {
+    var canvasDropShadow: Bool = CanvasStyleConfig.default.dropShadow {
         didSet { syncCanvasToMetadata() }
     }
-    var canvasShadowStrength: Double = 0.45 {
+    var canvasShadowStrength: Double = CanvasStyleConfig.default.resolvedShadowStrength {
         didSet { syncCanvasToMetadata() }
     }
 
+    var canvasShadowSoftness: Double = CanvasStyleConfig.default.resolvedShadowSoftness { didSet { syncCanvasToMetadata() } }
+    var canvasShadowDistance: Double = CanvasStyleConfig.default.resolvedShadowDistance { didSet { syncCanvasToMetadata() } }
+    var canvasShadowAngle: Double = CanvasStyleConfig.default.resolvedShadowAngle { didSet { syncCanvasToMetadata() } }
+    var canvasCornerRadius: Double = CanvasStyleConfig.default.resolvedCornerRadius { didSet { syncCanvasToMetadata() } }
     private var suppressCanvasSync: Bool = false
 
+    private var canvasConfiguration: CanvasStyleConfig {
+        CanvasStyleConfig(background: canvasBackground, padding: canvasPadding,
+                          dropShadow: canvasDropShadow, shadowStrength: canvasShadowStrength,
+                          shadowSoftness: canvasShadowSoftness, shadowDistance: canvasShadowDistance,
+                          shadowAngle: canvasShadowAngle, cornerRadius: canvasCornerRadius)
+    }
+
     private func syncCanvasToMetadata() {
-        guard !suppressCanvasSync else { return }
-        metadata?.canvas = CanvasStyleConfig(
-            background: canvasBackground,
-            padding: canvasPadding,
-            dropShadow: canvasDropShadow,
-            shadowStrength: canvasShadowStrength
-        )
+        guard !suppressCanvasSync, !suppressAutosave else { return }
+        metadata?.canvas = canvasConfiguration
+    }
+
+    /// Loading and undo restore the bindings without writing a second metadata
+    /// value. A preset calls syncCanvasToMetadata once after this atomic update.
+    private func applyCanvas(_ config: CanvasStyleConfig) {
+        let wasSuppressed = suppressCanvasSync
+        suppressCanvasSync = true
+        defer { suppressCanvasSync = wasSuppressed }
+        canvasBackground = config.background
+        canvasPadding = config.padding
+        canvasDropShadow = config.dropShadow
+        canvasShadowStrength = config.resolvedShadowStrength
+        canvasShadowSoftness = config.resolvedShadowSoftness
+        canvasShadowDistance = config.resolvedShadowDistance
+        canvasShadowAngle = config.resolvedShadowAngle
+        canvasCornerRadius = config.resolvedCornerRadius
     }
 
     /// User-editable webcam overlay layout. Mirrored from metadata so the
@@ -85,18 +162,23 @@ final class EditorViewModel {
     /// Timeline horizontal zoom (1.0 = fit, >1 = zoomed in). Persists per
     /// editor instance only.
     var timelineZoom: Double = 1.0
+    private(set) var timelineThumbnails: [NSImage] = []
+    private(set) var timelineWaveform: [Float] = []
+    @ObservationIgnored private var mediaTask: Task<Void, Never>?
+    @ObservationIgnored private var seekInFlight = false
+    @ObservationIgnored private var pendingSeekMs: Double?
+    private(set) var playbackTimeline: EditTimeline?
+    private(set) var isPreparingPlayback = false
+    @ObservationIgnored private var playbackBuildTask: Task<Void, Never>?
+    @ObservationIgnored private var playbackGeneration = 0
+    @ObservationIgnored private var webcamSegmentID: UUID?
 
     /// Index of the zoom section the user has selected in the editor.
-    var selectedZoomIndex: Int?
-
-    var canvasStyle: CanvasStyle {
-        CanvasStyle(
-            padding: Float(canvasPadding),
-            background: canvasBackground,
-            dropShadow: canvasDropShadow,
-            shadowStrength: Float(canvasShadowStrength)
-        )
+    var selectedZoomIndex: Int? {
+        didSet { if selectedZoomIndex != nil { selectedSegmentID = nil } }
     }
+
+    var canvasStyle: CanvasStyle { canvasConfiguration.renderStyle }
 
     /// Width/height of the recording. The preview locks its canvas to this
     /// so canvas-relative placement (webcam position, padding, shadow)
@@ -105,7 +187,176 @@ final class EditorViewModel {
     /// window aspect differed from the video's.
     var previewAspect: CGFloat? {
         guard let video = metadata?.video, video.height > 0 else { return nil }
-        return CGFloat(video.width) / CGFloat(video.height)
+        let dimensions = outputSettings.dimensions(sourceWidth: video.width, sourceHeight: video.height)
+        return CGFloat(dimensions.width) / CGFloat(dimensions.height)
+    }
+
+    var selectedSegmentID: UUID? {
+        didSet { if selectedSegmentID != nil { selectedZoomIndex = nil } }
+    }
+    var editTimeline: EditTimeline {
+        EditTimeline(segments: metadata?.editSegments, durationMs: durationMs,
+                     trim: TrimRange(startMs: trimStartMs, endMs: trimEndMs))
+    }
+    var retainedSegments: [EditSegment] { editTimeline.segments }
+    var editedDurationMs: Double { editTimeline.durationMs }
+    var editedTimeMs: Double { editTimeline.outputTime(atSourceMs: currentTimeMs) ?? 0 }
+    var outputSettings: OutputSettings {
+        get { metadata?.output ?? .default }
+        set { metadata?.output = newValue }
+    }
+    func selectSegment(_ id: UUID) {
+        selectedSegmentID = id
+    }
+    func splitAtPlayhead() {
+        let segments = retainedSegments
+        let split = EditTimeline.split(segments: segments, atSourceMs: currentTimeMs)
+        guard split.count > segments.count else { return }
+        metadata?.editSegments = split
+        selectedSegmentID = split.first(where: { abs($0.startMs - currentTimeMs) < 0.01 })?.id
+    }
+    func removeSelectedSegment() {
+        guard let id = selectedSegmentID else { return }
+        metadata?.editSegments = EditTimeline.removing(segments: retainedSegments, id: id)
+        selectedSegmentID = nil
+        pause()
+        if let next = retainedSegments.first(where: { $0.endMs > currentTimeMs }) ?? retainedSegments.first {
+            seek(toMilliseconds: max(next.startMs, min(currentTimeMs, next.endMs)))
+        }
+    }
+    func setSelectedSegmentSpeed(_ speed: Double) {
+        guard let id = selectedSegmentID else { return }
+        var segments = retainedSegments
+        guard let index = segments.firstIndex(where: { $0.id == id }) else { return }
+        segments[index].speed = max(0.25, min(4, speed))
+        metadata?.editSegments = segments
+    }
+    func resetCuts() {
+        metadata?.editSegments = nil
+        selectedSegmentID = nil
+    }
+    func deleteSelection() {
+        if let selectedZoomIndex { removeZoomSection(at: selectedZoomIndex) }
+        else { removeSelectedSegment() }
+    }
+    func snapTime(_ ms: Double, toleranceMs: Double) -> Double {
+        let candidates: [Double] = [0, durationMs, currentTimeMs, trimStartMs, trimEndMs]
+            + retainedSegments.flatMap { [$0.startMs, $0.endMs] }
+            + effectiveZoomSections.flatMap { [$0.startTime, $0.endTime] }
+        let nearest = candidates.min { abs($0 - ms) < abs($1 - ms) } ?? ms
+        return abs(nearest - ms) <= toleranceMs ? nearest : ms
+    }
+    var playbackTimeMs: Double {
+        playbackTimeline?.outputTime(atSourceMs: currentTimeMs) ?? currentTimeMs
+    }
+    func sourceTimeForPlayback(_ outputMs: Double) -> Double {
+        guard outputMs.isFinite else { return currentTimeMs }
+        guard let timeline = playbackTimeline else { return max(0, outputMs) }
+        let clamped = max(0, min(outputMs, timeline.durationMs))
+        return timeline.sourceTime(atOutputMs: clamped) ?? timeline.segments.last?.endMs ?? 0
+    }
+    private func nearestRetainedSourceTime(_ sourceMs: Double, timeline: EditTimeline) -> Double {
+        if timeline.outputTime(atSourceMs: sourceMs) != nil { return sourceMs }
+        return timeline.segments.first(where: { $0.startMs >= sourceMs })?.startMs
+            ?? timeline.segments.last?.endMs ?? 0
+    }
+    private func rebuildEditedPlayback() {
+        guard durationMs > 0 else { return }
+        let timeline = editTimeline
+        playbackBuildTask?.cancel()
+        playbackGeneration &+= 1
+        if timeline == playbackTimeline {
+            isPreparingPlayback = false
+            player.currentItem?.cancelPendingSeeks()
+            seekInFlight = false
+            pendingSeekMs = nil
+            seek(toMilliseconds: currentTimeMs)
+            return
+        }
+        pause()
+        let generation = playbackGeneration
+        isPreparingPlayback = true
+        playbackBuildTask = Task { [weak self] in
+            try? await Task.sleep(for: .milliseconds(80))
+            guard !Task.isCancelled, let self else { return }
+            guard !timeline.segments.isEmpty else {
+                self.player.replaceCurrentItem(with: nil)
+                self.playbackTimeline = timeline
+                self.isPreparingPlayback = false
+                self.renderRevision &+= 1
+                return
+            }
+            do {
+                let result = try await EditedAssetBuilder.build(source: AVURLAsset(url: self.videoURL), timeline: timeline)
+                guard !Task.isCancelled, self.playbackGeneration == generation else { return }
+                let sourceTime = self.nearestRetainedSourceTime(self.currentTimeMs, timeline: timeline)
+                let item = AVPlayerItem(asset: result.asset)
+                item.audioTimePitchAlgorithm = .timeDomain
+                self.player.replaceCurrentItem(with: item)
+                self.playbackTimeline = timeline
+                self.webcamSegmentID = nil
+                self.seekInFlight = false
+                self.pendingSeekMs = nil
+                self.isPreparingPlayback = false
+                self.applyAudioSettings()
+                self.seek(toMilliseconds: sourceTime)
+                self.renderRevision &+= 1
+            } catch {
+                guard !Task.isCancelled, self.playbackGeneration == generation else { return }
+                self.isPreparingPlayback = false
+                self.loadError = "Could not prepare edited playback: \(error.localizedDescription)"
+            }
+        }
+    }
+    private func synchronizeEditedPlayback() {
+        guard isPlaying, !seekInFlight else { return }
+        let timeline = playbackTimeline ?? editTimeline
+        let segments = timeline.segments
+        guard !segments.isEmpty else { pause(); return }
+        if let current = segments.first(where: { currentTimeMs >= $0.startMs && currentTimeMs < $0.endMs }) {
+            player.rate = playbackTimeline == nil ? Float(current.speed) : 1
+            if currentTimeMs >= webcamOffsetMs {
+                if webcamSegmentID != current.id {
+                    webcamPlayer?.seek(to: CMTime(seconds: max(0, currentTimeMs - webcamOffsetMs) / 1000, preferredTimescale: 60_000), toleranceBefore: .zero, toleranceAfter: .zero)
+                    webcamSegmentID = current.id
+                }
+                webcamPlayer?.rate = Float(current.speed)
+            } else { webcamPlayer?.pause() }
+        } else if playbackTimeline == nil, let next = segments.first(where: { $0.startMs > currentTimeMs }) {
+            seek(toMilliseconds: next.startMs)
+            player.rate = Float(next.speed)
+        } else {
+            pause()
+            seek(toMilliseconds: segments.last!.endMs)
+        }
+    }
+
+    private(set) var lookPresets: [LookPreset] = {
+        guard let data = UserDefaults.standard.data(forKey: "CineScreen.lookPresets"),
+              let presets = try? JSONDecoder().decode([LookPreset].self, from: data) else { return [] }
+        return presets
+    }()
+    func saveLookPreset(named name: String) {
+        guard let metadata else { return }
+        let cleanName = name.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !cleanName.isEmpty else { return }
+        lookPresets.removeAll { $0.name == cleanName }
+        lookPresets.append(LookPreset(name: cleanName, canvas: canvasConfiguration, cursor: metadata.cursor.config,
+                                     zoom: metadata.zoom.config, effects: metadata.effects,
+                                     webcam: webcamLayout, output: outputSettings))
+        if lookPresets.count > 20 { lookPresets.removeFirst() }
+        if let data = try? JSONEncoder().encode(lookPresets) { UserDefaults.standard.set(data, forKey: "CineScreen.lookPresets") }
+    }
+    func applyLookPreset(_ preset: LookPreset) {
+        performEdit {
+            applyCanvas(preset.canvas)
+            syncCanvasToMetadata()
+            metadata?.cursor.config = preset.cursor
+            metadata?.zoom.config = preset.zoom
+            metadata?.effects = preset.effects
+            outputSettings = preset.output
+            setWebcamLayout(preset.webcam)
+        }
     }
 
     // Underlying AVFoundation
@@ -140,9 +391,15 @@ final class EditorViewModel {
     // 240Hz — rebuilding it per pull burned millions of spring steps per
     // second on the main thread once a recording had real zoom coverage.
     @ObservationIgnored private var cachedSnapshot: RenderSnapshot?
+    @ObservationIgnored private var motionSnapshot: RenderSnapshot?
+    @ObservationIgnored private var motionTask: Task<Void, Never>?
+    @ObservationIgnored private var pendingMotionMetadata: RecordingMetadata?
+    @ObservationIgnored private var pendingMotionSections: [ZoomSection]?
+    @ObservationIgnored private var motionGeneration = 0
 
     init(videoURL: URL, metadataURL: URL? = nil) {
         self.videoURL = videoURL
+        self.projectTitle = Self.title(for: videoURL)
 
         // Auto-discover sidecar JSON if not supplied (sibling with same stem).
         if let metadataURL = metadataURL {
@@ -171,8 +428,30 @@ final class EditorViewModel {
     }
 
     deinit {
+        mediaTask?.cancel()
+        motionTask?.cancel()
+        playbackBuildTask?.cancel()
         if let observer = timeObserver {
             player.removeTimeObserver(observer)
+        }
+    }
+
+    private func applyAudioSettings() {
+        let settings = outputSettings
+        player.isMuted = settings.audioMuted
+        guard let item = player.currentItem else { return }
+        Task { [weak self, weak item] in
+            guard let item,
+                  let tracks = try? await item.asset.loadTracks(withMediaType: .audio),
+                  self?.player.currentItem === item else { return }
+            let mix = AVMutableAudioMix()
+            mix.inputParameters = tracks.map { track in
+                let parameters = AVMutableAudioMixInputParameters(track: track)
+                parameters.setVolume(settings.effectiveAudioGain, at: .zero)
+                return parameters
+            }
+            guard self?.outputSettings == settings else { return }
+            item.audioMix = mix
         }
     }
 
@@ -195,16 +474,7 @@ final class EditorViewModel {
             if let layout = metadata?.webcam {
                 webcamLayout = layout
             }
-            if let saved = metadata?.canvas {
-                suppressCanvasSync = true
-                canvasPadding = saved.padding
-                canvasBackground = saved.background
-                canvasDropShadow = saved.dropShadow
-                if let strength = saved.shadowStrength {
-                    canvasShadowStrength = strength
-                }
-                suppressCanvasSync = false
-            }
+            applyCanvas(metadata?.canvas ?? .default)
             Log.editor.info("Loaded metadata: \(url.lastPathComponent)")
         } catch {
             loadError = "Could not parse metadata: \(error.localizedDescription)"
@@ -239,10 +509,15 @@ final class EditorViewModel {
 
     @discardableResult
     private func persistMetadata() -> Bool {
-        guard let url = metadataURL, let metadata else { return false }
+        guard let url = metadataURL, let metadata else {
+            lastSaveError = "This recording has no editable metadata file."
+            return false
+        }
         do {
             try metadata.write(to: url)
             lastSaveError = nil
+            hasUnsavedChanges = false
+            lastSavedAt = Date()
             Log.editor.info("Saved edits to \(url.lastPathComponent)")
             return true
         } catch {
@@ -321,6 +596,7 @@ final class EditorViewModel {
         let asset = AVURLAsset(url: videoURL)
         let item = AVPlayerItem(asset: asset)
         player.replaceCurrentItem(with: item)
+        applyAudioSettings()
 
         Task {
             await loadDuration(asset: asset)
@@ -332,30 +608,11 @@ final class EditorViewModel {
         timeObserver = player.addPeriodicTimeObserver(forInterval: interval, queue: .main) { [weak self] time in
             MainActor.assumeIsolated {
                 guard let self else { return }
-                self.currentTimeMs = time.seconds * 1000
-                // Honor the trim range: loop playback within [trimStartMs, trimEndMs].
-                // When we run off the out-point, pause and seek back to the in-point.
-                // Require a positive range so a degenerate trim (start == end)
-                // can't pause playback the instant it begins.
-                if self.isPlaying,
-                   self.trimEndMs > self.trimStartMs,
-                   self.currentTimeMs >= self.trimEndMs {
-                    self.pause()
-                    self.seek(toMilliseconds: self.trimStartMs)
+                if !self.seekInFlight {
+                    self.currentTimeMs = self.sourceTimeForPlayback(time.seconds * 1000)
                 }
-                // Deferred webcam start: play() leaves the webcam paused
-                // while the playhead is inside the camera warm-up gap (no
-                // webcam content exists there); roll it, aligned, once
-                // playback crosses the offset.
-                if self.isPlaying, self.webcamOffsetMs > 0,
-                   let webcam = self.webcamPlayer, webcam.rate == 0,
-                   self.currentTimeMs >= self.webcamOffsetMs {
-                    webcam.seek(
-                        to: CMTime(seconds: (self.currentTimeMs - self.webcamOffsetMs) / 1000, preferredTimescale: 600),
-                        toleranceBefore: .zero, toleranceAfter: .zero
-                    )
-                    webcam.play()
-                }
+                self.synchronizeEditedPlayback()
+
             }
         }
     }
@@ -376,12 +633,24 @@ final class EditorViewModel {
             await MainActor.run {
                 let ms = cmDuration.seconds * 1000
                 self.durationMs = ms
+                self.mediaTask = Task { [weak self] in
+                    guard let url = self?.videoURL else { return }
+                    let media = await TimelineMedia.load(url: url, durationMs: ms)
+                    guard !Task.isCancelled else { return }
+                    self?.timelineThumbnails = media.thumbnails.map { NSImage(cgImage: $0, size: .zero) }
+                    self?.timelineWaveform = media.waveform
+                }
+                self.suppressAutosave = true
+                self.metadata?.video.duration = ms
+                if self.trimEndMs > ms { self.trimEndMs = ms }
+                self.suppressAutosave = false
                 if self.trimEndMs == 0 {
                     // Derived default, not a user edit — don't autosave it.
                     self.suppressAutosave = true
                     self.trimEndMs = ms
                     self.suppressAutosave = false
                 }
+                if self.metadata?.editSegments != nil || self.metadata?.trim != nil { self.rebuildEditedPlayback() }
             }
         } catch {
             await MainActor.run {
@@ -393,20 +662,14 @@ final class EditorViewModel {
     // MARK: - Playback controls
 
     func play() {
-        // Always start playback inside the trimmed region. If the playhead is
-        // before the in-point or at/past the out-point, snap to trimStartMs.
-        if currentTimeMs < trimStartMs || currentTimeMs >= trimEndMs {
-            seek(toMilliseconds: trimStartMs)
+        guard !isPreparingPlayback, let first = retainedSegments.first else { return }
+        if !retainedSegments.contains(where: { currentTimeMs >= $0.startMs && currentTimeMs < $0.endMs }) {
+            seek(toMilliseconds: first.startMs)
         }
-        player.play()
-        if currentTimeMs >= webcamOffsetMs {
-            // seek() keeps the webcam aligned at screenT − offset; just roll.
-            webcamPlayer?.play()
-        }
-        // else: the playhead is inside the camera warm-up gap — no webcam
-        // content exists there yet. The periodic observer starts the webcam
-        // once playback crosses the offset.
         isPlaying = true
+        player.rate = playbackTimeline == nil ? Float(retainedSegments.first(where: { currentTimeMs >= $0.startMs && currentTimeMs < $0.endMs })?.speed ?? 1) : 1
+        if currentTimeMs >= webcamOffsetMs { webcamPlayer?.rate = Float(retainedSegments.first(where: { currentTimeMs >= $0.startMs && currentTimeMs < $0.endMs })?.speed ?? 1) }
+        synchronizeEditedPlayback()
     }
 
     func pause() {
@@ -424,66 +687,54 @@ final class EditorViewModel {
     func stepFrame(_ direction: Int) {
         pause()
         let fps = max(1.0, metadata?.video.frameRate ?? 60)
-        seek(toMilliseconds: currentTimeMs + Double(direction) * (1000.0 / fps))
+        let outputTime = editTimeline.outputTime(atSourceMs: currentTimeMs) ?? 0
+        let next = max(0, min(editedDurationMs, outputTime + Double(direction) * (1000.0 / fps)))
+        if let source = editTimeline.sourceTime(atOutputMs: next) { seek(toMilliseconds: source) }
     }
 
     func seek(toMilliseconds ms: Double) {
-        let clamped = max(0, min(ms, durationMs))
+        let bounded = max(0, min(ms, durationMs))
+        let clamped = playbackTimeline.map { nearestRetainedSourceTime(bounded, timeline: $0) } ?? bounded
         currentTimeMs = clamped
-        let time = CMTime(seconds: clamped / 1000, preferredTimescale: 600)
-        player.seek(to: time, toleranceBefore: .zero, toleranceAfter: .zero)
-        // Map into webcam time (screenT − warm-up offset) so the overlay
-        // shows the frame that was actually captured at this moment.
-        let webcamSeconds = max(0, clamped - webcamOffsetMs) / 1000
-        webcamPlayer?.seek(
-            to: CMTime(seconds: webcamSeconds, preferredTimescale: 600),
-            toleranceBefore: .zero, toleranceAfter: .zero
-        )
-        // No cursor-smoother history to reset on seek anymore: the sprite glide
-        // is a stateless lookup into the precomputed track, so any timestamp —
-        // including one jumped to — resolves to the same deterministic value.
+        if seekInFlight {
+            pendingSeekMs = clamped
+            return
+        }
+        performSeek(to: clamped)
     }
 
-    // MARK: - Per-frame state (all delegated to RenderSnapshot)
-    //
-    // RenderSnapshot is the single source of truth for per-frame computation,
-    // shared by the live preview AND the export pipeline. The viewmodel adds
-    // only the live-preview spring smoothing — everything else flows through
-    // the snapshot.
-
-    /// Playback time sampled *fresh on every rendered frame*.
-    ///
-    /// The periodic time observer only refreshes `currentTimeMs` at 30 Hz (it
-    /// drives the timeline playhead UI), but the Metal preview renders at
-    /// 60 fps. Sampling the camera / cursor / clicks from the 30 Hz value made
-    /// the zoom and pan visibly stair-step — half the frames saw no time
-    /// advance at all. During playback we instead read the player's own clock
-    /// so the camera advances every rendered frame; when paused or scrubbing
-    /// we fall back to `currentTimeMs`, the authoritative seek target.
-    var renderTimeMs: Double {
-        guard isPlaying else { return currentTimeMs }
-        let secs = player.currentTime().seconds
-        return secs.isFinite ? secs * 1000 : currentTimeMs
+    private func performSeek(to ms: Double) {
+        seekInFlight = true
+        let itemMs = playbackTimeline?.outputTime(atSourceMs: ms) ?? ms
+        let seekGeneration = playbackGeneration
+        player.seek(to: CMTime(seconds: itemMs / 1000, preferredTimescale: 60_000),
+                    toleranceBefore: .zero, toleranceAfter: .zero) { [weak self] _ in
+            Task { @MainActor [weak self] in
+                guard let self, self.playbackGeneration == seekGeneration else { return }
+                self.renderRevision &+= 1
+                if let pending = self.pendingSeekMs {
+                    self.pendingSeekMs = nil
+                    self.performSeek(to: pending)
+                } else {
+                    self.seekInFlight = false
+                    self.synchronizeEditedPlayback()
+                    let webcamSeconds = max(0, ms - self.webcamOffsetMs) / 1000
+                    self.webcamPlayer?.seek(to: CMTime(seconds: webcamSeconds, preferredTimescale: 600),
+                                            toleranceBefore: .zero, toleranceAfter: .zero)
+                }
+            }
+        }
     }
 
-    /// Live-preview cursor state — pure delegation to the snapshot, which now
-    /// bakes the smoothed glide into a precomputed track. The export samples
-    /// the exact same method, so preview and export are guaranteed identical.
-    func cursorState(atMilliseconds ms: Double? = nil) -> CursorRenderState? {
-        guard let snapshot = makeRenderSnapshot() else { return nil }
-        return snapshot.cursorStateForExport(atMilliseconds: ms ?? renderTimeMs)
-    }
+    // MARK: - Per-frame state
 
-    /// Click ring states at the playhead — pure delegation.
-    func clickRingStates(atMilliseconds ms: Double? = nil) -> [ClickRingState] {
-        guard let snapshot = makeRenderSnapshot() else { return [] }
-        return snapshot.clickRingStates(atMilliseconds: ms ?? renderTimeMs)
-    }
-
-    /// Zoom transform at the playhead — pure delegation.
-    func zoomState(atMilliseconds ms: Double? = nil) -> ZoomState {
-        guard let snapshot = makeRenderSnapshot() else { return .identity }
-        return snapshot.zoomState(atMilliseconds: ms ?? renderTimeMs)
+    /// Sample one snapshot and timestamp for all overlays in a preview draw.
+    func compositionState(atMilliseconds ms: Double) -> CompositionState {
+        let snapshot = makePreviewSnapshot()
+        return CompositionState(cursor: snapshot?.cursorStateForExport(atMilliseconds: ms),
+                                clicks: snapshot?.clickRingStates(atMilliseconds: ms) ?? [],
+                                zoom: snapshot?.zoomState(atMilliseconds: ms) ?? .identity,
+                                canvas: canvasStyle, output: outputSettings, webcamLayout: webcamLayout)
     }
 
     private func activeZoomSections(metadata: RecordingMetadata) -> [ZoomSection] {
@@ -497,7 +748,8 @@ final class EditorViewModel {
         let generated = Self.generateZoomSections(
             from: metadata.clicks,
             videoDuration: metadata.video.duration,
-            scale: level
+            scale: level,
+            transitionMs: metadata.zoom.config.transitionSpeed
         )
         cachedZoomSections = generated
         return generated
@@ -510,15 +762,17 @@ final class EditorViewModel {
     static func generateZoomSections(
         from clicks: [ClickEvent],
         videoDuration: Double,
-        scale: Double
+        scale: Double,
+        transitionMs: Double = 700
     ) -> [ZoomSection] {
-        let downClicks = clicks.filter { $0.action == .down }
+        let downClicks = clicks.filter { $0.action == .down && $0.timestamp.isFinite }.sorted { $0.timestamp < $1.timestamp }
         guard !downClicks.isEmpty else { return [] }
 
         var sections: [ZoomSection] = []
-        let clusterGapMs = 2_000.0
-        let preroll = 300.0
-        let postroll = 1_200.0
+        let clusterGapMs = max(2_000.0, transitionMs * 2 + 1_200)
+        let ramp = max(120, min(1200, transitionMs))
+        let preroll = ramp
+        let postroll = ramp + 1_200.0
 
         var clusterStart = downClicks[0]
         var clusterEnd = downClicks[0]
@@ -583,6 +837,9 @@ final class EditorViewModel {
     /// existing section selects it instead — the old behaviour inserted an
     /// invisible overlapping duplicate that appeared to do nothing.
     func addZoomSection() {
+        let ownsTransaction = !history.isEditing
+        if ownsTransaction { beginEditing() }
+        defer { if ownsTransaction { endEditing() } }
         materializeIfAuto()
         guard var metadata = metadata else { return }
         let now = currentTimeMs
@@ -618,11 +875,15 @@ final class EditorViewModel {
     /// Replaces the manually-edited sections with auto-detected ones from
     /// the click events ("Suggest" in the Electron studio).
     func suggestZoomSections() {
+        let ownsTransaction = !history.isEditing
+        if ownsTransaction { beginEditing() }
+        defer { if ownsTransaction { endEditing() } }
         guard var metadata = metadata else { return }
         let generated = Self.generateZoomSections(
             from: metadata.clicks,
             videoDuration: metadata.video.duration,
-            scale: metadata.zoom.config.level
+            scale: metadata.zoom.config.level,
+            transitionMs: metadata.zoom.config.transitionSpeed
         )
         metadata.zoom.sections = generated
         self.metadata = metadata
@@ -630,6 +891,9 @@ final class EditorViewModel {
     }
 
     func removeZoomSection(at index: Int) {
+        let ownsTransaction = !history.isEditing
+        if ownsTransaction { beginEditing() }
+        defer { if ownsTransaction { endEditing() } }
         materializeIfAuto()
         guard var metadata = metadata, metadata.zoom.sections.indices.contains(index) else { return }
         metadata.zoom.sections.remove(at: index)
@@ -640,6 +904,9 @@ final class EditorViewModel {
 
     func updateZoomSection(at index: Int, startTime: Double? = nil, endTime: Double? = nil,
                            scale: Double? = nil) {
+        let ownsTransaction = !history.isEditing
+        if ownsTransaction { beginEditing() }
+        defer { if ownsTransaction { endEditing() } }
         materializeIfAuto()
         guard var metadata = metadata, metadata.zoom.sections.indices.contains(index) else { return }
         var section = metadata.zoom.sections[index]
@@ -679,6 +946,68 @@ final class EditorViewModel {
         self.metadata = metadata
     }
 
+    func updateZoomTarget(at index: Int, mode: ZoomTargetMode? = nil, x: Double? = nil, y: Double? = nil) {
+        performEdit {
+            materializeIfAuto()
+            guard var value = metadata, value.zoom.sections.indices.contains(index) else { return }
+            var section = value.zoom.sections[index]
+            if let mode {
+                if mode == .fixed, section.targetMode != .fixed { section.centerX = 0.5; section.centerY = 0.5 }
+                section.targetMode = mode
+            }
+            if let x { section.centerX = max(0, min(1, x)) }
+            if let y { section.centerY = max(0, min(1, y)) }
+            value.zoom.sections[index] = section
+            metadata = value
+        }
+    }
+
+    private func sameMotion(_ first: RecordingMetadata, _ second: RecordingMetadata, _ firstSections: [ZoomSection], _ secondSections: [ZoomSection]) -> Bool {
+        first.cursor.keyframes == second.cursor.keyframes && first.clicks == second.clicks
+            && first.video == second.video && first.zoom.config == second.zoom.config
+            && firstSections == secondSections
+    }
+
+    /// Expensive trajectory work runs away from the UI. Debouncing avoids
+    /// repeatedly integrating a long recording while a zoom edge is dragged.
+    private func prepareMotionSnapshot() {
+        guard let metadata, let previous = motionSnapshot else { return }
+        let sections = activeZoomSections(metadata: metadata)
+        if sameMotion(previous.metadata, metadata, previous.zoomSections, sections) {
+            motionTask?.cancel()
+            motionTask = nil
+            pendingMotionMetadata = nil
+            return
+        }
+        if let pendingMotionMetadata, let pendingMotionSections,
+           sameMotion(pendingMotionMetadata, metadata, pendingMotionSections, sections) { return }
+        motionTask?.cancel()
+        motionGeneration &+= 1
+        let generation = motionGeneration
+        pendingMotionMetadata = metadata
+        pendingMotionSections = sections
+        motionTask = Task { [weak self] in
+            try? await Task.sleep(for: .milliseconds(40))
+            guard !Task.isCancelled else { return }
+            let worker = Task.detached(priority: .userInitiated) {
+                RenderSnapshot(metadata: metadata, zoomSections: sections)
+            }
+            let computed = await worker.value
+            guard !Task.isCancelled, let self, self.motionGeneration == generation,
+                  let current = self.metadata else { return }
+            self.motionSnapshot = computed
+            self.cachedSnapshot = RenderSnapshot(metadata: current, zoomSections: sections,
+                                                 panSamples: computed.panSamples, cursorSamples: computed.cursorSamples)
+            self.motionTask = nil
+            self.pendingMotionMetadata = nil
+            self.renderRevision &+= 1
+        }
+    }
+    private func makePreviewSnapshot() -> RenderSnapshot? {
+        if motionTask != nil, let motionSnapshot { return motionSnapshot }
+        return makeRenderSnapshot()
+    }
+
     /// Returns the Sendable snapshot of everything per-frame state needs —
     /// cached until the next metadata mutation. The preview's providers call
     /// this every draw; the export captures it once on the main actor before
@@ -688,7 +1017,18 @@ final class EditorViewModel {
         if let cachedSnapshot { return cachedSnapshot }
         guard let metadata = metadata else { return nil }
         let sections = activeZoomSections(metadata: metadata)
-        let snapshot = RenderSnapshot(metadata: metadata, zoomSections: sections)
+        let snapshot: RenderSnapshot
+        if let previous = motionSnapshot,
+           sameMotion(previous.metadata, metadata, previous.zoomSections, sections) {
+            snapshot = RenderSnapshot(metadata: metadata, zoomSections: sections,
+                                      panSamples: previous.panSamples, cursorSamples: previous.cursorSamples)
+        } else {
+            motionTask?.cancel()
+            motionTask = nil
+            pendingMotionMetadata = nil
+            snapshot = RenderSnapshot(metadata: metadata, zoomSections: sections)
+            motionSnapshot = snapshot
+        }
         cachedSnapshot = snapshot
         return snapshot
     }

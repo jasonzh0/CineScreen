@@ -1,6 +1,7 @@
 import Foundation
 import AppKit
 import CoreGraphics
+import CoreMedia
 
 /// One captured mouse event, in the recording's pixel-coordinate space.
 struct MouseSample {
@@ -10,7 +11,7 @@ struct MouseSample {
         case up(MouseButton)
     }
 
-    /// Milliseconds from recording start.
+    /// Milliseconds from mouse-tracking start; rebased against video PTS at save.
     var timestamp: Double
     /// Pixel-space X within the recorded image.
     var x: Double
@@ -18,6 +19,8 @@ struct MouseSample {
     var y: Double
     var kind: Kind
     var cursorShape: CursorShape
+    /// Monotonic host time captured before any actor/queue hop. Nil for legacy samples.
+    var hostTimeSeconds: Double? = nil
 }
 
 enum MouseTrackingError: LocalizedError {
@@ -47,7 +50,7 @@ final class MouseTrackingService {
     private var scaleX: CGFloat = 2.0
     private var scaleY: CGFloat = 2.0
 
-    private var startTime: CFAbsoluteTime = 0
+    private var startHostTimeSeconds: Double = 0
     private var tap: CFMachPort?
     private var runLoopSource: CFRunLoopSource?
 
@@ -77,7 +80,7 @@ final class MouseTrackingService {
             ? pixelSize.height / contentRectPoints.height
             : scaleX
         self.samples = []
-        self.startTime = CFAbsoluteTimeGetCurrent()
+        self.startHostTimeSeconds = CMClockGetTime(CMClockGetHostTimeClock()).seconds
         // Build the cursor lookup AFTER NSApp is fully up — see comment on
         // the `cursorIdentifier` property.
         self.cursorIdentifier = CursorIdentifier()
@@ -127,7 +130,8 @@ final class MouseTrackingService {
         let cocoa = NSEvent.mouseLocation
         let primaryHeight = NSScreen.screens.first(where: { $0.frame.origin == .zero })?.frame.height
             ?? NSScreen.screens.first?.frame.height ?? 0
-        record(topLeftGlobalPoint: CGPoint(x: cocoa.x, y: primaryHeight - cocoa.y), kind: .move)
+        record(topLeftGlobalPoint: CGPoint(x: cocoa.x, y: primaryHeight - cocoa.y), kind: .move,
+               hostTimeSeconds: CMClockGetTime(CMClockGetHostTimeClock()).seconds)
 
         Log.mouse.info("Mouse tracking started")
     }
@@ -153,6 +157,11 @@ final class MouseTrackingService {
         // CGEventTap callback fires on the main run loop in this tap mode,
         // but we route through the main actor anyway for state safety.
         let location = event.location
+        // CGEvent stamps the event in nanoseconds on the same monotonic host
+        // clock as capture PTS. Read it now, before the main actor can delay us.
+        let hostTimeSeconds = event.timestamp > 0
+            ? Double(event.timestamp) / 1_000_000_000
+            : CMClockGetTime(CMClockGetHostTimeClock()).seconds
         // CGEvent.location uses global screen coordinates with origin at TOP-left.
         // NSEvent.mouseLocation uses bottom-left. We'll standardize on top-left
         // here since CGEvent gives it to us directly.
@@ -172,13 +181,14 @@ final class MouseTrackingService {
         // flip-to-Cocoa-and-back round trip (via the key window's screen
         // height) has been dropped.
         DispatchQueue.main.async { [self] in
-            self.record(topLeftGlobalPoint: location, kind: kind)
+            self.record(topLeftGlobalPoint: location, kind: kind, hostTimeSeconds: hostTimeSeconds)
         }
     }
 
-    private func record(topLeftGlobalPoint point: CGPoint, kind: MouseSample.Kind) {
-        let now = CFAbsoluteTimeGetCurrent()
-        let elapsedMs = (now - startTime) * 1000.0
+    private func record(topLeftGlobalPoint point: CGPoint, kind: MouseSample.Kind, hostTimeSeconds: Double) {
+        // A queued event from a stopped recording must not leak into the next.
+        guard isTracking, hostTimeSeconds >= startHostTimeSeconds else { return }
+        let elapsedMs = (hostTimeSeconds - startHostTimeSeconds) * 1000.0
 
         // Map global points → recorded-file pixels: subtract the content
         // origin, then scale points→pixels per axis. Events outside the
@@ -196,7 +206,8 @@ final class MouseTrackingService {
             x: Double(clampedX),
             y: Double(clampedY),
             kind: kind,
-            cursorShape: shape
+            cursorShape: shape,
+            hostTimeSeconds: hostTimeSeconds
         ))
     }
 }

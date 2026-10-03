@@ -24,10 +24,13 @@ struct SmoothPosition2D {
         let xCoef = omega * deltaTime
         let exp = 1.0 / (1.0 + xCoef + Self.coef1 * xCoef * xCoef + Self.coef2 * xCoef * xCoef * xCoef)
 
+        let previous = current
         let change = current - target
         let temp = (velocity + omega * change) * deltaTime
         velocity = (velocity - omega * temp) * exp
         current = target + (change + temp) * exp
+        if (target.x - previous.x) * (current.x - target.x) > 0 { current.x = target.x; velocity.x = 0 }
+        if (target.y - previous.y) * (current.y - target.y) > 0 { current.y = target.y; velocity.y = 0 }
 
         return current
     }

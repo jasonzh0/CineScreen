@@ -1,4 +1,5 @@
 import XCTest
+import simd
 @testable import CineScreen
 
 final class RenderSnapshotTests: XCTestCase {
@@ -12,15 +13,15 @@ final class RenderSnapshotTests: XCTestCase {
         XCTAssertEqual(RenderSnapshot.proximityFactor(to: [], at: 0, window: 140), 1)
     }
 
-    /// The smoothing collapse keys off mouse-DOWNs only — an up (e.g. a drag
-    /// release, often far from any ring) must not snap the sprite.
-    func testMouseUpsDoNotCollapseSmoothing() {
+    /// Clicks constrain the path without changing spring stiffness. Mouse-up
+    /// release has no additional position constraint.
+    func testClickDoesNotCollapseSpringStiffness() {
         let metadata = Fixtures.metadata(
             keyframes: [Fixtures.keyframe(0, 100, 100), Fixtures.keyframe(5000, 100, 100)],
             clicks: [Fixtures.click(1000, action: .down), Fixtures.click(1600, action: .up)]
         )
         let snapshot = RenderSnapshot(metadata: metadata, zoomSections: [])
-        XCTAssertEqual(snapshot.adaptiveCursorSmoothTime(atMilliseconds: 1000), 0, accuracy: 1e-9)
+        XCTAssertEqual(snapshot.adaptiveCursorSmoothTime(atMilliseconds: 1000), CursorAnimationStyle.mellow.smoothTime, accuracy: 1e-9)
         XCTAssertEqual(
             snapshot.adaptiveCursorSmoothTime(atMilliseconds: 1600),
             CursorAnimationStyle.mellow.smoothTime,
@@ -140,7 +141,7 @@ final class RenderSnapshotTests: XCTestCase {
     /// The smoothing collapses inside the click window, so at a mouse-down the
     /// sprite sits (essentially) on the true click point — where lag is most
     /// visible. Away from clicks the sprite trails the fast-moving pointer.
-    func testCursorTrackCollapsesAtClick() {
+    func testCursorTrackLandsAtClick() {
         // Cursor sweeps 0→3000px over 3s; a click lands at t=1500 (x≈1500).
         let metadata = Fixtures.metadata(
             keyframes: stride(from: 0.0, through: 3000, by: 20).map {
@@ -169,13 +170,156 @@ final class RenderSnapshotTests: XCTestCase {
 
     func testRawCursorPositionInterpolatesAndClamps() {
         let metadata = Fixtures.metadata(
-            keyframes: [Fixtures.keyframe(0, 0, 0), Fixtures.keyframe(1000, 100, 200)]
+            keyframes: [Fixtures.keyframe(0, 0, 0), Fixtures.keyframe(100, 100, 200)]
         )
-        let mid = RenderSnapshot.rawCursorPosition(atMilliseconds: 500, metadata: metadata)
+        let mid = RenderSnapshot.rawCursorPosition(atMilliseconds: 50, metadata: metadata)
         XCTAssertEqual(Double(mid?.x ?? -1), 50, accuracy: 0.001)
         XCTAssertEqual(Double(mid?.y ?? -1), 100, accuracy: 0.001)
         let past = RenderSnapshot.rawCursorPosition(atMilliseconds: 5000, metadata: metadata)
         XCTAssertEqual(Double(past?.x ?? -1), 100, accuracy: 0.001)
         XCTAssertNil(RenderSnapshot.rawCursorPosition(atMilliseconds: 0, metadata: Fixtures.metadata()))
     }
+
+    func testEventGapHoldsUntilMovementResumes() {
+        let metadata = Fixtures.metadata(keyframes: [
+            Fixtures.keyframe(0, 100, 500), Fixtures.keyframe(2000, 100, 500),
+            Fixtures.keyframe(5000, 110, 500), Fixtures.keyframe(5100, 900, 500)
+        ])
+        let snapshot = RenderSnapshot(metadata: metadata, zoomSections: [])
+        for t in [2500.0, 3500, 4900] {
+            XCTAssertEqual(RenderSnapshot.rawCursorPosition(atMilliseconds: t, metadata: metadata)!.x, 100, accuracy: 0.01)
+            XCTAssertEqual(snapshot.cursorStateForExport(atMilliseconds: t)!.positionInVideoPixels.x, 100, accuracy: 0.01)
+        }
+    }
+
+    func testDuplicateEndpointDoesNotResetIdleVisibility() {
+        var metadata = Fixtures.metadata(duration: 5000, keyframes: [
+            Fixtures.keyframe(0, 100, 500), Fixtures.keyframe(1000, 100, 500),
+            Fixtures.keyframe(1100, 1000, 500), Fixtures.keyframe(5000, 1000, 500)
+        ])
+        metadata.cursor.config.hideWhenStatic = true
+        let snapshot = RenderSnapshot(metadata: metadata, zoomSections: [])
+        XCTAssertEqual(snapshot.cursorStateForExport(atMilliseconds: 4999)!.opacity, 0)
+        XCTAssertEqual(snapshot.cursorStateForExport(atMilliseconds: 5000)!.opacity, 0)
+    }
+
+    func testIdleCursorReappearsGraduallyOnMovement() {
+        var metadata = Fixtures.metadata(keyframes: [
+            Fixtures.keyframe(0, 100, 500), Fixtures.keyframe(3000, 200, 500)
+        ])
+        metadata.cursor.config.hideWhenStatic = true
+        let snapshot = RenderSnapshot(metadata: metadata, zoomSections: [])
+        XCTAssertEqual(snapshot.cursorStateForExport(atMilliseconds: 3000)!.opacity, 0)
+        XCTAssertEqual(snapshot.cursorStateForExport(atMilliseconds: 3060)!.opacity, 0.5, accuracy: 0.001)
+        XCTAssertEqual(snapshot.cursorStateForExport(atMilliseconds: 3120)!.opacity, 1)
+    }
+
+    func testClickLandingDoesNotDischargeLagAsSpeedBurst() {
+        for style in ZoomConfig.AnimationStyle.allMotionStyles {
+            var metadata = Fixtures.metadata(
+                keyframes: stride(from: 0.0, through: 3000, by: 20).map { Fixtures.keyframe($0, $0, 500) },
+                clicks: [Fixtures.click(1503, x: 1503, y: 500)]
+            )
+            metadata.zoom.config.animationStyle = style
+            let snapshot = RenderSnapshot(metadata: metadata, zoomSections: [])
+            XCTAssertEqual(snapshot.cursorStateForExport(atMilliseconds: 1503)!.positionInVideoPixels.x, 1503, accuracy: 0.01)
+            var peak = 0.0
+            for t in stride(from: 900.0, through: 2100, by: 1000.0 / 60) {
+                let current = snapshot.cursorStateForExport(atMilliseconds: t)!.positionInVideoPixels
+                let previous = snapshot.cursorStateForExport(atMilliseconds: t - 1000.0 / 60)!.positionInVideoPixels
+                peak = max(peak, Double(simd_length(current - previous)) * 60)
+            }
+            XCTAssertLessThanOrEqual(peak, 1500, "Unexpected click speed burst for \(style)")
+        }
+    }
+
+    func testMoveStopClickDoesNotOvershootTarget() {
+        let metadata = Fixtures.metadata(
+            keyframes: stride(from: 0.0, through: 3000, by: 20).map { Fixtures.keyframe($0, min(1300, $0), 500) },
+            clicks: [Fixtures.click(1300, x: 1300, y: 500)]
+        )
+        let snapshot = RenderSnapshot(metadata: metadata, zoomSections: [])
+        for t in stride(from: 1200.0, through: 2200, by: 1000.0 / 60) {
+            XCTAssertLessThanOrEqual(snapshot.cursorStateForExport(atMilliseconds: t)!.positionInVideoPixels.x, 1300.01)
+        }
+    }
+
+    func testCloselySpacedAndEndpointClicksLandExactly() {
+        let times = [500.0, 620, 3000]
+        let metadata = Fixtures.metadata(
+            keyframes: stride(from: 0.0, through: 3000, by: 20).map { Fixtures.keyframe($0, $0, 500) },
+            clicks: times.map { Fixtures.click($0, x: $0, y: 500) }
+        )
+        let snapshot = RenderSnapshot(metadata: metadata, zoomSections: [])
+        for t in times {
+            XCTAssertEqual(snapshot.smoothedCursorPosition(atMilliseconds: t)!.x, Float(t), accuracy: 0.01)
+        }
+    }
+
+    func testZoomControlsAffectTheirIntendedMotion() {
+        let metadata = Fixtures.metadata(
+            keyframes: stride(from: 0.0, through: 5000, by: 20).map { Fixtures.keyframe($0, 200 + $0 / 3, 500) },
+            sections: [Fixtures.section(0, 5000)]
+        )
+        let original = RenderSnapshot(metadata: metadata, zoomSections: metadata.zoom.sections)
+        var changed = metadata
+        changed.zoom.config.transitionSpeed = 1000
+        let slowerRamp = RenderSnapshot(metadata: changed, zoomSections: changed.zoom.sections)
+        XCTAssertLessThan(slowerRamp.zoomState(atMilliseconds: 300).scale, original.zoomState(atMilliseconds: 300).scale)
+        changed = metadata
+        changed.zoom.config.followSpeed = 0.2
+        XCTAssertNotEqual(original.panSamples, RenderSnapshot(metadata: changed, zoomSections: changed.zoom.sections).panSamples)
+        changed = metadata
+        changed.zoom.config.deadZone = 100
+        XCTAssertNotEqual(original.panSamples, RenderSnapshot(metadata: changed, zoomSections: changed.zoom.sections).panSamples)
+    }
+
+    func testFixedZoomUsesExplicitTargetAndIgnoresCursorMotion() {
+        var section = Fixtures.section(0, 5000)
+        section.targetMode = .fixed
+        section.centerX = 0.65
+        section.centerY = 0.35
+        let metadata = Fixtures.metadata(
+            keyframes: stride(from: 0.0, through: 5000, by: 20).map { Fixtures.keyframe($0, 200 + $0 / 3, 500) },
+            sections: [section]
+        )
+        let snapshot = RenderSnapshot(metadata: metadata, zoomSections: [section])
+        for t in [500.0, 2000, 4000] {
+            XCTAssertEqual(snapshot.zoomState(atMilliseconds: t).centerUV.x, 0.65, accuracy: 0.001)
+            XCTAssertEqual(snapshot.zoomState(atMilliseconds: t).centerUV.y, 0.35, accuracy: 0.001)
+        }
+        XCTAssertEqual(snapshot.panSamples.count, 2)
+    }
+
+    func testFastCameraDragHasBoundedContinuousSteps() {
+        let metadata = Fixtures.metadata(
+            keyframes: stride(from: 0.0, through: 3000, by: 20).map { t in
+                let x = t < 1000 ? 300 : t < 1300 ? 300 + (t - 1000) * 5 : 1800
+                return Fixtures.keyframe(t, x, 500)
+            }, sections: [Fixtures.section(0, 3000, scale: 3)]
+        )
+        let snapshot = RenderSnapshot(metadata: metadata, zoomSections: metadata.zoom.sections)
+        for (previous, current) in zip(snapshot.panSamples, snapshot.panSamples.dropFirst()) {
+            XCTAssertLessThan(simd_length(current.camera - previous.camera), 0.03)
+            XCTAssertGreaterThanOrEqual(current.camera.x, 1.0 / 6 - 0.001)
+            XCTAssertLessThanOrEqual(current.camera.x, 5.0 / 6 + 0.001)
+            XCTAssertTrue(current.camera.x.isFinite && current.camera.y.isFinite)
+        }
+    }
+
+    func testShortZoomHasReadableHoldAndPanGapsAreNeutral() {
+        let metadata = Fixtures.metadata(
+            keyframes: [Fixtures.keyframe(0, 1000, 500), Fixtures.keyframe(5000, 1000, 500)],
+            sections: [Fixtures.section(700, 2200), Fixtures.section(3000, 4000)]
+        )
+        let snapshot = RenderSnapshot(metadata: metadata, zoomSections: metadata.zoom.sections)
+        XCTAssertEqual(snapshot.zoomState(atMilliseconds: 1000).scale, 2, accuracy: 0.001)
+        XCTAssertEqual(snapshot.zoomState(atMilliseconds: 1800).scale, 2, accuracy: 0.001)
+        XCTAssertNil(snapshot.panCenter(atMilliseconds: 2500))
+    }
+
+}
+
+private extension ZoomConfig.AnimationStyle {
+    static let allMotionStyles: [Self] = [.slow, .mellow, .quick, .rapid]
 }

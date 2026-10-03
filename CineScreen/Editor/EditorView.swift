@@ -39,6 +39,14 @@ struct EditorView: View {
                 .keyboardShortcut(.leftArrow, modifiers: .shift)
             Button("") { vm.seek(toMilliseconds: vm.currentTimeMs + 1000) }
                 .keyboardShortcut(.rightArrow, modifiers: .shift)
+            Button("") { vm.undo() }
+                .keyboardShortcut("z", modifiers: .command)
+                .disabled(!vm.canUndo)
+            Button("") { vm.redo() }
+                .keyboardShortcut("z", modifiers: [.command, .shift])
+                .disabled(!vm.canRedo)
+            Button("") { vm.splitAtPlayhead() }
+                .keyboardShortcut("b", modifiers: .command)
             Button("") { vm.saveNow() }
                 .keyboardShortcut("s", modifiers: .command)
             Button("") {
@@ -54,10 +62,10 @@ struct EditorView: View {
             }
             .keyboardShortcut("o", modifiers: [])
             Button("") {
-                if let index = vm.selectedZoomIndex { vm.removeZoomSection(at: index) }
+                vm.deleteSelection()
             }
             .keyboardShortcut(.delete, modifiers: [])
-            Button("") { vm.selectedZoomIndex = nil }
+            Button("") { vm.selectedZoomIndex = nil; vm.selectedSegmentID = nil }
                 .keyboardShortcut(.escape, modifiers: [])
         }
         .opacity(0)
@@ -80,11 +88,12 @@ struct EditorView: View {
                 MetalPreviewView(
                     player: vm.player,
                     webcamPlayer: vm.webcamPlayer,
-                    cursorStateProvider: { [weak vm] in vm?.cursorState() },
-                    clickStatesProvider: { [weak vm] in vm?.clickRingStates() ?? [] },
-                    zoomStateProvider: { [weak vm] in vm?.zoomState() ?? .identity },
-                    canvasStyleProvider: { [weak vm] in vm?.canvasStyle ?? .none },
-                    webcamLayoutProvider: { [weak vm] in vm?.webcamLayout ?? .default }
+                    isPlaying: vm.isPlaying,
+                    renderRevision: vm.renderRevision,
+                    requestedTimeMs: vm.playbackTimeMs,
+                    webcamOffsetMs: vm.metadata?.webcamOffsetMs ?? 0,
+                    sourceTimeForPlayback: { [weak vm] in vm?.sourceTimeForPlayback($0) ?? $0 },
+                    stateAtTime: { [weak vm] in vm?.compositionState(atMilliseconds: $0) ?? CompositionState() }
                 )
 
                 WebcamHandleOverlay(vm: vm)
@@ -112,21 +121,46 @@ struct EditorView: View {
 
     private var topBar: some View {
         HStack(spacing: 14) {
-            // Window controls live in the native title bar; this row is a thin
-            // toolbar below it for editor-specific actions.
-            Text(vm.videoURL.deletingPathExtension().lastPathComponent)
-                .font(.system(size: 13, weight: .medium))
-                .foregroundStyle(CTheme.textSecondary)
-
+            VStack(alignment: .leading, spacing: 2) {
+                Text(vm.projectTitle)
+                    .font(.system(size: 13, weight: .medium))
+                    .foregroundStyle(CTheme.textPrimary)
+                if let error = vm.lastSaveError {
+                    Text("Save failed: \(error)").foregroundStyle(CTheme.danger)
+                        .font(.caption2).lineLimit(1).help(error)
+                } else {
+                    Text(vm.hasUnsavedChanges ? "Saving changes…" : "All changes saved")
+                        .font(.caption2).foregroundStyle(CTheme.textTertiary)
+                }
+            }
             Spacer()
+            toolbarButton("Undo", icon: "arrow.uturn.backward", action: vm.undo).disabled(!vm.canUndo)
+            toolbarButton("Redo", icon: "arrow.uturn.forward", action: vm.redo).disabled(!vm.canRedo)
+            Divider().frame(height: 20)
+            toolbarButton("Split", icon: "scissors", action: vm.splitAtPlayhead)
+                .help("Split at playhead (⌘B)").disabled(vm.retainedSegments.isEmpty)
+            toolbarButton("Zoom", icon: "plus.magnifyingglass", action: vm.addZoomSection)
+            Picker("Aspect ratio", selection: Binding(
+                get: { vm.outputSettings.aspectRatio },
+                set: { vm.outputSettings.aspectRatio = $0 }
+            )) {
+                ForEach(OutputAspectRatio.allCases) { ratio in Text(ratio.label).tag(ratio) }
+            }
+            .labelsHidden().frame(width: 105).controlSize(.small)
+
         }
+    }
+
+    private func toolbarButton(_ title: String, icon: String, action: @escaping () -> Void) -> some View {
+        Button(action: action) { Label(title, systemImage: icon).font(.caption) }
+            .buttonStyle(.bordered).controlSize(.small)
     }
 
     // MARK: - Transport
 
     private var transport: some View {
         HStack(spacing: 14) {
-            Text(format(vm.currentTimeMs))
+            Text(format(vm.editedTimeMs))
                 .font(.system(.callout, design: .monospaced))
                 .foregroundStyle(CTheme.textPrimary)
                 .frame(width: 78, alignment: .leading)
@@ -134,7 +168,8 @@ struct EditorView: View {
             Spacer()
 
             HStack(spacing: 8) {
-                transportButton("backward.fill") { vm.seek(toMilliseconds: 0) }
+                transportButton("backward.end.fill") { vm.seek(toMilliseconds: vm.retainedSegments.first?.startMs ?? 0) }
+                transportButton("backward.frame.fill") { vm.stepFrame(-1) }
                 Button {
                     vm.togglePlayPause()
                 } label: {
@@ -146,12 +181,14 @@ struct EditorView: View {
                 }
                 .buttonStyle(.plain)
                 .keyboardShortcut(.space, modifiers: [])
-                transportButton("forward.fill") { vm.seek(toMilliseconds: vm.durationMs) }
+                .disabled(vm.isPreparingPlayback || vm.retainedSegments.isEmpty)
+                transportButton("forward.frame.fill") { vm.stepFrame(1) }
+                transportButton("forward.end.fill") { vm.seek(toMilliseconds: vm.retainedSegments.last?.endMs ?? vm.durationMs) }
             }
 
             Spacer()
 
-            Text(format(vm.durationMs))
+            Text(format(vm.editedDurationMs))
                 .font(.system(.callout, design: .monospaced))
                 .foregroundStyle(CTheme.textSecondary)
                 .frame(width: 78, alignment: .trailing)
@@ -167,6 +204,7 @@ struct EditorView: View {
                 .background(CTheme.surface, in: RoundedRectangle(cornerRadius: CTheme.Radius.sm))
         }
         .buttonStyle(.plain)
+        .accessibilityLabel(systemName == "backward.end.fill" ? "Go to start" : systemName == "forward.end.fill" ? "Go to end" : systemName == "backward.frame.fill" ? "Previous frame" : "Next frame")
     }
 
     private func format(_ ms: Double) -> String {

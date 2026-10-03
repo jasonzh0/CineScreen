@@ -92,6 +92,9 @@ final class WebcamFrameSource: @unchecked Sendable {
     /// discarding future frames we've already read.
     func frame(at screenPTS: CMTime) -> CVPixelBuffer? {
         let targetPTS = CMTimeSubtract(screenPTS, offset)
+        // No camera frame exists before camera warm-up completes. Returning
+        // the first future frame here makes the overlay lead the recording.
+        guard CMTimeCompare(targetPTS, .zero) >= 0 else { return nil }
         while true {
             // If our cached lookahead frame is now at or before the target,
             // promote it — it becomes the active frame.

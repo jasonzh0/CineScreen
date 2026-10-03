@@ -9,7 +9,11 @@ import AppKit
 // own private mirror with "must match" comments as the only enforcement —
 // three copies that could silently drift.
 
-struct AspectUniforms { var scale: SIMD2<Float> }
+struct AspectUniforms {
+    var scale: SIMD2<Float>
+    var cropOrigin: SIMD2<Float> = .zero
+    var cropSize: SIMD2<Float> = SIMD2(1, 1)
+}
 
 struct ZoomUniforms {
     var centerUV: SIMD2<Float>
@@ -19,6 +23,7 @@ struct ZoomUniforms {
 
 struct CanvasUniforms {
     var contentScale: SIMD2<Float>
+    var cornerRadiusUV: SIMD2<Float> = SIMD2(0.025, 0.025)
 }
 
 /// All SIMD2<Float> are 8-byte aligned, so the two trailing floats pack into
@@ -27,6 +32,8 @@ struct CursorUniforms {
     var cursorPos: SIMD2<Float>
     var videoSize: SIMD2<Float>
     var aspectScale: SIMD2<Float>
+    var cropOrigin: SIMD2<Float> = .zero
+    var cropSize: SIMD2<Float> = SIMD2(1, 1)
     var hotspot: SIMD2<Float>
     var motionBlur: SIMD2<Float>
     var size: Float
@@ -39,18 +46,138 @@ struct ClickUniforms {
     var thicknessInPixels: Float
     var videoSize: SIMD2<Float>
     var aspectScale: SIMD2<Float>
+    var cropOrigin: SIMD2<Float> = .zero
+    var cropSize: SIMD2<Float> = SIMD2(1, 1)
     var color: SIMD4<Float>
+}
+
+/// Circular webcam overlay uniforms. Field layout must match Shaders.metal.
+struct WebcamUniforms {
+    var centerNDC: SIMD2<Float>
+    var halfSizeNDC: SIMD2<Float>
+    var textureUVScale: SIMD2<Float>
+    var textureUVOffset: SIMD2<Float>
+    var ringColor: SIMD4<Float>
+    var ringWidthNorm: Float
+    var _pad0: Float = 0
+    var _pad1: Float = 0
+    var _pad2: Float = 0
 }
 
 // MARK: - Shared pipeline/quad factory
 
-/// Shared GPU plumbing for `MetalRenderer` (live MTKView preview) and
-/// `ExportCompositor` (headless CVPixelBuffer render). One pipeline factory,
-/// one quad, and one cursor-texture loader mean the two paths cannot drift in
-/// blend state or shader wiring — the strongest guarantee that what the user
-/// previews is what the export produces. This setup used to be duplicated
-/// ~230 lines deep in each file.
+/// GPU layouts, geometry and pipeline creation used by FrameCompositor.
+/// Keep uniform field order aligned with Shaders.metal.
 enum CompositorCore {
+    static func aspectUniforms(source: CGSize, destination: CGSize, crop: NormalizedCrop) -> AspectUniforms {
+        let crop = crop.clamped()
+        let width = max(1, source.width * crop.width)
+        let height = max(1, source.height * crop.height)
+        let sourceAspect = width / height
+        let destinationAspect = max(1, destination.width) / max(1, destination.height)
+        let fit: SIMD2<Float> = sourceAspect > destinationAspect
+            ? SIMD2(1, Float(destinationAspect / sourceAspect))
+            : SIMD2(Float(sourceAspect / destinationAspect), 1)
+        return AspectUniforms(scale: fit,
+                              cropOrigin: SIMD2(Float(crop.x), Float(crop.y)),
+                              cropSize: SIMD2(Float(crop.width), Float(crop.height)))
+    }
+
+    static func canvasUniforms(style: CanvasStyle, source: CGSize, crop: NormalizedCrop) -> CanvasUniforms {
+        let crop = crop.clamped()
+        let width = max(1, source.width * crop.width), height = max(1, source.height * crop.height)
+        let radiusPixels = min(width, height) * Double(min(0.15, max(0, style.cornerRadius)))
+        let inset = min(0.45, max(0, style.padding))
+        return CanvasUniforms(contentScale: SIMD2(repeating: 1 - 2 * inset),
+                              cornerRadiusUV: SIMD2(Float(radiusPixels / width), Float(radiusPixels / height)))
+    }
+
+    static func zoomUniforms(zoom: ZoomState, crop: NormalizedCrop) -> ZoomUniforms {
+        let crop = crop.clamped()
+        let origin = SIMD2(Float(crop.x), Float(crop.y))
+        let size = SIMD2(Float(crop.width), Float(crop.height))
+        let neutral = origin + size * 0.5
+        let progress = min(1, max(0, zoom.framingProgress))
+        let sourceCenter = zoom.centerUV + (neutral - SIMD2<Float>(repeating: 0.5)) * (1 - progress)
+        let scale = max(1, zoom.scale)
+        let margin: Float = 0.5 / scale
+        let center = (sourceCenter - origin) / size
+        let bounded = SIMD2<Float>(min(1 - margin, max(margin, center.x)), min(1 - margin, max(margin, center.y)))
+        return ZoomUniforms(centerUV: bounded, scale: scale)
+    }
+
+    /// Shared layout math — also used by `ExportCompositor` so the same
+    /// formula produces identical pixels in both paths.
+    static func webcamUniforms(
+        for layout: WebcamLayout,
+        contentScale: SIMD2<Float>,
+        viewAspect: Float,
+        texture: MTLTexture
+    ) -> WebcamUniforms {
+        let clamped = layout.clamped()
+        let shortSide = min(contentScale.x, contentScale.y)
+        let halfX = clamped.diameterNorm * shortSide
+        // viewAspect = view width / view height. halfY is scaled so the
+        // overlay renders visually circular regardless of canvas aspect.
+        let halfY = halfX * viewAspect
+
+        // Content rect in NDC is [-contentScale.x, contentScale.x] ×
+        // [-contentScale.y, contentScale.y]. Map normalised [0,1] coords
+        // into that — y inverted so 0 = top, 1 = bottom.
+        let centerX = contentScale.x * (2 * clamped.centerXNorm - 1)
+        let centerY = contentScale.y * (1 - 2 * clamped.centerYNorm)
+
+        let srcAspect = Float(texture.width) / Float(texture.height)
+        let uvScale: SIMD2<Float>
+        if srcAspect > 1 {
+            uvScale = SIMD2(1.0 / srcAspect, 1.0)
+        } else {
+            uvScale = SIMD2(1.0, srcAspect)
+        }
+
+        return WebcamUniforms(
+            centerNDC: SIMD2(centerX, centerY),
+            halfSizeNDC: SIMD2(halfX, halfY),
+            textureUVScale: uvScale,
+            textureUVOffset: SIMD2(0.5, 0.5),
+            ringColor: SIMD4(1.0, 1.0, 1.0, 0.55),
+            ringWidthNorm: 0.022
+        )
+    }
+
+    /// Computes ShadowUniforms tracking the recording's post-zoom geometry.
+    /// Both the live preview and the export call this so they produce the
+    /// same shadow shape, size, and position.
+    static func makeShadowUniforms(
+        aspect: SIMD2<Float>,
+        canvasContentScale: SIMD2<Float>,
+        zoom: ZoomState,
+        strength: Float,
+        style: CanvasStyle? = nil,
+        viewportAspect: Float = 1
+    ) -> ShadowUniforms {
+        let safeScale = max(0.01, zoom.scale)
+        let halfSize = aspect * canvasContentScale * safeScale
+        let centerInQuad = SIMD2<Float>(zoom.centerUV.x * 2 - 1, 1 - zoom.centerUV.y * 2)
+        let centerNDC = -centerInQuad * safeScale * aspect * canvasContentScale
+        let viewAspect = max(0.01, viewportAspect)
+        // Measure blur and rounding in physical pixels, not stretched NDC.
+        let shortSide = min(halfSize.x, halfSize.y / viewAspect)
+        let radius = min(0.15, max(0, style?.cornerRadius ?? Float(CanvasStyleConfig.default.resolvedCornerRadius))) * 2 * shortSide
+        let softness = min(0.5, max(0.005, style?.shadowSoftness ?? Float(CanvasStyleConfig.default.resolvedShadowSoftness)))
+        let distance = min(0.3, max(0, style?.shadowDistance ?? Float(CanvasStyleConfig.default.resolvedShadowDistance))) * 2 * shortSide
+        let radians = (style?.shadowAngle ?? Float(CanvasStyleConfig.default.resolvedShadowAngle)) * .pi / 180
+        return ShadowUniforms(
+            centerNDC: centerNDC,
+            halfSize: halfSize,
+            offsetNDC: SIMD2(cos(radians) * distance, -sin(radians) * distance * viewAspect),
+            blur: max(0.002, 2 * shortSide * softness),
+            cornerRadius: radius,
+            opacity: min(1, max(0, strength)),
+            viewportAspect: viewAspect
+        )
+    }
+
     struct Pipelines {
         let background: MTLRenderPipelineState
         let shadow: MTLRenderPipelineState

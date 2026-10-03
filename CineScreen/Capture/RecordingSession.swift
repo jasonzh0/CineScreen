@@ -171,11 +171,15 @@ final class RecordingSession {
             webcamOffsetMs = (webcamFirst.seconds - screenFirst) * 1000
         }
 
+        let videoSamples = MouseSampleTimeline.rebased(
+            samples, firstFrameHostPTSSeconds: captureResult.firstFrameHostPTSSeconds,
+            durationMs: durationMs
+        )
         let metadata = Self.buildMetadata(
             videoURL: videoURL,
             info: info,
             durationMs: durationMs,
-            samples: samples,
+            samples: videoSamples,
             webcamOffsetMs: webcamOffsetMs
         )
 

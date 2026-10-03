@@ -20,12 +20,15 @@ CineScreen pipes the raw stream straight into a Metal compositor.
 
 ### ✨ Compose — polish without thinking
 Smooth cursor motion, automatic click highlights, and zoom keyframes you tune
-in the timeline. Style recordings with gradient backdrops, padding, and rounded
-window chrome.
+in the timeline. Split and remove sections, change their playback speed, and
+undo edits. Style recordings with cinematic gradient lighting, adjustable soft
+shadows, padding, and rounded corners; save a reusable look preset. Timeline
+thumbnails and audio peaks help navigate recordings.
 
 ### 📦 Export — AVAssetWriter, no compromises
-A dedicated export compositor renders the final video offline at a locked frame
-rate. ProRes or H.264, no dropped frames, signed and notarized `.dmg`.
+Preview and export share one Metal frame compositor. The export pipeline renders
+the final video offline at a locked frame rate. Export H.264 MP4 or GIF with aspect presets and crop controls. MP4 keeps
+audio aligned across cuts and speed changes, with gain and mute controls.
 
 ## How it works
 
@@ -87,6 +90,9 @@ xcrun notarytool store-credentials cinescreen-notary \
 `vX.Y.Z` tag. The `.github/workflows/release.yml` pipeline signs with Developer ID,
 notarizes, publishes the GitHub Release, and deploys the Sparkle appcast to GitHub
 Pages — which auto-updates existing users.
+
+See [the maintenance guide](docs/MAINTAINABILITY.md) for module ownership,
+resource-lifetime rules, audit findings and remaining cleanup areas.
 
 ## Layout
 

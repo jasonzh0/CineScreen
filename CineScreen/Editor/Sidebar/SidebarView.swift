@@ -4,6 +4,9 @@ import AppKit
 struct SidebarView: View {
     @Bindable var vm: EditorViewModel
     @State private var saveMessage: String?
+    @State private var inspectorTab = 0
+    @State private var exportedURL: URL?
+    @State private var presetName = "My look"
     @State private var exportFraction: Double = 0
     @State private var isExporting: Bool = false
     @State private var exportError: String?
@@ -21,17 +24,38 @@ struct SidebarView: View {
         VStack(alignment: .leading, spacing: 14) {
             exportRow
 
+            Picker("Inspector", selection: $inspectorTab) {
+                Text("Edit").tag(0)
+                Text("Appearance").tag(1)
+            }
+            .pickerStyle(.segmented)
+
             ScrollView {
                 VStack(alignment: .leading, spacing: 14) {
-                    card(title: "Background", icon: "photo.on.rectangle.angled") { canvasControls }
-                    card(title: "Cursor",     icon: "cursorarrow.rays")           { cursorControls }
-                    card(title: "Clicks",     icon: "hand.tap")                   { clickControls }
-                    card(title: "Zoom",       icon: "plus.magnifyingglass")       { zoomControls }
-                    if vm.webcamPlayer != nil {
-                        card(title: "Webcam",  icon: "video.fill")                { webcamControls }
+                    if inspectorTab == 0 {
+                        if let selected = vm.selectedZoomIndex,
+                           vm.effectiveZoomSections.indices.contains(selected) {
+                            card(title: "Selected Zoom", icon: "plus.magnifyingglass") {
+                                selectedZoomEditor(index: selected, section: vm.effectiveZoomSections[selected])
+                            }
+                        } else if let id = vm.selectedSegmentID,
+                                  let segment = vm.retainedSegments.first(where: { $0.id == id }) {
+                            card(title: "Selected Clip", icon: "film") { segmentControls(segment) }
+                        }
+                        card(title: "Zoom", icon: "plus.magnifyingglass") { zoomControls }
+                        card(title: "Output", icon: "aspectratio") { outputControls }
+                        card(title: "Audio", icon: "waveform") { audioControls }
+                        card(title: "Trim", icon: "scissors") { trimControls }
+                        card(title: "Recording", icon: "info.circle") { info }
+                    } else {
+                        card(title: "Saved Looks", icon: "star") { presetControls }
+                        card(title: "Background", icon: "photo.on.rectangle.angled") { canvasControls }
+                        card(title: "Cursor", icon: "cursorarrow.rays") { cursorControls }
+                        card(title: "Clicks", icon: "hand.tap") { clickControls }
+                        if vm.webcamPlayer != nil {
+                            card(title: "Webcam", icon: "video.fill") { webcamControls }
+                        }
                     }
-                    card(title: "Trim",       icon: "scissors")                   { trimControls }
-                    card(title: "Recording",  icon: "info.circle")                { info }
                 }
             }
             .scrollIndicators(.never)
@@ -56,6 +80,13 @@ struct SidebarView: View {
                     .foregroundStyle(CTheme.danger)
                     .fixedSize(horizontal: false, vertical: true)
             }
+            if let out = exportedURL {
+                HStack {
+                    Button("Reveal") { NSWorkspace.shared.activateFileViewerSelecting([out]) }
+                    Button("Open") { NSWorkspace.shared.open(out) }
+                    Button("Copy Video") { NSPasteboard.general.clearContents(); NSPasteboard.general.writeObjects([out as NSURL]) }
+                }.controlSize(.small)
+            }
             if let saveMessage = saveMessage {
                 Text(saveMessage)
                     .font(.caption2)
@@ -66,6 +97,8 @@ struct SidebarView: View {
         .frame(width: 304)
         .background(CTheme.panel)
         .tint(CTheme.accent)
+        .onChange(of: vm.selectedZoomIndex) { _, selected in if selected != nil { inspectorTab = 0 } }
+        .onChange(of: vm.selectedSegmentID) { _, selected in if selected != nil { inspectorTab = 0 } }
     }
 
     // MARK: - Top export row
@@ -161,6 +194,70 @@ struct SidebarView: View {
         }
     }
 
+    private func segmentControls(_ segment: EditSegment) -> some View {
+        VStack(alignment: .leading, spacing: 10) {
+            row("Source", "\(format(segment.startMs)) – \(format(segment.endMs))")
+            Picker("Speed", selection: Binding(get: { segment.speed }, set: vm.setSelectedSegmentSpeed)) {
+                ForEach([0.25, 0.5, 1.0, 1.5, 2.0, 4.0], id: \.self) { speed in
+                    Text(String(format: "%.2g×", speed)).tag(speed)
+                }
+            }
+            HStack {
+                Button("Split at playhead", action: vm.splitAtPlayhead)
+                Button("Delete clip", role: .destructive, action: vm.removeSelectedSegment)
+            }.controlSize(.small)
+            Text("Deleting a clip closes the gap in playback and export. The original recording stays available.")
+                .font(.caption2).foregroundStyle(CTheme.textSecondary)
+        }
+    }
+
+    private var outputControls: some View {
+        VStack(alignment: .leading, spacing: 10) {
+            Picker("Canvas", selection: Binding(get: { vm.outputSettings.aspectRatio }, set: { vm.outputSettings.aspectRatio = $0 })) {
+                ForEach(OutputAspectRatio.allCases) { ratio in Text(ratio.label).tag(ratio) }
+            }
+            if let video = vm.metadata?.video {
+                let size = vm.outputSettings.dimensions(sourceWidth: video.width, sourceHeight: video.height)
+                row("Dimensions", "\(size.width) × \(size.height)")
+            }
+            Picker("Frame rate", selection: Binding(get: { vm.outputSettings.frameRate }, set: { vm.outputSettings.frameRate = $0 })) {
+                Text("30 fps").tag(30)
+                Text("60 fps").tag(60)
+            }
+            Text("Source crop").font(.caption).foregroundStyle(CTheme.textSecondary)
+            Slider(value: Binding(get: { vm.outputSettings.crop.width }, set: { width in
+                let centerX = vm.outputSettings.crop.x + vm.outputSettings.crop.width / 2
+                let centerY = vm.outputSettings.crop.y + vm.outputSettings.crop.height / 2
+                vm.outputSettings.crop = NormalizedCrop(x: centerX - width / 2, y: centerY - width / 2,
+                                                       width: width, height: width).clamped()
+            }), in: 0.25...1, onEditingChanged: vm.sliderEditing)
+            HStack {
+                Text("Horizontal").font(.caption)
+                Slider(value: Binding(get: { vm.outputSettings.crop.x }, set: { vm.outputSettings.crop.x = $0 }),
+                       in: 0...max(0.001, 1 - vm.outputSettings.crop.width), onEditingChanged: vm.sliderEditing)
+            }.disabled(vm.outputSettings.crop.width >= 1)
+            HStack {
+                Text("Vertical").font(.caption)
+                Slider(value: Binding(get: { vm.outputSettings.crop.y }, set: { vm.outputSettings.crop.y = $0 }),
+                       in: 0...max(0.001, 1 - vm.outputSettings.crop.height), onEditingChanged: vm.sliderEditing)
+            }.disabled(vm.outputSettings.crop.height >= 1)
+            Button("Reset crop") { vm.outputSettings.crop = .full }.controlSize(.small)
+        }
+    }
+
+    private var audioControls: some View {
+        VStack(alignment: .leading, spacing: 8) {
+            Toggle("Mute captured audio", isOn: Binding(get: { vm.outputSettings.audioMuted }, set: { vm.outputSettings.audioMuted = $0 }))
+            HStack {
+                Text("Volume").font(.caption)
+                Spacer()
+                Text("\(Int(vm.outputSettings.audioGain * 100))%").font(.caption.monospacedDigit())
+            }
+            Slider(value: Binding(get: { vm.outputSettings.audioGain }, set: { vm.outputSettings.audioGain = $0 }),
+                   in: 0...2, onEditingChanged: vm.sliderEditing).disabled(vm.outputSettings.audioMuted)
+        }.font(.caption)
+    }
+
     // MARK: - Card scaffolding
 
     @ViewBuilder
@@ -217,7 +314,7 @@ struct SidebarView: View {
                         get: { vm.metadata?.cursor.config.size ?? 64 },
                         set: { vm.metadata?.cursor.config.size = $0 }
                     ),
-                    in: 16...256, step: 1
+                    in: 16...256, step: 1, onEditingChanged: vm.sliderEditing
                 )
                 .tint(CTheme.accent)
                 HStack {
@@ -258,7 +355,7 @@ struct SidebarView: View {
                 .controlSize(.small)
 
                 if vm.metadata?.cursor.config.motionBlur?.enabled == true {
-                    Slider(value: motionBlurStrength, in: 0...1)
+                    Slider(value: motionBlurStrength, in: 0...1, onEditingChanged: vm.sliderEditing)
                         .tint(CTheme.accent)
                 }
 
@@ -307,7 +404,7 @@ struct SidebarView: View {
                         .font(.system(.caption, design: .monospaced))
                         .foregroundStyle(CTheme.textSecondary)
                 }
-                Slider(value: $vm.clickRingSize, in: 24...140, step: 1)
+                Slider(value: $vm.clickRingSize, in: 24...140, step: 1, onEditingChanged: vm.sliderEditing)
                     .tint(CTheme.accent)
 
                 HStack {
@@ -317,7 +414,7 @@ struct SidebarView: View {
                         .font(.system(.caption, design: .monospaced))
                         .foregroundStyle(CTheme.textSecondary)
                 }
-                Slider(value: $vm.clickRingDuration, in: 250...1200, step: 50)
+                Slider(value: $vm.clickRingDuration, in: 250...1200, step: 50, onEditingChanged: vm.sliderEditing)
                     .tint(CTheme.accent)
 
                 HStack {
@@ -335,7 +432,7 @@ struct SidebarView: View {
     private var ringColorBinding: Binding<Color> {
         Binding(
             get: {
-                let v = RenderSnapshot.parseHexColor(vm.clickRingColorHex)
+                let v = RGBAColor.parseHex(vm.clickRingColorHex)
                 return Color(.sRGB, red: Double(v.x), green: Double(v.y), blue: Double(v.z))
             },
             set: { newColor in
@@ -392,9 +489,7 @@ struct SidebarView: View {
                         zoomRow(index: idx, section: section)
                     }
                 }
-                if let selected = vm.selectedZoomIndex, sections.indices.contains(selected) {
-                    selectedZoomEditor(index: selected, section: sections[selected])
-                }
+
             }
         }
 
@@ -425,7 +520,7 @@ struct SidebarView: View {
                     .font(.system(.caption, design: .monospaced))
                     .foregroundStyle(CTheme.textSecondary)
             }
-            Slider(value: scaleBinding, in: 1.0...4.0, step: 0.05)
+            Slider(value: scaleBinding, in: 1.0...4.0, step: 0.05, onEditingChanged: vm.sliderEditing)
                 .tint(CTheme.accent)
 
             // Length
@@ -438,16 +533,26 @@ struct SidebarView: View {
             }
             Slider(value: lengthBinding,
                    in: 100...max(500, vm.metadata?.video.duration ?? 1000),
-                   step: 50)
+                   step: 50, onEditingChanged: vm.sliderEditing)
                 .tint(CTheme.accent)
 
-            Text("Pan is auto-framed to follow the cursor with rule-of-thirds smoothing — no manual focal point needed.")
+            Picker("Framing", selection: Binding(get: { section.targetMode ?? .followCursor }, set: { mode in
+                vm.updateZoomTarget(at: index, mode: mode)
+            })) {
+                Text("Follow cursor").tag(ZoomTargetMode.followCursor)
+                Text("Fixed target").tag(ZoomTargetMode.fixed)
+            }
+            if section.targetMode == .fixed {
+                labeledSlider("Target X", value: Binding(get: { section.centerX }, set: { vm.updateZoomTarget(at: index, x: $0) }), range: 0...1)
+                labeledSlider("Target Y", value: Binding(get: { section.centerY }, set: { vm.updateZoomTarget(at: index, y: $0) }), range: 0...1)
+            }
+            Text("Follow the cursor, or keep a fixed feature framed while you explain it.")
                 .font(.caption2)
                 .foregroundStyle(CTheme.textSecondary)
                 .fixedSize(horizontal: false, vertical: true)
                 .padding(.top, 2)
 
-            Text("Drag the block on the timeline to move it; drag the 3-pt edges to resize.")
+            Text("Drag the block to move it; drag the highlighted edges to resize. Hold Option to disable snapping.")
                 .font(.caption2)
                 .foregroundStyle(CTheme.textTertiary)
                 .fixedSize(horizontal: false, vertical: true)
@@ -486,6 +591,25 @@ struct SidebarView: View {
         }
     }
 
+    private var presetControls: some View {
+        VStack(alignment: .leading, spacing: 8) {
+            HStack {
+                TextField("Look name", text: $presetName).textFieldStyle(.roundedBorder)
+                Button("Save") { vm.saveLookPreset(named: presetName) }
+                    .disabled(presetName.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty || vm.metadata == nil)
+            }.controlSize(.small)
+            if !vm.lookPresets.isEmpty {
+                Menu("Apply saved look") {
+                    ForEach(vm.lookPresets) { preset in
+                        Button(preset.name) { vm.applyLookPreset(preset) }
+                    }
+                }.controlSize(.small)
+            }
+            Text("Reuses canvas, cursor, camera, zoom style and output settings. Applying a look can be undone.")
+                .font(.caption2).foregroundStyle(CTheme.textSecondary)
+        }
+    }
+
     private var canvasControls: some View {
         VStack(alignment: .leading, spacing: 10) {
             HStack {
@@ -493,11 +617,11 @@ struct SidebarView: View {
                     .font(.caption)
                     .foregroundStyle(CTheme.textSecondary)
                 Spacer()
-                Text("\(Int(vm.canvasPadding * 200))%")
+                Text("\(Int((vm.canvasPadding * 200).rounded()))%")
                     .font(.system(.caption, design: .monospaced))
                     .foregroundStyle(CTheme.textSecondary)
             }
-            Slider(value: $vm.canvasPadding, in: 0...0.25)
+            Slider(value: $vm.canvasPadding, in: 0...0.25, onEditingChanged: vm.sliderEditing)
                 .tint(CTheme.accent)
 
             Toggle(isOn: $vm.canvasDropShadow) {
@@ -513,14 +637,41 @@ struct SidebarView: View {
                     .font(.caption)
                     .foregroundStyle(CTheme.textSecondary)
                 Spacer()
-                Text("\(Int(vm.canvasShadowStrength * 100))%")
+                Text("\(Int((vm.canvasShadowStrength * 100).rounded()))%")
                     .font(.system(.caption, design: .monospaced))
                     .foregroundStyle(CTheme.textSecondary)
             }
-            Slider(value: $vm.canvasShadowStrength, in: 0...1)
+            Slider(value: $vm.canvasShadowStrength, in: 0...1, onEditingChanged: vm.sliderEditing)
                 .tint(CTheme.accent)
                 .disabled(!vm.canvasDropShadow)
                 .opacity(vm.canvasDropShadow ? 1.0 : 0.5)
+
+            labeledSlider("Softness", value: $vm.canvasShadowSoftness, range: 0.02...0.30)
+                .disabled(!vm.canvasDropShadow)
+            labeledSlider("Distance", value: $vm.canvasShadowDistance, range: 0...0.15)
+                .disabled(!vm.canvasDropShadow)
+            labeledSlider("Shadow angle", value: $vm.canvasShadowAngle, range: 0...360)
+                .disabled(!vm.canvasDropShadow)
+            labeledSlider("Corner radius", value: $vm.canvasCornerRadius, range: 0...0.08)
+
+            Picker("Lighting", selection: Binding(get: { vm.canvasBackground.style ?? .linear }, set: { vm.canvasBackground.style = $0 })) {
+                Text("Linear").tag(CanvasBackground.GradientStyle.linear)
+                Text("Radial").tag(CanvasBackground.GradientStyle.radial)
+            }.font(.caption)
+            labeledSlider("Vignette", value: Binding(get: { Double(vm.canvasBackground.vignette ?? 0) }, set: { vm.canvasBackground.vignette = Float($0) }), range: 0...0.5)
+            labeledSlider("Grain", value: Binding(get: { Double(vm.canvasBackground.grain ?? 0) }, set: { vm.canvasBackground.grain = Float($0) }), range: 0...0.025)
+
+            HStack {
+                Text("Custom color").font(.caption).foregroundStyle(CTheme.textSecondary)
+                Spacer()
+                ColorPicker("", selection: Binding(get: {
+                    let color = vm.canvasBackground.firstColor
+                    return Color(.sRGB, red: Double(color.x), green: Double(color.y), blue: Double(color.z))
+                }, set: { color in
+                    let ns = NSColor(color).usingColorSpace(.sRGB) ?? .black
+                    vm.canvasBackground = .solid(String(format: "#%02x%02x%02x", Int(ns.redComponent * 255), Int(ns.greenComponent * 255), Int(ns.blueComponent * 255)))
+                }), supportsOpacity: false).labelsHidden()
+            }
 
             HStack {
                 Text("Background")
@@ -549,6 +700,18 @@ struct SidebarView: View {
             }
         }
 
+    }
+
+    private func labeledSlider(_ label: String, value: Binding<Double>, range: ClosedRange<Double>) -> some View {
+        VStack(alignment: .leading, spacing: 4) {
+            HStack {
+                Text(label).font(.caption).foregroundStyle(CTheme.textSecondary)
+                Spacer()
+                Text(label == "Shadow angle" ? "\(Int(value.wrappedValue.rounded()))°" : label == "Grain" ? String(format: "%.1f%%", value.wrappedValue * 100) : "\(Int((value.wrappedValue * 100).rounded()))%")
+                    .font(.caption.monospacedDigit()).foregroundStyle(CTheme.textSecondary)
+            }
+            Slider(value: value, in: range, onEditingChanged: vm.sliderEditing)
+        }
     }
 
     /// SwiftUI preview tile mirroring the GPU gradient — same colours, same angle.
@@ -586,11 +749,14 @@ struct SidebarView: View {
                 value: $vm.trimEndMs,
                 range: (vm.trimStartMs + 100)...max(vm.trimStartMs + 100, vm.durationMs)
             )
-            row("Length", format(vm.trimEndMs - vm.trimStartMs))
+            row("Edited length", format(vm.editedDurationMs))
 
             Button("Reset to full clip") {
-                vm.trimStartMs = 0
-                vm.trimEndMs = vm.durationMs
+                vm.performEdit {
+                    vm.trimStartMs = 0
+                    vm.trimEndMs = vm.durationMs
+                    vm.resetCuts()
+                }
             }
             .buttonStyle(CineGhostButtonStyle(
                 shape: .rounded(CTheme.Radius.sm),
@@ -641,7 +807,7 @@ struct SidebarView: View {
                             vm.setWebcamLayout(next)
                         }
                     ),
-                    in: 0.05...0.6
+                    in: 0.05...0.6, onEditingChanged: vm.sliderEditing
                 )
                 .tint(CTheme.accent)
             }
@@ -719,7 +885,7 @@ struct SidebarView: View {
         let panel = NSSavePanel()
         let ext = exportFormat == .gif ? "gif" : "mp4"
         panel.allowedContentTypes = exportFormat == .gif ? [.gif] : [.mpeg4Movie]
-        panel.nameFieldStringValue = vm.videoURL.deletingPathExtension().lastPathComponent + "_export.\(ext)"
+        panel.nameFieldStringValue = vm.projectTitle + "_export.\(ext)"
         guard panel.runModal() == .OK, let outURL = panel.url else { return }
 
         let trimRange: Range<Double> =
@@ -762,6 +928,10 @@ struct SidebarView: View {
         let pipeline = ExportPipeline()
         exportPipeline = pipeline
         let webcamLayout = vm.webcamLayout
+        let editSegments = vm.metadata?.editSegments
+        let outputSettings = vm.outputSettings
+        let canvasStyle = vm.canvasStyle
+        let webcamOffsetMs = vm.metadata?.webcamOffsetMs ?? 0
         // Progress events flow through one ordered stream consumed by a
         // single task. The old per-event `Task { @MainActor }` fan-out could
         // run events out of order — progress jumping backwards, or a late
@@ -789,16 +959,19 @@ struct SidebarView: View {
                     cursorAt: cursorAt,
                     clicksAt: clicksAt,
                     zoomAt: zoomAt,
-                    canvas: vm.canvasStyle,
+                    canvas: canvasStyle,
                     webcamURL: vm.webcamURL,
                     webcamLayout: webcamLayout,
-                    webcamOffsetMs: vm.metadata?.webcamOffsetMs ?? 0,
+                    webcamOffsetMs: webcamOffsetMs,
                     outputScale: exportScale,
                     bitsPerPixel: exportBitsPerPixel,
-                    format: exportFormat
+                    format: exportFormat,
+                    editSegments: editSegments,
+                    output: outputSettings
                 )) { progress in
                     progressCont.yield(progress)
                 }
+                exportedURL = out
                 saveMessage = "Exported to \(out.lastPathComponent)"
             } catch ExportError.cancelled {
                 saveMessage = "Export cancelled"

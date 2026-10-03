@@ -27,6 +27,10 @@ struct RecordingMetadata: Codable, Equatable {
     /// Absent for projects saved before this field existed; in that case the
     /// editor falls back to its default style.
     var canvas: CanvasStyleConfig?
+    /// Retained source ranges. Nil preserves the legacy full-trim behavior.
+    var editSegments: [EditSegment]?
+    /// Output framing, crop, frame rate and audio preferences.
+    var output: OutputSettings?
     var createdAt: TimeInterval
 
     static let currentVersion = "1.0.0"
@@ -41,6 +45,19 @@ struct CanvasStyleConfig: Codable, Equatable {
     /// 0..1 strength of the drop shadow. Optional because older saves
     /// predate it; the editor falls back to its default when missing.
     var shadowStrength: Double?
+    var shadowSoftness: Double?
+    var shadowDistance: Double?
+    var shadowAngle: Double?
+    var cornerRadius: Double?
+
+    /// Defaults for new projects and optional fields omitted by legacy saves.
+    static let `default` = CanvasStyleConfig(background: .cinematicDefault, padding: 0.065, dropShadow: true)
+    var resolvedShadowStrength: Double { shadowStrength ?? 0.32 }
+    var resolvedShadowSoftness: Double { shadowSoftness ?? 0.12 }
+    var resolvedShadowDistance: Double { shadowDistance ?? 0.04 }
+    var resolvedShadowAngle: Double { shadowAngle ?? 90 }
+    var resolvedCornerRadius: Double { cornerRadius ?? 0.025 }
+
 }
 
 /// User-editable layout for the circular webcam overlay. Coordinates are
@@ -227,12 +244,17 @@ struct ZoomTrack: Codable, Equatable {
     var config: ZoomConfig
 }
 
+enum ZoomTargetMode: String, Codable, CaseIterable {
+    case followCursor, fixed
+}
+
 struct ZoomSection: Codable, Equatable {
     var startTime: Double
     var endTime: Double
     var scale: Double
     var centerX: Double
     var centerY: Double
+    var targetMode: ZoomTargetMode?
 }
 
 struct ZoomConfig: Codable, Equatable {

@@ -8,9 +8,9 @@ final class ZoomGenerationTests: XCTestCase {
         let clicks = [Fixtures.click(1000), Fixtures.click(2500), Fixtures.click(8000)]
         let sections = EditorViewModel.generateZoomSections(from: clicks, videoDuration: 20_000, scale: 2)
         XCTAssertEqual(sections.count, 2)
-        XCTAssertEqual(sections[0].startTime, 700, accuracy: 1e-9)   // 300ms preroll
-        XCTAssertEqual(sections[0].endTime, 3700, accuracy: 1e-9)    // 1200ms postroll
-        XCTAssertEqual(sections[1].startTime, 7700, accuracy: 1e-9)
+        XCTAssertEqual(sections[0].startTime, 300, accuracy: 1e-9)   // 700ms anticipation
+        XCTAssertEqual(sections[0].endTime, 4400, accuracy: 1e-9)    // 1900ms postroll
+        XCTAssertEqual(sections[1].startTime, 7300, accuracy: 1e-9)
     }
 
     @MainActor
@@ -21,6 +21,17 @@ final class ZoomGenerationTests: XCTestCase {
         for pair in zip(sections, sections.dropFirst()) {
             XCTAssertLessThanOrEqual(pair.0.endTime, pair.1.startTime)
         }
+    }
+
+    @MainActor
+    func testUnsortedClicksAndReadableHold() {
+        let sections = EditorViewModel.generateZoomSections(from: [Fixtures.click(8000), Fixtures.click(2000)], videoDuration: 12_000, scale: 2, transitionMs: 300)
+        XCTAssertEqual(sections.count, 2)
+        XCTAssertEqual(sections[0].startTime, 1700)
+        XCTAssertEqual(sections[0].endTime, 3500)
+        let config = Fixtures.metadata().zoom.config
+        let ramp = RenderSnapshot.zoomTransitionDuration(config: config, sectionDuration: sections[0].endTime - sections[0].startTime)
+        XCTAssertGreaterThanOrEqual(sections[0].endTime - sections[0].startTime - ramp * 2, 1200)
     }
 
     @MainActor

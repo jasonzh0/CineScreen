@@ -44,4 +44,15 @@ final class SpringTests: XCTestCase {
         // Degenerate width falls back to the base time rather than dividing by 0.
         XCTAssertEqual(style.smoothTime(forSpeedPxPerSec: 1e9, videoWidth: 0), style.smoothTime)
     }
+
+    func testAdaptiveSpringDoesNotReboundPastStoppedTarget() {
+        var spring = SmoothPosition2D(x: 0, y: 0, smoothTime: 0.08)
+        for step in 0..<240 {
+            let target = min(1300.0, Double(step) * 1000 / 60)
+            spring.smoothTime = step < 80 ? 0.08 : 0.25
+            let position = spring.update(targetX: target, targetY: 0, deltaTime: 1.0 / 60)
+            XCTAssertLessThanOrEqual(position.x, target + 0.0001)
+        }
+    }
+
 }

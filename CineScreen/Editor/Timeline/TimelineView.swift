@@ -36,8 +36,9 @@ struct TimelineView: View {
                 // Left label column
                 VStack(spacing: trackSpacing) {
                     Color.clear.frame(height: rulerHeight)
-                    trackLabel("Video")
+                    trackLabel("Source")
                     trackLabel("Zoom")
+                    trackLabel("Audio")
                 }
                 .frame(width: labelWidth)
                 .background(CTheme.panel)
@@ -56,6 +57,7 @@ struct TimelineView: View {
                                 ruler(width: contentW)
                                 videoTrack(width: contentW, duration: duration)
                                 zoomTrack(width: contentW, duration: duration)
+                                audioTrack(width: contentW)
                             }
                             .frame(width: contentW)
 
@@ -78,10 +80,11 @@ struct TimelineView: View {
         .background(CTheme.panelDeep)
         .clipShape(RoundedRectangle(cornerRadius: CTheme.Radius.sm))
         .tint(CTheme.accent)
+        .onChange(of: active) { _, drag in if drag == .none { vm.endEditing() } }
     }
 
     private var timelineHeight: CGFloat {
-        rulerHeight + trackSpacing + trackHeight + trackSpacing + trackHeight
+        rulerHeight + 3 * (trackSpacing + trackHeight)
     }
 
     private func trackLabel(_ title: String) -> some View {
@@ -110,7 +113,7 @@ struct TimelineView: View {
                     Rectangle()
                         .fill(CTheme.textTertiary)
                         .frame(width: 1, height: 6)
-                    Text(formatSeconds(seconds))
+                    Text(formatSeconds(seconds, fractional: tickEvery < 1))
                         .font(.system(size: 9, design: .monospaced))
                         .foregroundStyle(CTheme.textTertiary)
                 }
@@ -141,6 +144,35 @@ struct TimelineView: View {
                         .stroke(Self.videoTint.opacity(0.5), lineWidth: 1)
                 )
 
+            if !vm.timelineThumbnails.isEmpty {
+                HStack(spacing: 0) {
+                    ForEach(vm.timelineThumbnails.indices, id: \.self) { index in
+                        Image(nsImage: vm.timelineThumbnails[index]).resizable().scaledToFill()
+                            .frame(width: width / CGFloat(vm.timelineThumbnails.count), height: trackHeight).clipped()
+                    }
+                }.clipShape(RoundedRectangle(cornerRadius: 6)).allowsHitTesting(false)
+            }
+            ForEach(vm.retainedSegments) { segment in
+                let segmentX = CGFloat(segment.startMs / duration) * width
+                let segmentWidth = CGFloat((segment.endMs - segment.startMs) / duration) * width
+                Button {
+                    vm.selectSegment(segment.id)
+                    vm.seek(toMilliseconds: vm.currentTimeMs >= segment.startMs && vm.currentTimeMs < segment.endMs ? vm.currentTimeMs : segment.startMs)
+                } label: {
+                    RoundedRectangle(cornerRadius: 4)
+                        .fill(Self.videoTint.opacity(vm.selectedSegmentID == segment.id ? 0.28 : 0.04))
+                        .overlay(RoundedRectangle(cornerRadius: 4).stroke(vm.selectedSegmentID == segment.id ? .white : Self.videoTint, lineWidth: vm.selectedSegmentID == segment.id ? 2 : 1))
+                        .overlay(alignment: .bottomLeading) {
+                            if segment.speed != 1 { Text(String(format: "%.2g×", segment.speed)).font(.caption2).padding(3).background(.black.opacity(0.65)) }
+                        }
+                        .frame(width: max(2, segmentWidth), height: trackHeight)
+                }.buttonStyle(.plain).offset(x: segmentX)
+            }
+            ForEach(Array(removedRanges().enumerated()), id: \.offset) { _, range in
+                Rectangle().fill(.black.opacity(0.7))
+                    .frame(width: max(0, CGFloat((range.upperBound - range.lowerBound) / duration) * width), height: trackHeight)
+                    .offset(x: CGFloat(range.lowerBound / duration) * width).allowsHitTesting(false)
+            }
             // Greyed-out regions outside trim
             Rectangle()
                 .fill(Color.black.opacity(0.4))
@@ -159,7 +191,7 @@ struct TimelineView: View {
     private func trimHandle(width: CGFloat, duration: Double, isStart: Bool) -> some View {
         let position = isStart ? vm.trimStartMs : vm.trimEndMs
         let x = CGFloat(position / duration) * width
-        let hitWidth: CGFloat = 18  // generous hit zone so it's easy to grab
+        let hitWidth: CGFloat = 24  // generous hit zone so it's easy to grab
         let barWidth: CGFloat = 5
         return ZStack {
             // Hit zone — invisible but full height + width so the grip is
@@ -196,13 +228,15 @@ struct TimelineView: View {
             }
         }
         .gesture(
-            DragGesture(minimumDistance: 0)
+            DragGesture(minimumDistance: 0, coordinateSpace: .named(TimelineView.TimelineCoordSpace))
                 .updating($active) { _, state, _ in
                     if state == .none { state = isStart ? .trimStart : .trimEnd }
                 }
                 .onChanged { value in
                     guard active == (isStart ? .trimStart : .trimEnd) else { return }
-                    let newMs = max(0, min(duration, Double(value.location.x / width) * duration))
+                    vm.beginEditing()
+                    let proposed = max(0, min(duration, Double(value.location.x / width) * duration))
+                    let newMs = NSEvent.modifierFlags.contains(.option) ? proposed : vm.snapTime(proposed, toleranceMs: duration / Double(width) * 8)
                     if isStart {
                         vm.trimStartMs = min(newMs, vm.trimEndMs - 100)
                     } else {
@@ -210,6 +244,36 @@ struct TimelineView: View {
                     }
                 }
         )
+    }
+
+    private func removedRanges() -> [Range<Double>] {
+        var ranges: [Range<Double>] = []
+        var end = 0.0
+        for segment in vm.retainedSegments {
+            if segment.startMs > end { ranges.append(end..<segment.startMs) }
+            end = segment.endMs
+        }
+        if end < vm.durationMs { ranges.append(end..<vm.durationMs) }
+        return ranges
+    }
+
+    private func audioTrack(width: CGFloat) -> some View {
+        Canvas { context, size in
+            let peaks = vm.timelineWaveform
+            guard !peaks.isEmpty else { return }
+            let step = size.width / CGFloat(peaks.count)
+            for (index, peak) in peaks.enumerated() {
+                let height = max(1, CGFloat(min(1, peak)) * (size.height - 6))
+                let rect = CGRect(x: CGFloat(index) * step, y: (size.height - height) / 2, width: max(1, step - 1), height: height)
+                context.fill(Path(roundedRect: rect, cornerRadius: 1), with: .color(CTheme.teal.opacity(vm.outputSettings.audioMuted ? 0.25 : 0.75)))
+            }
+        }
+        .overlay {
+            if vm.timelineWaveform.isEmpty { Text("No audio track").font(.caption2).foregroundStyle(CTheme.textTertiary) }
+        }
+        .frame(width: width, height: trackHeight)
+        .background(CTheme.panel)
+        .allowsHitTesting(false)
     }
 
     // MARK: - Zoom track
@@ -256,11 +320,11 @@ struct TimelineView: View {
         @GestureState private var dragStart: (startTime: Double, endTime: Double)?
 
         private enum Edge { case left, right }
-        private let edgeWidth: CGFloat = 8
+        private let edgeWidth: CGFloat = 14
 
         var body: some View {
             let x = CGFloat(section.startTime / duration) * trackWidth
-            let w = max(20, CGFloat((section.endTime - section.startTime) / duration) * trackWidth)
+            let w = max(30, CGFloat((section.endTime - section.startTime) / duration) * trackWidth)
             let fill = TimelineView.zoomTint
             let h = trackHeight - 4
 
@@ -285,6 +349,7 @@ struct TimelineView: View {
             // section's start or end moves. `.animation(nil, value:)` defeats
             // SwiftUI's default animated layout transition that fights every
             // drag tick mid-gesture.
+            .onChange(of: dragStart == nil) { _, ended in if ended { vm.endEditing() } }
             .animation(nil, value: section.startTime)
             .animation(nil, value: section.endTime)
             .transaction { $0.animation = nil }
@@ -332,6 +397,7 @@ struct TimelineView: View {
                     .highPriorityGesture(
                         TapGesture()
                             .onEnded {
+                                vm.selectedSegmentID = nil
                                 vm.selectedZoomIndex = index
                                 vm.seek(toMilliseconds: section.startTime)
                             }
@@ -343,11 +409,16 @@ struct TimelineView: View {
                             }
                             .onChanged { value in
                                 guard let origin = dragStart else { return }
+                                vm.beginEditing()
+                                vm.selectedSegmentID = nil
                                 if vm.selectedZoomIndex != index { vm.selectedZoomIndex = index }
                                 let deltaMs = Double(value.translation.width / trackWidth) * duration
                                 let len = origin.endTime - origin.startTime
                                 var newStart = origin.startTime + deltaMs
                                 newStart = max(0, min(duration - len, newStart))
+                                if !NSEvent.modifierFlags.contains(.option) {
+                                    newStart = vm.snapTime(newStart, toleranceMs: duration / Double(trackWidth) * 8)
+                                }
                                 var t = Transaction(); t.disablesAnimations = true
                                 withTransaction(t) {
                                     vm.updateZoomSection(at: index,
@@ -399,16 +470,22 @@ struct TimelineView: View {
                     }
                     .onChanged { value in
                         guard let origin = dragStart else { return }
+                        vm.beginEditing()
+                        vm.selectedSegmentID = nil
                         if vm.selectedZoomIndex != index { vm.selectedZoomIndex = index }
                         let deltaMs = Double(value.translation.width / trackWidth) * duration
                         var t = Transaction(); t.disablesAnimations = true
                         withTransaction(t) {
                             switch edge {
                             case .left:
-                                let new = max(0, min(origin.endTime - 100, origin.startTime + deltaMs))
+                                let proposed = origin.startTime + deltaMs
+                                let snapped = NSEvent.modifierFlags.contains(.option) ? proposed : vm.snapTime(proposed, toleranceMs: duration / Double(trackWidth) * 8)
+                                let new = max(0, min(origin.endTime - 100, snapped))
                                 vm.updateZoomSection(at: index, startTime: new)
                             case .right:
-                                let new = max(origin.startTime + 100, min(duration, origin.endTime + deltaMs))
+                                let proposed = origin.endTime + deltaMs
+                                let snapped = NSEvent.modifierFlags.contains(.option) ? proposed : vm.snapTime(proposed, toleranceMs: duration / Double(trackWidth) * 8)
+                                let new = max(origin.startTime + 100, min(duration, snapped))
                                 vm.updateZoomSection(at: index, endTime: new)
                             }
                         }
@@ -508,15 +585,15 @@ struct TimelineView: View {
     private func tickInterval(forDurationSeconds duration: Double, width: CGFloat) -> Double {
         let targetTicks = max(2.0, Double(width) / 80)
         let rawSpacing = duration / targetTicks
-        let candidates: [Double] = [0.5, 1, 2, 5, 10, 15, 30, 60, 120, 300, 600]
+        let candidates: [Double] = [0.1, 0.2, 0.5, 1, 2, 5, 10, 15, 30, 60, 120, 300, 600]
         for c in candidates where c >= rawSpacing { return c }
         return candidates.last ?? 60
     }
 
-    private func formatSeconds(_ s: Double) -> String {
+    private func formatSeconds(_ s: Double, fractional: Bool) -> String {
         let total = Int(s)
         let m = total / 60
         let sec = total % 60
-        return String(format: "%d:%02d", m, sec)
+        return fractional ? String(format: "%d:%04.1f", m, s - Double(m * 60)) : String(format: "%d:%02d", m, sec)
     }
 }

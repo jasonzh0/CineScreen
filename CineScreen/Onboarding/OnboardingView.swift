@@ -1,5 +1,6 @@
 import SwiftUI
 import AppKit
+import Combine
 
 /// Full-window first-launch experience. Replaces ProjectsView content until
 /// the user finishes (or opts out via the "Skip" affordance on the welcome

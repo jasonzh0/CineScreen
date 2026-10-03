@@ -40,10 +40,15 @@ struct GradientStop: Hashable, Sendable, Codable {
 struct CanvasBackground: Hashable, Sendable, Codable {
     var stops: [GradientStop]
     var angleDegrees: Float
+    enum GradientStyle: String, Codable, Sendable { case linear, radial }
+    var style: GradientStyle?
+    /// Subtle edge lighting and stable grain; optional for existing projects.
+    var vignette: Float?
+    var grain: Float?
 
     static func solid(_ hex: String) -> CanvasBackground {
         .init(
-            stops: [GradientStop(color: RenderSnapshot.parseHexColor(hex), position: 0)],
+            stops: [GradientStop(color: RGBAColor.parseHex(hex), position: 0)],
             angleDegrees: 0
         )
     }
@@ -52,12 +57,22 @@ struct CanvasBackground: Hashable, Sendable, Codable {
         let count = hexes.count
         let stops: [GradientStop] = hexes.enumerated().map { i, hex in
             GradientStop(
-                color: RenderSnapshot.parseHexColor(hex),
+                color: RGBAColor.parseHex(hex),
                 position: count == 1 ? 0 : Float(i) / Float(count - 1)
             )
         }
         return .init(stops: stops, angleDegrees: angle)
     }
+
+    static func cinematic(_ hexes: [String], angle: Float = 135) -> CanvasBackground {
+        var background = linear(hexes, angle: angle)
+        background.style = .radial
+        background.vignette = 0.16
+        background.grain = 0.008
+        return background
+    }
+
+    static let cinematicDefault = cinematic(["#26344F", "#151F35", "#0B1120"])
 
     /// First stop colour — used as the clear colour so the screen-edge gutter
     /// matches the visible top-left of the gradient.
@@ -67,9 +82,14 @@ struct CanvasBackground: Hashable, Sendable, Codable {
 }
 
 extension CanvasBackground {
-    /// Screen-Studio-style preset palette. The first two are intentionally
-    /// neutral solids so users can stay subtle.
+    /// Cinematic lighting presets followed by the original palette.
     static let presets: [(name: String, bg: CanvasBackground)] = [
+        ("Midnight", .cinematicDefault),
+        ("Slate",    .cinematic(["#6B778C", "#344052", "#171F2B"])),
+        ("Dusk",     .cinematic(["#A88396", "#53415F", "#211C35"])),
+        ("Ocean",    .cinematic(["#3F8793", "#1F4B63", "#102538"])),
+        ("Amber",    .cinematic(["#C4A17A", "#756054", "#302C35"])),
+        ("Studio",   .cinematic(["#EEF0F4", "#D4D9E2", "#ABB5C5"])),
         ("Dark",     .solid("#1a1a1a")),
         ("Light",    .solid("#f4f4f4")),
         ("Sunset",   .linear(["#ff6b9d", "#ff8c5a", "#c870ff"], angle: 135)),
@@ -89,10 +109,11 @@ extension CanvasBackground {
 struct ShadowUniforms {
     var centerNDC: SIMD2<Float>
     var halfSize: SIMD2<Float>
+    var offsetNDC: SIMD2<Float>
     var blur: Float
-    var yOffset: Float
     var cornerRadius: Float
     var opacity: Float
+    var viewportAspect: Float = 1
 }
 
 /// Flat Swift layout matching the Metal `BackgroundUniforms` struct.
@@ -106,6 +127,10 @@ struct BackgroundUniforms {
     var stopCount: Int32
     var pad0: Float = 0
     var pad1: Float = 0
+    var vignette: Float = 0
+    var grain: Float = 0
+    var gradientStyle: Int32 = 0
+    var pad2: Float = 0
 }
 
 extension BackgroundUniforms {
@@ -113,7 +138,7 @@ extension BackgroundUniforms {
         let n = min(4, max(1, bg.stops.count))
         var colors = [SIMD4<Float>](repeating: bg.firstColor, count: 4)
         var positions = SIMD4<Float>(0, 0, 0, 0)
-        for i in 0..<n {
+        for i in 0..<min(4, bg.stops.count) {
             colors[i] = bg.stops[i].color
             positions[i] = bg.stops[i].position
         }
@@ -124,7 +149,10 @@ extension BackgroundUniforms {
             stop3: colors[3],
             stopPositions: positions,
             angleRadians: bg.angleDegrees * .pi / 180,
-            stopCount: Int32(n)
+            stopCount: Int32(n),
+            vignette: min(0.5, max(0, bg.vignette ?? 0)),
+            grain: min(0.05, max(0, bg.grain ?? 0)),
+            gradientStyle: bg.style == .radial ? 1 : 0
         )
     }
 }

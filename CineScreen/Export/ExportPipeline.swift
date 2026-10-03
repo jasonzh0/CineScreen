@@ -77,6 +77,9 @@ final class ExportPipeline {
         /// 15fps / 960px longest side (GIF sizes grow brutally), drops
         /// audio, and ignores the scale/quality knobs.
         var format: Format = .mp4
+        /// Retained source ranges; absent means the full trimmed recording.
+        var editSegments: [EditSegment]? = nil
+        var output: OutputSettings = .default
     }
 
     enum Format: String {
@@ -96,29 +99,36 @@ final class ExportPipeline {
     func cancel() { session.cancel() }
 
     func export(_ input: Input, onProgress: @Sendable @escaping (Progress) -> Void) async throws -> URL {
-        let asset = AVURLAsset(url: input.sourceVideoURL)
-
-        // Load track + duration metadata
-        let duration = try await asset.load(.duration)
-        let videoTracks = try await asset.loadTracks(withMediaType: .video)
-        let audioTracks = try await asset.loadTracks(withMediaType: .audio)
-        guard let videoTrack = videoTracks.first else {
+        let sourceAsset = AVURLAsset(url: input.sourceVideoURL)
+        guard let sourceVideoTrack = try await sourceAsset.loadTracks(withMediaType: .video).first else {
             throw ExportError.noVideoTrack
         }
-        let naturalSize = try await videoTrack.load(.naturalSize)
-        let transform = try await videoTrack.load(.preferredTransform)
-        let nominalFrameRate = try await videoTrack.load(.nominalFrameRate)
+        let sourceVideoRange = try await sourceVideoTrack.load(.timeRange)
+        guard sourceVideoRange.end.isNumeric else {
+            throw ExportError.readError("source video has an invalid duration")
+        }
+        // Older recordings can contain audio with unre-based host PTS. Its
+        // asset duration may be hours long; only the screen track bounds edits.
+        let sourceDurationMs = max(0, sourceVideoRange.end.seconds * 1000)
+        let naturalSize = try await sourceVideoTrack.load(.naturalSize)
+        let transform = try await sourceVideoTrack.load(.preferredTransform)
         let outputSize = applyTransform(transform, to: naturalSize)
-        let fps = nominalFrameRate > 0 ? nominalFrameRate : 60
-
-        // Trim
-        let useFullRange = input.trimRangeMs.isEmpty
-        let trimStartMs = useFullRange ? 0 : input.trimRangeMs.lowerBound
-        let trimEndMs = useFullRange ? duration.seconds * 1000 : input.trimRangeMs.upperBound
-        let startTime = CMTime(seconds: trimStartMs / 1000, preferredTimescale: 600)
-        let endTime = CMTime(seconds: trimEndMs / 1000, preferredTimescale: 600)
+        let trim = input.trimRangeMs.isEmpty ? nil : TrimRange(startMs: input.trimRangeMs.lowerBound, endMs: input.trimRangeMs.upperBound)
+        let timeline = EditTimeline(segments: input.editSegments, durationMs: sourceDurationMs, trim: trim)
+        let edited = try await EditedAssetBuilder.build(source: sourceAsset, timeline: timeline)
+        let asset = edited.asset
+        let videoTrack = edited.videoTrack
+        let audioTracks = edited.audioTracks
+        let fps = input.output.effectiveFrameRate
+        let startTime = CMTime.zero
+        let endTime = CMTime(seconds: timeline.durationMs / 1000, preferredTimescale: 60_000)
         let timeRange = CMTimeRange(start: startTime, end: endTime)
-        let trimmedSeconds = max(0.01, endTime.seconds - startTime.seconds)
+        let trimmedSeconds = timeline.durationMs / 1000
+        let webcamRange = CMTimeRange(
+            start: CMTime(seconds: (timeline.segments.first?.startMs ?? 0) / 1000, preferredTimescale: 60_000),
+            end: CMTime(seconds: (timeline.segments.last?.endMs ?? 0) / 1000, preferredTimescale: 60_000)
+        )
+        let geometry = OutputGeometry(sourceWidth: Int(outputSize.width), sourceHeight: Int(outputSize.height), settings: input.output, scale: input.outputScale)
 
         // Compositor
         guard let compositor = ExportCompositor() else {
@@ -156,7 +166,9 @@ final class ExportPipeline {
                 reader: reader,
                 readerOutput: videoReaderOutput,
                 compositor: compositor,
-                sourceSize: outputSize,
+                sourceSize: CGSize(width: geometry.width, height: geometry.height),
+                timeline: timeline,
+                webcamRange: webcamRange,
                 timeRange: timeRange,
                 nominalFPS: Double(fps),
                 trimmedSeconds: trimmedSeconds,
@@ -164,14 +176,8 @@ final class ExportPipeline {
             )
         }
 
-        var audioReaderOutputs: [AVAssetReaderTrackOutput] = []
-        for track in audioTracks {
-            // Decode the audio to uncompressed 16-bit interleaved PCM. The
-            // writer below re-encodes to AAC. We tried passthrough
-            // (outputSettings: nil on both sides) — it avoids the
-            // decode/encode round trip but produces audio-less MP4 files
-            // because the writer can't reliably establish the format
-            // without a sourceFormatHint.
+        var audioReaderOutputs: [AVAssetReaderAudioMixOutput] = []
+        if !audioTracks.isEmpty, input.output.effectiveAudioGain > 0 {
             let pcmSettings: [String: Any] = [
                 AVFormatIDKey: kAudioFormatLinearPCM,
                 AVLinearPCMBitDepthKey: 16,
@@ -181,12 +187,21 @@ final class ExportPipeline {
                 AVSampleRateKey: 48000,
                 AVNumberOfChannelsKey: 2,
             ]
-            let out = AVAssetReaderTrackOutput(track: track, outputSettings: pcmSettings)
-            out.alwaysCopiesSampleData = false
-            if reader.canAdd(out) {
-                reader.add(out)
-                audioReaderOutputs.append(out)
+            // AudioMixOutput renders the composition's time scaling into PCM,
+            // rather than merely attaching new timestamps to unscaled audio.
+            let out = AVAssetReaderAudioMixOutput(audioTracks: audioTracks, audioSettings: pcmSettings)
+            out.audioTimePitchAlgorithm = .spectral
+            let mix = AVMutableAudioMix()
+            mix.inputParameters = audioTracks.map { track in
+                let parameters = AVMutableAudioMixInputParameters(track: track)
+                parameters.setVolume(input.output.effectiveAudioGain, at: .zero)
+                return parameters
             }
+            out.audioMix = mix
+            out.alwaysCopiesSampleData = false
+            guard reader.canAdd(out) else { throw ExportError.readerSetupFailed("audio mix output") }
+            reader.add(out)
+            audioReaderOutputs.append(out)
         }
 
         // Writer — targets a hidden sibling temp file, promoted on success.
@@ -200,15 +215,22 @@ final class ExportPipeline {
         // Scaled output dimensions (even, for the encoder). The compositor
         // renders into the destination buffer, so downscaling happens on the
         // GPU as part of the normal video-quad sampling.
-        let scale = min(1.0, max(0.1, input.outputScale))
-        let scaledW = max(2, (Int(outputSize.width * scale) / 2) * 2)
-        let scaledH = max(2, (Int(outputSize.height * scale) / 2) * 2)
+        let scaledW = geometry.width
+        let scaledH = geometry.height
 
         let videoBitrate = Int(Double(scaledW * scaledH) * Double(fps) * input.bitsPerPixel)
         let videoSettings: [String: Any] = [
             AVVideoCodecKey: AVVideoCodecType.h264,
             AVVideoWidthKey: scaledW,
             AVVideoHeightKey: scaledH,
+            // Tag the RGB→H.264 conversion explicitly. Untagged small/portrait
+            // outputs otherwise fall back to Composite NTSC in AVFoundation,
+            // visibly changing saturated screen colors across an export.
+            AVVideoColorPropertiesKey: [
+                AVVideoColorPrimariesKey: AVVideoColorPrimaries_ITU_R_709_2,
+                AVVideoTransferFunctionKey: AVVideoTransferFunction_ITU_R_709_2,
+                AVVideoYCbCrMatrixKey: AVVideoYCbCrMatrix_ITU_R_709_2,
+            ],
             AVVideoCompressionPropertiesKey: [
                 AVVideoAverageBitRateKey: videoBitrate,
                 AVVideoProfileLevelKey: AVVideoProfileLevelH264HighAutoLevel,
@@ -238,7 +260,7 @@ final class ExportPipeline {
         writer.add(videoWriterInput)
 
         var audioWriterInputs: [AVAssetWriterInput] = []
-        for _ in audioTracks {
+        for _ in audioReaderOutputs {
             // Re-encode the PCM coming out of the reader to AAC for the
             // output container. Matches the recorder's own AAC settings.
             let audioSettings: [String: Any] = [
@@ -249,10 +271,9 @@ final class ExportPipeline {
             ]
             let input = AVAssetWriterInput(mediaType: .audio, outputSettings: audioSettings)
             input.expectsMediaDataInRealTime = false
-            if writer.canAdd(input) {
-                writer.add(input)
-                audioWriterInputs.append(input)
-            }
+            guard writer.canAdd(input) else { throw ExportError.writerSetupFailed("audio input") }
+            writer.add(input)
+            audioWriterInputs.append(input)
         }
 
         guard writer.startWriting() else {
@@ -282,7 +303,7 @@ final class ExportPipeline {
         do {
             webcamSource = try await WebcamFrameSource.open(
                 url: input.webcamURL,
-                timeRange: timeRange,
+                timeRange: webcamRange,
                 offsetMs: input.webcamOffsetMs
             )
         } catch {
@@ -318,6 +339,8 @@ final class ExportPipeline {
                             clicksAt: input.clicksAt,
                             zoomAt: input.zoomAt,
                             canvasStyle: input.canvas,
+                            outputSettings: input.output,
+                            timeline: timeline,
                             webcamSource: webcamSource,
                             webcamLayout: input.webcamLayout,
                             timeRangeStart: startTime,
@@ -329,7 +352,7 @@ final class ExportPipeline {
                     }
                     for (out, audioInput) in zip(audioReaderOutputs, audioWriterInputs) {
                         group.addTask { [self] in
-                            try await runAudioLoop(reader: reader, writerInput: audioInput, readerOutput: out)
+                            try await runAudioLoop(reader: reader, writerInput: audioInput, readerOutput: out, endTime: endTime)
                         }
                     }
                     try await group.waitForAll()
@@ -340,6 +363,7 @@ final class ExportPipeline {
 
             if session.isCancelled { throw ExportError.cancelled }
 
+            writer.endSession(atSourceTime: endTime)
             await writer.finishWriting()
             guard writer.status == .completed else {
                 throw ExportError.writeFailed(writer.error?.localizedDescription ?? "status=\(writer.status.rawValue)")
@@ -366,6 +390,8 @@ final class ExportPipeline {
         readerOutput: AVAssetReaderTrackOutput,
         compositor: ExportCompositor,
         sourceSize: CGSize,
+        timeline: EditTimeline,
+        webcamRange: CMTimeRange,
         timeRange: CMTimeRange,
         nominalFPS: Double,
         trimmedSeconds: Double,
@@ -377,7 +403,7 @@ final class ExportPipeline {
         let scale = min(1.0, 960.0 / max(1.0, longest))
         let width = max(2, (Int(sourceSize.width * scale) / 2) * 2)
         let height = max(2, (Int(sourceSize.height * scale) / 2) * 2)
-        let frameCount = max(1, Int(trimmedSeconds * gifFPS))
+        let frameCount = max(1, Int(ceil(trimmedSeconds * gifFPS)))
         let frameDelay = 1.0 / gifFPS
 
         let tempURL = input.outputURL
@@ -410,7 +436,7 @@ final class ExportPipeline {
 
         let webcamSource = try await WebcamFrameSource.open(
             url: input.webcamURL,
-            timeRange: timeRange,
+            timeRange: webcamRange,
             offsetMs: input.webcamOffsetMs
         )
 
@@ -469,14 +495,16 @@ final class ExportPipeline {
                             throw ExportError.pixelBufferAllocFailed
                         }
 
-                        let outputTimeMs = nextOutputPTS.seconds * 1000
-                        let webcamFrame = input.webcamLayout.enabled ? webcamSource?.frame(at: nextOutputPTS) : nil
+                        guard let sourceTimeMs = timeline.sourceTime(atOutputMs: nextOutputPTS.seconds * 1000) else { throw ExportError.emptyTimeline }
+                        let sourcePTS = CMTime(seconds: sourceTimeMs / 1000, preferredTimescale: 60_000)
+                        let webcamFrame = input.webcamLayout.enabled ? webcamSource?.frame(at: sourcePTS) : nil
                         guard compositor.render(
                             source: sourceBuffer,
-                            cursor: input.cursorAt(outputTimeMs),
-                            clicks: input.clicksAt(outputTimeMs),
-                            zoom: input.zoomAt(outputTimeMs),
+                            cursor: input.cursorAt(sourceTimeMs),
+                            clicks: input.clicksAt(sourceTimeMs),
+                            zoom: input.zoomAt(sourceTimeMs),
                             canvas: input.canvas,
+                            output: input.output,
                             webcam: webcamFrame,
                             webcamLayout: input.webcamLayout,
                             destination: dest
@@ -538,6 +566,8 @@ final class ExportPipeline {
         clicksAt: @escaping @Sendable (Double) -> [ClickRingState],
         zoomAt: @escaping @Sendable (Double) -> ZoomState,
         canvasStyle: CanvasStyle,
+        outputSettings: OutputSettings,
+        timeline: EditTimeline,
         webcamSource: WebcamFrameSource?,
         webcamLayout: WebcamLayout,
         timeRangeStart: CMTime,
@@ -650,10 +680,13 @@ final class ExportPipeline {
                         return
                     }
 
-                    let outputTimeMs = nextOutputPTS.seconds * 1000
-                    let cursorState = cursorAt(outputTimeMs)
-                    let clickStates = clicksAt(outputTimeMs)
-                    let zoom = zoomAt(outputTimeMs)
+                    guard let sourceTimeMs = timeline.sourceTime(atOutputMs: nextOutputPTS.seconds * 1000) else {
+                        finish(.failure(ExportError.emptyTimeline))
+                        return
+                    }
+                    let cursorState = cursorAt(sourceTimeMs)
+                    let clickStates = clicksAt(sourceTimeMs)
+                    let zoom = zoomAt(sourceTimeMs)
 
                     guard let pool = adaptor.pixelBufferPool else {
                         finish(.failure(ExportError.pixelBufferPoolMissing))
@@ -666,13 +699,15 @@ final class ExportPipeline {
                         return
                     }
 
-                    let webcamFrame = webcamLayout.enabled ? webcamSource?.frame(at: nextOutputPTS) : nil
+                    let sourcePTS = CMTime(seconds: sourceTimeMs / 1000, preferredTimescale: 60_000)
+                    let webcamFrame = webcamLayout.enabled ? webcamSource?.frame(at: sourcePTS) : nil
                     let ok = compositor.render(
                         source: sourceBuffer,
                         cursor: cursorState,
                         clicks: clickStates,
                         zoom: zoom,
                         canvas: canvasStyle,
+                        output: outputSettings,
                         webcam: webcamFrame,
                         webcamLayout: webcamLayout,
                         destination: dest
@@ -707,7 +742,8 @@ final class ExportPipeline {
     private func runAudioLoop(
         reader: AVAssetReader,
         writerInput: AVAssetWriterInput,
-        readerOutput: AVAssetReaderTrackOutput
+        readerOutput: AVAssetReaderOutput,
+        endTime: CMTime
     ) async throws {
         let queue = DispatchQueue(label: "com.cinescreen.export.audio", qos: .userInitiated)
         let session = self.session
@@ -741,7 +777,36 @@ final class ExportPipeline {
                         }
                         return
                     }
-                    if !writerInput.append(sample) {
+                    let pts = CMSampleBufferGetPresentationTimeStamp(sample)
+                    if CMTimeCompare(pts, endTime) >= 0 {
+                        finish(.success(()))
+                        return
+                    }
+                    var boundedSample = sample
+                    let sampleDuration = CMSampleBufferGetDuration(sample)
+                    if sampleDuration.isNumeric, CMTimeCompare(CMTimeAdd(pts, sampleDuration), endTime) > 0 {
+                        // Time stretching can emit a short decoder tail past
+                        // the composition end. Clip PCM samples before AAC so
+                        // audio cannot extend the exported edit's duration.
+                        let available = CMTimeSubtract(endTime, pts).seconds
+                        let count = CMSampleBufferGetNumSamples(sample)
+                        let retained = min(count, max(0, Int((Double(count) * available / sampleDuration.seconds).rounded(.down))))
+                        guard retained > 0 else {
+                            finish(.success(()))
+                            return
+                        }
+                        var clipped: CMSampleBuffer?
+                        let status = CMSampleBufferCopySampleBufferForRange(
+                            allocator: kCFAllocatorDefault, sampleBuffer: sample,
+                            sampleRange: CFRange(location: 0, length: retained), sampleBufferOut: &clipped
+                        )
+                        guard status == noErr, let clipped else {
+                            finish(.failure(ExportError.readError("could not bound edited audio")))
+                            return
+                        }
+                        boundedSample = clipped
+                    }
+                    if !writerInput.append(boundedSample) {
                         finish(.failure(ExportError.appendFailed("audio append failed")))
                         return
                     }
@@ -784,6 +849,7 @@ private final class FrameCounter: @unchecked Sendable {
 }
 
 enum ExportError: LocalizedError {
+    case emptyTimeline
     case noVideoTrack
     case compositorInitFailed
     case readerSetupFailed(String)
@@ -800,6 +866,7 @@ enum ExportError: LocalizedError {
 
     var errorDescription: String? {
         switch self {
+        case .emptyTimeline:                 return "The edit has no retained video. Keep at least one segment before exporting."
         case .noVideoTrack:                  return "Source has no video track."
         case .compositorInitFailed:          return "Could not initialize the Metal compositor."
         case let .readerSetupFailed(m):      return "Reader setup failed: \(m)"
