@@ -11,12 +11,12 @@ jobs:
     runs-on: macos-latest
     timeout-minutes: 30
     steps:
-      - name: Download the verified ctx build from factory f45c4e6
+      - name: Download the verified ctx build from factory 3d0749d
         run: |
           set -euo pipefail
           curl --fail --location --proto '=https' --tlsv1.2 \
-            https://ctx.jasonzhang-develop.workers.dev/releases/ctx-macos.zip -o ctx-source.zip
-          echo 'c77d7de67c4f18d259b86683b19feb18868c83f48da255de3e7562c38f38e7ca  ctx-source.zip' | shasum -a 256 --check
+            https://ctx.jasonzhang-develop.workers.dev/releases/ctx-macos-candidate.zip -o ctx-source.zip
+          echo '101d28ce0deeee91afdbe58d000be805f895bf5cc56dc451866c76ecc5c40e2b  ctx-source.zip' | shasum -a 256 --check
           ditto -x -k ctx-source.zip build
           test "$(/usr/libexec/PlistBuddy -c 'Print CFBundleIdentifier' build/ctx.app/Contents/Info.plist)" = com.ctx.desktop
       - name: Import the existing Apple signing identity
