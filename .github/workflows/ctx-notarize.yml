@@ -1,6 +1,17 @@
+# Installed as .github/workflows/ctx-notarize.yml in jasonzh0/CineScreen,
+# which already holds Bicycle's Apple notarization credentials.
 name: Notarize bicycle
 on:
   workflow_dispatch:
+    inputs:
+      version:
+        description: Release version
+        required: true
+        type: string
+      sha256:
+        description: SHA-256 of the signed candidate ZIP
+        required: true
+        type: string
 permissions:
   contents: read
 concurrency:
@@ -10,67 +21,51 @@ jobs:
   notarize:
     runs-on: macos-latest
     timeout-minutes: 30
+    env:
+      RELEASE_VERSION: ${{ inputs.version }}
+      CANDIDATE_SHA256: ${{ inputs.sha256 }}
     steps:
-      - name: Download the frozen bicycle 0.2.0 login-only build
+      - name: Download and verify the signed universal candidate
+        shell: bash
         run: |
           set -euo pipefail
-          curl --fail --location --proto '=https' --tlsv1.2 \
-            https://bicycle.jasonzhang-develop.workers.dev/releases/bicycle-macos-0.2.0-candidate.zip -o bicycle-source.zip
-          echo '61a9d67779907fecb5438ec2affd3fb37a9b665fafc2202b5fff1e4fdb7ce60a  bicycle-source.zip' | shasum -a 256 --check
-          ditto -x -k bicycle-source.zip build
-          test "$(/usr/libexec/PlistBuddy -c 'Print CFBundleIdentifier' build/bicycle.app/Contents/Info.plist)" = com.bicycle.desktop
-      - name: Import the existing Apple signing identity
-        env:
-          APPLE_CERTIFICATE: ${{ secrets.APPLE_CERTIFICATE }}
-          APPLE_CERTIFICATE_PASSWORD: ${{ secrets.APPLE_CERTIFICATE_PASSWORD }}
-          APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
-        run: |
-          set -euo pipefail
-          umask 077
-          test "$APPLE_TEAM_ID" = JAT3GYBPJ4
-          KEYCHAIN_PATH="$RUNNER_TEMP/bicycle-signing.keychain-db"
-          KEYCHAIN_PASSWORD="$(uuidgen)"
-          security create-keychain -p "$KEYCHAIN_PASSWORD" "$KEYCHAIN_PATH"
-          security set-keychain-settings -lut 21600 "$KEYCHAIN_PATH"
-          security unlock-keychain -p "$KEYCHAIN_PASSWORD" "$KEYCHAIN_PATH"
-          curl --fail --location https://www.apple.com/certificateauthority/DeveloperIDG2CA.cer -o "$RUNNER_TEMP/DeveloperIDG2CA.cer"
-          security import "$RUNNER_TEMP/DeveloperIDG2CA.cer" -k "$KEYCHAIN_PATH" -T /usr/bin/codesign
-          printf '%s' "$APPLE_CERTIFICATE" | base64 --decode > "$RUNNER_TEMP/bicycle-cert.p12"
-          security import "$RUNNER_TEMP/bicycle-cert.p12" -k "$KEYCHAIN_PATH" -P "$APPLE_CERTIFICATE_PASSWORD" -T /usr/bin/codesign -T /usr/bin/security
-          rm -f "$RUNNER_TEMP/bicycle-cert.p12"
-          security set-key-partition-list -S apple-tool:,apple:,codesign: -s -k "$KEYCHAIN_PASSWORD" "$KEYCHAIN_PATH"
-          security list-keychains -d user -s "$KEYCHAIN_PATH" "$HOME/Library/Keychains/login.keychain-db"
-          echo "CTX_KEYCHAIN=$KEYCHAIN_PATH" >> "$GITHUB_ENV"
-      - name: Sign, notarize, staple, and verify bicycle
+          [[ "$RELEASE_VERSION" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]]
+          [[ "$CANDIDATE_SHA256" =~ ^[a-f0-9]{64}$ ]]
+          curl --fail --location --retry 3 --proto '=https' --tlsv1.2 \
+            "https://bicycle-releases.jasonzhang-develop.workers.dev/bicycle-macos-$RELEASE_VERSION-candidate.zip" -o candidate.zip
+          printf '%s  candidate.zip\n' "$CANDIDATE_SHA256" | shasum -a 256 --check
+          ditto -x -k candidate.zip build
+          APP=build/Bicycle.app
+          test "$(/usr/libexec/PlistBuddy -c 'Print CFBundleIdentifier' "$APP/Contents/Info.plist")" = com.bicycle.desktop
+          test "$(/usr/libexec/PlistBuddy -c 'Print CFBundleShortVersionString' "$APP/Contents/Info.plist")" = "$RELEASE_VERSION"
+          codesign --verify --deep --strict "$APP"
+          codesign -dv --verbose=4 "$APP" 2>&1 | grep -Fx 'TeamIdentifier=JAT3GYBPJ4'
+          for BINARY in Contents/MacOS/Bicycle Contents/Resources/bin/bicycle Contents/Resources/bin/BicycleCredentialHelper; do
+            lipo "$APP/$BINARY" -verify_arch x86_64 arm64
+          done
+      - name: Notarize, staple, and verify
         env:
           APPLE_ID: ${{ secrets.APPLE_ID }}
           APPLE_APP_SPECIFIC_PASSWORD: ${{ secrets.APPLE_APP_SPECIFIC_PASSWORD }}
           APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
         run: |
           set -euo pipefail
-          IDENTITY='Developer ID Application: Jiajun Zhang (JAT3GYBPJ4)'
-          codesign --force --options runtime --timestamp --keychain "$CTX_KEYCHAIN" --sign "$IDENTITY" build/bicycle.app/Contents/Resources/BicycleCredentialHelper
-          codesign --force --options runtime --timestamp --keychain "$CTX_KEYCHAIN" --sign "$IDENTITY" build/bicycle.app/Contents/Resources/bicycle
-          codesign --force --options runtime --timestamp --keychain "$CTX_KEYCHAIN" --sign "$IDENTITY" build/bicycle.app
-          codesign --verify --deep --strict build/bicycle.app
-          xcrun notarytool store-credentials bicycle-notary --keychain "$CTX_KEYCHAIN" --apple-id "$APPLE_ID" --team-id "$APPLE_TEAM_ID" --password "$APPLE_APP_SPECIFIC_PASSWORD"
-          ditto -c -k --sequesterRsrc --keepParent build/bicycle.app bicycle-submit.zip
-          xcrun notarytool submit bicycle-submit.zip --keychain "$CTX_KEYCHAIN" --keychain-profile bicycle-notary --wait --timeout 15m
-          xcrun stapler staple build/bicycle.app
-          xcrun stapler validate build/bicycle.app
-          codesign --verify --deep --strict build/bicycle.app
-          spctl --assess --type execute --verbose=2 build/bicycle.app
+          test "$APPLE_TEAM_ID" = JAT3GYBPJ4
+          xcrun notarytool submit candidate.zip --apple-id "$APPLE_ID" --team-id "$APPLE_TEAM_ID" \
+            --password "$APPLE_APP_SPECIFIC_PASSWORD" --wait --timeout 15m --output-format json > notarization.json
+          cat notarization.json
+          python3 -c 'import json; r=json.load(open("notarization.json")); assert r["status"] == "Accepted", r'
+          xcrun stapler staple build/Bicycle.app
+          xcrun stapler validate build/Bicycle.app
+          codesign --verify --deep --strict build/Bicycle.app
+          spctl --assess --type execute --verbose=2 build/Bicycle.app
           mkdir -p release
-          ditto -c -k --sequesterRsrc --keepParent build/bicycle.app release/bicycle-macos.zip
-          shasum -a 256 release/bicycle-macos.zip > release/SHA256SUMS
+          ditto -c -k --sequesterRsrc --keepParent build/Bicycle.app "release/bicycle-macos-$RELEASE_VERSION.zip"
+          shasum -a 256 "release/bicycle-macos-$RELEASE_VERSION.zip" > release/SHA256SUMS
+          cp notarization.json release/
       - uses: actions/upload-artifact@v4
         with:
           name: bicycle-macos-notarized
           path: release/*
           retention-days: 7
           if-no-files-found: error
-      - name: Remove temporary signing keychain
-        if: always()
-        run: |
-          if [ -n "${CTX_KEYCHAIN:-}" ]; then security delete-keychain "$CTX_KEYCHAIN"; fi
-          rm -f "$RUNNER_TEMP/bicycle-cert.p12"
