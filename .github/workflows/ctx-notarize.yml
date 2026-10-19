@@ -1,0 +1,75 @@
+name: Notarize ctx
+on:
+  workflow_dispatch:
+permissions:
+  contents: read
+concurrency:
+  group: ctx-notarization
+  cancel-in-progress: false
+jobs:
+  notarize:
+    runs-on: macos-latest
+    timeout-minutes: 30
+    steps:
+      - name: Download the verified ctx build from factory f45c4e6
+        run: |
+          set -euo pipefail
+          curl --fail --location --proto '=https' --tlsv1.2 \
+            https://ctx.jasonzhang-develop.workers.dev/releases/ctx-macos.zip -o ctx-source.zip
+          echo 'c77d7de67c4f18d259b86683b19feb18868c83f48da255de3e7562c38f38e7ca  ctx-source.zip' | shasum -a 256 --check
+          ditto -x -k ctx-source.zip build
+          test "$(/usr/libexec/PlistBuddy -c 'Print CFBundleIdentifier' build/ctx.app/Contents/Info.plist)" = com.ctx.desktop
+      - name: Import the existing Apple signing identity
+        env:
+          APPLE_CERTIFICATE: ${{ secrets.APPLE_CERTIFICATE }}
+          APPLE_CERTIFICATE_PASSWORD: ${{ secrets.APPLE_CERTIFICATE_PASSWORD }}
+          APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
+        run: |
+          set -euo pipefail
+          umask 077
+          test "$APPLE_TEAM_ID" = JAT3GYBPJ4
+          KEYCHAIN_PATH="$RUNNER_TEMP/ctx-signing.keychain-db"
+          KEYCHAIN_PASSWORD="$(uuidgen)"
+          security create-keychain -p "$KEYCHAIN_PASSWORD" "$KEYCHAIN_PATH"
+          security set-keychain-settings -lut 21600 "$KEYCHAIN_PATH"
+          security unlock-keychain -p "$KEYCHAIN_PASSWORD" "$KEYCHAIN_PATH"
+          curl --fail --location https://www.apple.com/certificateauthority/DeveloperIDG2CA.cer -o "$RUNNER_TEMP/DeveloperIDG2CA.cer"
+          security import "$RUNNER_TEMP/DeveloperIDG2CA.cer" -k "$KEYCHAIN_PATH" -T /usr/bin/codesign
+          printf '%s' "$APPLE_CERTIFICATE" | base64 --decode > "$RUNNER_TEMP/ctx-cert.p12"
+          security import "$RUNNER_TEMP/ctx-cert.p12" -k "$KEYCHAIN_PATH" -P "$APPLE_CERTIFICATE_PASSWORD" -T /usr/bin/codesign -T /usr/bin/security
+          rm -f "$RUNNER_TEMP/ctx-cert.p12"
+          security set-key-partition-list -S apple-tool:,apple:,codesign: -s -k "$KEYCHAIN_PASSWORD" "$KEYCHAIN_PATH"
+          security list-keychains -d user -s "$KEYCHAIN_PATH" "$HOME/Library/Keychains/login.keychain-db"
+          echo "CTX_KEYCHAIN=$KEYCHAIN_PATH" >> "$GITHUB_ENV"
+      - name: Sign, notarize, staple, and verify ctx
+        env:
+          APPLE_ID: ${{ secrets.APPLE_ID }}
+          APPLE_APP_SPECIFIC_PASSWORD: ${{ secrets.APPLE_APP_SPECIFIC_PASSWORD }}
+          APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
+        run: |
+          set -euo pipefail
+          IDENTITY='Developer ID Application: Jiajun Zhang (JAT3GYBPJ4)'
+          codesign --force --options runtime --timestamp --keychain "$CTX_KEYCHAIN" --sign "$IDENTITY" build/ctx.app/Contents/Resources/ctx
+          codesign --force --options runtime --timestamp --keychain "$CTX_KEYCHAIN" --sign "$IDENTITY" build/ctx.app
+          codesign --verify --deep --strict build/ctx.app
+          xcrun notarytool store-credentials ctx-notary --keychain "$CTX_KEYCHAIN" --apple-id "$APPLE_ID" --team-id "$APPLE_TEAM_ID" --password "$APPLE_APP_SPECIFIC_PASSWORD"
+          ditto -c -k --sequesterRsrc --keepParent build/ctx.app ctx-submit.zip
+          xcrun notarytool submit ctx-submit.zip --keychain "$CTX_KEYCHAIN" --keychain-profile ctx-notary --wait --timeout 15m
+          xcrun stapler staple build/ctx.app
+          xcrun stapler validate build/ctx.app
+          codesign --verify --deep --strict build/ctx.app
+          spctl --assess --type execute --verbose=2 build/ctx.app
+          mkdir -p release
+          ditto -c -k --sequesterRsrc --keepParent build/ctx.app release/ctx-macos.zip
+          shasum -a 256 release/ctx-macos.zip > release/SHA256SUMS
+      - uses: actions/upload-artifact@v4
+        with:
+          name: ctx-macos-notarized
+          path: release/*
+          retention-days: 7
+          if-no-files-found: error
+      - name: Remove temporary signing keychain
+        if: always()
+        run: |
+          if [ -n "${CTX_KEYCHAIN:-}" ]; then security delete-keychain "$CTX_KEYCHAIN"; fi
+          rm -f "$RUNNER_TEMP/ctx-cert.p12"
