@@ -11,12 +11,12 @@ jobs:
     runs-on: macos-latest
     timeout-minutes: 30
     steps:
-      - name: Download the verified ctx build from factory 3d0749d
+      - name: Download the frozen ctx 0.2.0 login-only build
         run: |
           set -euo pipefail
           curl --fail --location --proto '=https' --tlsv1.2 \
-            https://ctx.jasonzhang-develop.workers.dev/releases/ctx-macos-candidate.zip -o ctx-source.zip
-          echo '101d28ce0deeee91afdbe58d000be805f895bf5cc56dc451866c76ecc5c40e2b  ctx-source.zip' | shasum -a 256 --check
+            https://ctx.jasonzhang-develop.workers.dev/releases/ctx-macos-0.2.0-candidate.zip -o ctx-source.zip
+          echo '7e8dd3fad180c4dbfaa379b797dd185efc4cdd684a27fe9db6e4e4ff5485db4d  ctx-source.zip' | shasum -a 256 --check
           ditto -x -k ctx-source.zip build
           test "$(/usr/libexec/PlistBuddy -c 'Print CFBundleIdentifier' build/ctx.app/Contents/Info.plist)" = com.ctx.desktop
       - name: Import the existing Apple signing identity
@@ -49,6 +49,7 @@ jobs:
         run: |
           set -euo pipefail
           IDENTITY='Developer ID Application: Jiajun Zhang (JAT3GYBPJ4)'
+          codesign --force --options runtime --timestamp --keychain "$CTX_KEYCHAIN" --sign "$IDENTITY" build/ctx.app/Contents/Resources/CtxCredentialHelper
           codesign --force --options runtime --timestamp --keychain "$CTX_KEYCHAIN" --sign "$IDENTITY" build/ctx.app/Contents/Resources/ctx
           codesign --force --options runtime --timestamp --keychain "$CTX_KEYCHAIN" --sign "$IDENTITY" build/ctx.app
           codesign --verify --deep --strict build/ctx.app
